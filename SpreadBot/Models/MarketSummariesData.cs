@@ -13,11 +13,11 @@ namespace SpreadBot.Models
         public class MarketSummary
         {
             public string Symbol { get; set; }
-            public double High { get; set; }
-            public double Low { get; set; }
-            public double Volume { get; set; }
-            public double QuoteVolume { get; set; }
-            public double PercentChange { get; set; }
+            public decimal High { get; set; }
+            public decimal Low { get; set; }
+            public decimal Volume { get; set; }
+            public decimal QuoteVolume { get; set; }
+            public decimal PercentChange { get; set; }
             public DateTime UpdatedAt { get; set; }
         }
     }

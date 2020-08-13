@@ -66,6 +66,11 @@ namespace SpreadBot
             return await _hubProxy.Invoke<List<SocketResponse>>("Unsubscribe", (object)channels);
         }
 
+        public void On(string channel, Action callback)
+        {
+            _hubProxy.On(channel, callback);
+        }
+
         public void On<T>(string channel, Action<T> callback)
         {
             _hubProxy.On(channel, message =>

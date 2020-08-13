@@ -14,8 +14,8 @@ namespace SpreadBot.Models
         public class Balance
         {
             public string CurrencySymbol { get; set; }
-            public double Total { get; set; }
-            public double Available { get; set; }
+            public decimal Total { get; set; }
+            public decimal Available { get; set; }
             public DateTime UpdatedAt { get; set; }
         }
     }

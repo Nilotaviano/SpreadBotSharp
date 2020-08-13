@@ -14,9 +14,9 @@ namespace SpreadBot.Models
         public class Ticker
         {
             public string Symbol { get; set; }
-            public double LastTradeRate { get; set; }
-            public double BidRate { get; set; }
-            public double AskRate { get; set; }
+            public decimal LastTradeRate { get; set; }
+            public decimal BidRate { get; set; }
+            public decimal AskRate { get; set; }
         }
     }
 }
