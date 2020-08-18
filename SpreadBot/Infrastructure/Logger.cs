@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace SpreadBot
+namespace SpreadBot.Infrastructure
 {
     public static class Logger
     {

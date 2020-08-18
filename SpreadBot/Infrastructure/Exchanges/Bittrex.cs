@@ -7,7 +7,7 @@ using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace SpreadBot
+namespace SpreadBot.Infrastructure.Exchanges
 {
     public class Bittrex : IExchange
     {

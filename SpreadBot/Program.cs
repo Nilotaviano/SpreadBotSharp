@@ -1,4 +1,5 @@
-﻿using SpreadBot.Models;
+﻿using SpreadBot.Infrastructure.Exchanges;
+using SpreadBot.Models;
 using System;
 using System.Text.Json;
 using System.Threading.Tasks;

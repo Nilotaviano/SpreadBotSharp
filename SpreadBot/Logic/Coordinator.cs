@@ -2,9 +2,9 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace SpreadBot
+namespace SpreadBot.Logic
 {
-    public interface IExchange
+    public class Coordinator
     {
     }
 }

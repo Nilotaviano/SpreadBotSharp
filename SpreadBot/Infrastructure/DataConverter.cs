@@ -6,7 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 
-namespace SpreadBot
+namespace SpreadBot.Infrastructure
 {
     public static class DataConverter
     {
