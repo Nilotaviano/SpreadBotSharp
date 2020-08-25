@@ -2,9 +2,9 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace SpreadBot.Models
+namespace SpreadBot.Models.API
 {
-    public class MarketSummariesData
+    public class ApiMarketSummariesData
     {
         public int Sequence { get; set; }
 

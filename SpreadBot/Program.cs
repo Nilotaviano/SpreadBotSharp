@@ -11,11 +11,12 @@ namespace SpreadBot
         static async Task Main(string[] args)
         {
             var bittrex = new Bittrex(Environment.GetEnvironmentVariable("apikey"), Environment.GetEnvironmentVariable("apisecret"));
-            await bittrex.ConnectWebsocket();
+            await bittrex.Setup();
 
             bittrex.OnBalance((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
             bittrex.OnSummaries((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
             bittrex.OnTickers((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
+            bittrex.OnOrder((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
 
             Console.ReadLine();
         }

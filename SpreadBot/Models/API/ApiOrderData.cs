@@ -2,9 +2,9 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace SpreadBot.Models
+namespace SpreadBot.Models.API
 {
-    public class OrderData
+    public class ApiOrderData
     {
         public string AccountId { get; set; }
         public int Sequence { get; set; }

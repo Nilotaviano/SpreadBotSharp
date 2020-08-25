@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json.Serialization;
 
-namespace SpreadBot.Models
+namespace SpreadBot.Models.API
 {
-    public class BalanceData
+    public class ApiBalanceData
     {
         public string AccountId { get; set; }
         public int Sequence { get; set; }

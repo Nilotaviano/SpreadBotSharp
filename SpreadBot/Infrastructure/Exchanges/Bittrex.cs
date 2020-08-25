@@ -1,5 +1,6 @@
 ﻿using RestSharp;
 using SpreadBot.Models;
+using SpreadBot.Models.API;
 using System;
 using System.Diagnostics;
 using System.Linq;
@@ -22,6 +23,8 @@ namespace SpreadBot.Infrastructure.Exchanges
 
         private Stopwatch HeartbeatStopwatch { get; set; } //To check if the websocket is still working
 
+        public bool IsSetup { get; private set; }
+
         public Bittrex(string apiKey, string apiSecret)
         {
             ApiKey = apiKey;
@@ -31,7 +34,73 @@ namespace SpreadBot.Infrastructure.Exchanges
             HeartbeatStopwatch = new Stopwatch();
         }
 
-        public async Task ConnectWebsocket()
+        public async Task Setup()
+        {
+            await ConnectWebsocket();
+
+            IsSetup = true;
+        }
+
+        public void OnBalance(Action<ApiBalanceData> callback)
+        {
+            SocketClient.On("balance", callback);
+        }
+
+        public void OnSummaries(Action<ApiMarketSummariesData> callback)
+        {
+            SocketClient.On("marketsummaries", callback);
+        }
+
+        public void OnTickers(Action<ApiTickersData> callback)
+        {
+            SocketClient.On("tickers", callback);
+        }
+
+        public void OnOrder(Action<ApiOrderData> callback)
+        {
+            SocketClient.On("order", callback);
+        }
+
+        public async Task<ApiOrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
+        {
+            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
+            request.AddJsonBody(new
+            {
+                marketSymbol,
+                quantity,
+                limit,
+                direction = "BUY",
+                type = "LIMIT",
+                timeInForce = "POST_ONLY_GOOD_TIL_CANCELLED" //TODO Nilo: Check if this breaks anything
+            });
+
+            return await ExecuteRequest<ApiOrderData>(request);
+        }
+
+        public async Task<ApiOrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
+        {
+            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
+            request.AddJsonBody(new
+            {
+                marketSymbol,
+                quantity,
+                limit,
+                direction = "SELL",
+                type = "LIMIT",
+                timeInForce = "POST_ONLY_GOOD_TIL_CANCELLED" //TODO Nilo: Check if this breaks anything
+            });
+
+            return await ExecuteRequest<ApiOrderData>(request);
+        }
+
+        public async Task<ApiOrderData> CancelOrder(string orderId)
+        {
+            var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
+
+            return await ExecuteRequest<ApiOrderData>(request);
+        }
+
+        private async Task ConnectWebsocket()
         {
             if (!await SocketClient.Connect())
                 throw new Exception("Error connecting to websocket");
@@ -45,31 +114,11 @@ namespace SpreadBot.Infrastructure.Exchanges
 
             var subscribeResponse = await SocketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
 
-            if (!subscribeResponse.Any(r => !r.success))
+            if (subscribeResponse.Any(r => !r.success))
                 throw new Exception(message: $"Error subscribing to data streams. Code: {JsonSerializer.Serialize(subscribeResponse)}");
 
             HeartbeatStopwatch.Start();
             SocketClient.On("heartbeat", HeartbeatStopwatch.Restart);
-        }
-
-        public void OnBalance(Action<BalanceData> callback)
-        {
-            SocketClient.On("balance", callback);
-        }
-
-        public void OnSummaries(Action<MarketSummariesData> callback)
-        {
-            SocketClient.On("marketsummaries", callback);
-        }
-
-        public void OnTickers(Action<TickersData> callback)
-        {
-            SocketClient.On("tickers", callback);
-        }
-
-        public void OnOrder(Action<OrderData> callback)
-        {
-            SocketClient.On("order", callback);
         }
 
         private async Task<T> ExecuteRequest<T>(RestRequest request)
@@ -80,48 +129,9 @@ namespace SpreadBot.Infrastructure.Exchanges
                 return JsonSerializer.Deserialize<T>(response.Content);
             else
             {
-                var errorData = JsonSerializer.Deserialize<ErrorData>(response.Content);
+                var errorData = JsonSerializer.Deserialize<ApiErrorData>(response.Content);
                 throw new Exception(errorData.Detail);
             }
-        }
-
-        public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
-        {
-            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            request.AddJsonBody(new
-            {
-                marketSymbol,
-                quantity,
-                limit,
-                direction = "BUY",
-                type = "LIMIT",
-                timeInForce = "POST_ONLY_GOOD_TIL_CANCELLED" //TODO Nilo: Check if this breaks anything
-            });
-
-            return await ExecuteRequest<OrderData>(request);
-        }
-
-        public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
-        {
-            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            request.AddJsonBody(new
-            {
-                marketSymbol,
-                quantity,
-                limit,
-                direction = "SELL",
-                type = "LIMIT",
-                timeInForce = "POST_ONLY_GOOD_TIL_CANCELLED" //TODO Nilo: Check if this breaks anything
-            });
-
-            return await ExecuteRequest<OrderData>(request);
-        }
-
-        public async Task<OrderData> CancelOrder(string orderId)
-        {
-            var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
-
-            return await ExecuteRequest<OrderData>(request);
         }
     }
 }
