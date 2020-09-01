@@ -3,6 +3,7 @@ using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -26,7 +27,7 @@ namespace SpreadBot.Logic
 
 
         public ConcurrentDictionary<int, HashSet<string>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<int, HashSet<string>>();
-        public ConcurrentBag<Bot> AllocatedBots { get; } = new ConcurrentBag<Bot>();
+        public ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
 
         /// <summary>
         /// Evaluates updated markets for new bot-allocation opportunities
@@ -34,7 +35,7 @@ namespace SpreadBot.Logic
         /// <param name="marketDeltas">Markets that were updated</param>
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
-            if (AllocatedBots.Count >= appSettings.MaxNumberOfBots)
+            if (AllocatedBotsByGuid.Count >= appSettings.MaxNumberOfBots)
                 return;
 
             //Filter only relevant markets
@@ -52,8 +53,10 @@ namespace SpreadBot.Logic
                     if (!CanAllocateBotForConfiguration(configuration))
                         break;
 
+                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot);
+                    AllocatedBotsByGuid[bot.Guid] = bot;
+
                     allocatedMarketsForConfiguration.Add(market.Symbol);
-                    AllocatedBots.Add(new Bot(appSettings, dataRepository, configuration, market));
 
                     //TODO: This is not atomic, so we might end up running into issues if unallocating a bot is done in parallel (or any other operation that changes availableBalanceForBaseMarket)
                     availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
@@ -73,8 +76,13 @@ namespace SpreadBot.Logic
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
-            return AllocatedBots.Count < appSettings.MaxNumberOfBots
+            return AllocatedBotsByGuid.Count < appSettings.MaxNumberOfBots
                 && availableBalanceForBaseMarket > spreadConfiguration.AllocatedAmountOfBaseCurrency;
+        }
+
+        private void UnallocateBot(Bot bot)
+        {
+            Debug.Assert(AllocatedBotsByGuid.TryRemove(bot.Guid, out _), "Bot should have been removed successfully");
         }
     }
 }
