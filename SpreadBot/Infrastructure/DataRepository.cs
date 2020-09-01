@@ -3,6 +3,7 @@ using SpreadBot.Models;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
@@ -27,13 +28,13 @@ namespace SpreadBot.Infrastructure
             _exchange.OnOrder(UpdateOrder);
         }
 
-        public Dictionary<string, BalanceData> BalancesData { get; private set; } = new Dictionary<string, BalanceData>();
-        public Dictionary<string, MarketData> MarketsData { get; private set; } = new Dictionary<string, MarketData>();
-        public Dictionary<string, OrderData> OrdersData { get; private set; } = new Dictionary<string, OrderData>();
+        public ConcurrentDictionary<string, BalanceData> BalancesData { get; private set; } = new ConcurrentDictionary<string, BalanceData>();
+        public ConcurrentDictionary<string, MarketData> MarketsData { get; private set; } = new ConcurrentDictionary<string, MarketData>();
+        public ConcurrentDictionary<string, OrderData> OrdersData { get; private set; } = new ConcurrentDictionary<string, OrderData>();
 
-        private Dictionary<string, List<Action>> BalanceHandlers { get; set; } = new Dictionary<string, List<Action>>();
-        private Dictionary<string, List<Action>> MarketHandlers { get; set; } = new Dictionary<string, List<Action>>();
-        private Dictionary<string, List<Action>> OrderHandlers { get; set; } = new Dictionary<string, List<Action>>();
+        private ConcurrentDictionary<string, List<Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, List<Action<BalanceData>>>();
+        private ConcurrentDictionary<string, List<Action<MarketData>>> MarketHandlers { get; set; } = new ConcurrentDictionary<string, List<Action<MarketData>>>();
+        private ConcurrentDictionary<string, List<Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, List<Action<OrderData>>>();
 
 
         //TODO: Unsubscribing
@@ -41,21 +42,21 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to all balance changes
         /// </summary>
-        public void SubscribeToBalances(Action callback)
+        public void SubscribeToBalances(Action<IEnumerable<BalanceData>> callback)
         {
 
         }
         /// <summary>
         /// Subscribe to all market changes
         /// </summary>
-        public void SubscribeToMarketsData(Action callback)
+        public void SubscribeToMarketsData(Action<IEnumerable<MarketData>> callback)
         {
 
         }
         /// <summary>
         /// Subscribe to all order changes
         /// </summary>
-        public void SubscribeToOrdersData(Action callback)
+        public void SubscribeToOrdersData(Action<IEnumerable<OrderData>> callback)
         {
 
         }
@@ -63,52 +64,52 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific currency balance by currencyName
         /// </summary>
-        public void SubscribeToCurrencyBalance(string currencyName, Action callback)
+        public void SubscribeToCurrencyBalance(string currencyName, Action<BalanceData> callback)
         {
-            List<Action> handlers;
+            List<Action<BalanceData>> handlers;
 
             if (!BalanceHandlers.TryGetValue(currencyName, out handlers))
-                BalanceHandlers[currencyName] = handlers = new List<Action>();
+                BalanceHandlers[currencyName] = handlers = new List<Action<BalanceData>>();
 
             handlers.Add(callback);
 
             //If there is already data for the currency balance, fire callback
             if (BalancesData.ContainsKey(currencyName))
-                callback();
+                callback(BalancesData[currencyName]);
         }
 
         /// <summary>
         /// Subscribe to a specific market by marketName
         /// </summary>
-        public void SubscribeToMarketData(string marketName, Action callback)
+        public void SubscribeToMarketData(string marketName, Action<MarketData> callback)
         {
-            List<Action> handlers;
+            List<Action<MarketData>> handlers;
 
             if (!MarketHandlers.TryGetValue(marketName, out handlers))
-                MarketHandlers[marketName] = handlers = new List<Action>();
+                MarketHandlers[marketName] = handlers = new List<Action<MarketData>>();
 
             handlers.Add(callback);
 
             //If there is already data for the market, fire callback
             if (MarketsData.ContainsKey(marketName))
-                callback();
+                callback(MarketsData[marketName]);
         }
 
         /// <summary>
         /// Subscribe to a specific order by orderId
         /// </summary>
-        public void SubscribeToOrderData(string orderId, Action callback)
+        public void SubscribeToOrderData(string orderId, Action<OrderData> callback)
         {
-            List<Action> handlers;
+            List<Action<OrderData>> handlers;
 
             if (!OrderHandlers.TryGetValue(orderId, out handlers))
-                OrderHandlers[orderId] = handlers = new List<Action>();
+                OrderHandlers[orderId] = handlers = new List<Action<OrderData>>();
 
             handlers.Add(callback);
 
             //If there is already data for the order, fire callback
             if (OrdersData.ContainsKey(orderId))
-                callback();
+                callback(OrdersData[orderId]);
         }
 
         private void UpdateBalance(ApiBalanceData balanceData)
