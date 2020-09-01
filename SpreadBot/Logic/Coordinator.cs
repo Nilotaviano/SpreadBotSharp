@@ -83,6 +83,9 @@ namespace SpreadBot.Logic
         private void UnallocateBot(Bot bot)
         {
             Debug.Assert(AllocatedBotsByGuid.TryRemove(bot.Guid, out _), "Bot should have been removed successfully");
+
+            //TODO: This is not atomic
+            availableBalanceForBaseMarket += bot.Balance;
         }
     }
 }
