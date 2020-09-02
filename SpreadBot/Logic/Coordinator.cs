@@ -22,7 +22,7 @@ namespace SpreadBot.Logic
             this.dataRepository = dataRepository;
 
             this.dataRepository.SubscribeToMarketsData(EvaluateMarkets);
-            availableBalanceForBaseMarket = this.dataRepository.BalancesData[appSettings.BaseMarket].CurrencyAbbreviation;
+            availableBalanceForBaseMarket = this.dataRepository.BalancesData[appSettings.BaseMarket].Amount;
         }
 
 
