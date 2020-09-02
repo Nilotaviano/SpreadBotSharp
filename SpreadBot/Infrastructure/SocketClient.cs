@@ -15,9 +15,9 @@ namespace SpreadBot.Infrastructure
      */
     public class SocketClient
     {
-        private string _url;
-        private HubConnection _hubConnection;
-        private IHubProxy _hubProxy;
+        private readonly string _url;
+        private readonly HubConnection _hubConnection;
+        private readonly IHubProxy _hubProxy;
 
         public SocketClient(string url)
         {
@@ -89,8 +89,9 @@ namespace SpreadBot.Infrastructure
 
         public class SocketResponse
         {
-            public bool success { get; set; }
-            public string errorCode { get; set; }
+            public bool Success { get; set; }
+
+            public string ErrorCode { get; set; }
         }
     }
 }

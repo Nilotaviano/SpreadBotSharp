@@ -107,14 +107,14 @@ namespace SpreadBot.Infrastructure.Exchanges
 
             var authResponse = await SocketClient.Authenticate(ApiKey, ApiSecret);
 
-            if (!authResponse.success)
-                throw new Exception($"Error authenticating to websocket. Code: {authResponse.errorCode}");
+            if (!authResponse.Success)
+                throw new Exception($"Error authenticating to websocket. Code: {authResponse.ErrorCode}");
 
             SocketClient.SetAuthExpiringHandler(ApiKey, ApiSecret);
 
             var subscribeResponse = await SocketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
 
-            if (subscribeResponse.Any(r => !r.success))
+            if (subscribeResponse.Any(r => !r.Success))
                 throw new Exception(message: $"Error subscribing to data streams. Code: {JsonSerializer.Serialize(subscribeResponse)}");
 
             HeartbeatStopwatch.Start();

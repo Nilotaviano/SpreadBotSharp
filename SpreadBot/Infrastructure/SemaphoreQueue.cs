@@ -31,8 +31,7 @@ namespace SpreadBot.Infrastructure
             queue.Enqueue(tcs);
             semaphore.WaitAsync().ContinueWith(t =>
             {
-                TaskCompletionSource<bool> popped;
-                if (queue.TryDequeue(out popped))
+                if (queue.TryDequeue(out TaskCompletionSource<bool> popped))
                     popped.SetResult(true);
             });
             return tcs.Task;
