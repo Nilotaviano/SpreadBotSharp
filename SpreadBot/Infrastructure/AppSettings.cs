@@ -19,7 +19,7 @@ namespace SpreadBot.Infrastructure
 
     public class SpreadConfiguration
     {
-        public int Id { get; set; }
+        public Guid Guid { get; } = Guid.NewGuid();
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
         public decimal MinimumSpread { get; set; }
         public decimal MinimumQuoteVolume { get; set; }

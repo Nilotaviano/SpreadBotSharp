@@ -21,12 +21,14 @@ namespace SpreadBot.Logic
             this.spreadConfiguration = spreadConfiguration;
             this.marketData = marketData;
             this.unallocateBotCallback = unallocateBotCallback;
-            Balance = this.spreadConfiguration.AllocatedAmountOfBaseCurrency;
+            Balance = spreadConfiguration.AllocatedAmountOfBaseCurrency;
             Guid = Guid.NewGuid();
             throw new NotImplementedException("Subscribe to dataRepository streams");
         }
 
         public Guid Guid { get; private set; }
+        public Guid SpreadConfigurationGuid => spreadConfiguration.Guid;
+        public string MarketSymbol => marketData.Symbol;
 
         public decimal Balance { get; private set; } //Initial balance + profit/loss
 

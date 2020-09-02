@@ -26,7 +26,7 @@ namespace SpreadBot.Logic
         }
 
 
-        public ConcurrentDictionary<int, HashSet<string>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<int, HashSet<string>>();
+        public ConcurrentDictionary<Guid, HashSet<string>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, HashSet<string>>();
         public ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
 
         /// <summary>
@@ -43,7 +43,7 @@ namespace SpreadBot.Logic
 
             foreach (var configuration in appSettings.SpreadConfigurations)
             {
-                var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Id, new HashSet<string>());
+                var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, new HashSet<string>());
 
                 //TODO Verify if AsParallel would speed this up
                 var marketsToAllocate = marketDeltas.Where(m => !allocatedMarketsForConfiguration.Contains(m.Symbol) && EvaluateMarketBasedOnConfiguration(m, configuration));
@@ -83,6 +83,7 @@ namespace SpreadBot.Logic
         private void UnallocateBot(Bot bot)
         {
             Debug.Assert(AllocatedBotsByGuid.TryRemove(bot.Guid, out _), "Bot should have been removed successfully");
+            Debug.Assert(AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].Remove(bot.MarketSymbol));
 
             //TODO: This is not atomic
             availableBalanceForBaseMarket += bot.Balance;
