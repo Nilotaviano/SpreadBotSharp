@@ -3,6 +3,8 @@ using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SpreadBot.Logic
 {
@@ -13,6 +15,8 @@ namespace SpreadBot.Logic
         private readonly SpreadConfiguration spreadConfiguration;
         private readonly MarketData marketData;
         private readonly Action<Bot> unallocateBotCallback;
+
+        private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
 
         public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback)
         {
@@ -32,7 +36,19 @@ namespace SpreadBot.Logic
 
         public decimal Balance { get; private set; } //Initial balance + profit/loss
 
-        public void FinishWork()
+        private async Task ProcessMessageAsync(/*TODO*/)
+        {
+            try
+            {
+                await semaphore.WaitAsync();
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }
+
+        private void FinishWork()
         {
             unallocateBotCallback(this);
             throw new NotImplementedException("Unsubscribe to dataRepository streams");
