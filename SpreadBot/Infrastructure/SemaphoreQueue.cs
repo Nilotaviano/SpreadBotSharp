@@ -7,10 +7,11 @@ using System.Threading.Tasks;
 
 namespace SpreadBot.Infrastructure
 {
+    //Source: https://stackoverflow.com/a/23415880
     public class SemaphoreQueue
     {
-        private SemaphoreSlim semaphore;
-        private ConcurrentQueue<TaskCompletionSource<bool>> queue =
+        private readonly SemaphoreSlim semaphore;
+        private readonly ConcurrentQueue<TaskCompletionSource<bool>> queue =
             new ConcurrentQueue<TaskCompletionSource<bool>>();
         public SemaphoreQueue(int initialCount)
         {

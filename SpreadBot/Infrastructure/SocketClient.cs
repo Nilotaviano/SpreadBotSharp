@@ -7,6 +7,12 @@ using System.Threading.Tasks;
 
 namespace SpreadBot.Infrastructure
 {
+    /*
+     * TODO list:
+     * Test authentication expired automatic handling (see: SetAuthExpiringHandler())
+     * Implement socket unexpected disconnection handling (see: https://docs.microsoft.com/en-us/aspnet/signalr/overview/guide-to-the-api/handling-connection-lifetime-events)
+     * Make sure that all subscriptions are preserved in both cases above (for both websocket streams (SocketClient.Subscribe) and events (SocketClient.On))
+     */
     public class SocketClient
     {
         private string _url;
