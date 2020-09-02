@@ -1,5 +1,6 @@
 ﻿using SpreadBot.Models;
 using SpreadBot.Models.API;
+using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -21,8 +22,8 @@ namespace SpreadBot.Infrastructure.Exchanges
         void OnOrder(Action<ApiOrderData> callback);
 
         //Rest API methods
-        Task<ApiOrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
-        Task<ApiOrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
-        Task<ApiOrderData> CancelOrder(string orderId);
+        Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
+        Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
+        Task<OrderData> CancelOrder(string orderId);
     }
 }

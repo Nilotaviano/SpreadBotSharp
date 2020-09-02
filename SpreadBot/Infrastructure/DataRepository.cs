@@ -35,6 +35,8 @@ namespace SpreadBot.Infrastructure
             _exchange.OnOrder(UpdateOrder);
         }
 
+        public IExchange Exchange => _exchange;
+
         /// <summary>
         /// BalanceData dictionary indexed by CurrencyAbbreviation
         /// </summary>

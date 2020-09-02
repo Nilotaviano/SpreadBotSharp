@@ -11,5 +11,10 @@ namespace SpreadBot.Infrastructure
             if (arg == null)
                 throw new ArgumentNullException(argName);
         }
+
+        public static decimal Satoshi(this int amount)
+        {
+            return 0.00000001m * amount;
+        }
     }
 }

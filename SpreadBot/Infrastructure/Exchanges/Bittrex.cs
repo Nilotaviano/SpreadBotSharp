@@ -1,6 +1,7 @@
 ﻿using RestSharp;
 using SpreadBot.Models;
 using SpreadBot.Models.API;
+using SpreadBot.Models.Repository;
 using System;
 using System.Diagnostics;
 using System.Linq;
@@ -61,7 +62,7 @@ namespace SpreadBot.Infrastructure.Exchanges
             SocketClient.On("order", callback);
         }
 
-        public async Task<ApiOrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
+        public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
             request.AddJsonBody(new
@@ -69,15 +70,17 @@ namespace SpreadBot.Infrastructure.Exchanges
                 marketSymbol,
                 quantity,
                 limit,
-                direction = "BUY",
-                type = "LIMIT",
-                timeInForce = "POST_ONLY_GOOD_TIL_CANCELLED" //TODO Nilo: Check if this breaks anything
+                direction = OrderDirection.BUY.ToString(),
+                type = OrderType.LIMIT.ToString(),
+                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString() //TODO Nilo: Check if this breaks anything
             });
 
-            return await ExecuteRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteRequest<ApiOrderData>(request);
+
+            return new OrderData(apiOrderData);
         }
 
-        public async Task<ApiOrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
+        public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
             request.AddJsonBody(new
@@ -85,19 +88,23 @@ namespace SpreadBot.Infrastructure.Exchanges
                 marketSymbol,
                 quantity,
                 limit,
-                direction = "SELL",
-                type = "LIMIT",
-                timeInForce = "POST_ONLY_GOOD_TIL_CANCELLED" //TODO Nilo: Check if this breaks anything
+                direction = OrderDirection.SELL.ToString(),
+                type = OrderType.LIMIT.ToString(),
+                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString() //TODO Nilo: Check if this breaks anything
             });
 
-            return await ExecuteRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteRequest<ApiOrderData>(request);
+
+            return new OrderData(apiOrderData);
         }
 
-        public async Task<ApiOrderData> CancelOrder(string orderId)
+        public async Task<OrderData> CancelOrder(string orderId)
         {
             var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
 
-            return await ExecuteRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteRequest<ApiOrderData>(request);
+
+            return new OrderData(apiOrderData);
         }
 
         private async Task ConnectWebsocket()
@@ -130,7 +137,7 @@ namespace SpreadBot.Infrastructure.Exchanges
             else
             {
                 var errorData = JsonSerializer.Deserialize<ApiErrorData>(response.Content);
-                throw new Exception(errorData.Detail);
+                throw new ExchangeRequestException(errorData);
             }
         }
     }
