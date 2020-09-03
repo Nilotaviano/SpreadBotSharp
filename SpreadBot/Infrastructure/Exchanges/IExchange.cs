@@ -12,6 +12,8 @@ namespace SpreadBot.Infrastructure.Exchanges
     {
         bool IsSetup { get; }
 
+        decimal FeeRate { get; }
+
         Task Setup();
 
         //Websocket subscription methods

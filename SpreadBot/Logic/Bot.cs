@@ -49,17 +49,18 @@ namespace SpreadBot.Logic
             get => currentOrderData;
             set
             {
+                //TODO: I just wanted to get this logic done, it shouldn't be here in the final bot implementation
                 if (currentOrderData?.Id != value?.Id)
                 {
-                    //TODO: I just wanted to get this logic done, it shouldn't be here in the final bot implementation
                     if (currentOrderData != null)
                         dataRepository.UnsubscribeToOrderData(currentOrderData.Id, Guid);
 
                     if (value?.Status == OrderStatus.OPEN)
                         dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
-                    else
-                        dataRepository.UnsubscribeToOrderData(value.Id, Guid);
                 }
+                if (value?.Status == OrderStatus.CLOSED)
+                    dataRepository.UnsubscribeToOrderData(value.Id, Guid);
+
 
                 currentOrderData = value;
             }
@@ -100,12 +101,15 @@ namespace SpreadBot.Logic
 
         private async Task ProcessMarketData(MarketData marketData)
         {
-            switch(botState)
+            switch (botState)
             {
                 case BotState.Buy:
                     try
                     {
-                        var orderData = await exchange.BuyLimit(MarketSymbol, Balance, marketData.BidRate + 1.Satoshi());
+                        decimal bidPrice = marketData.BidRate + 1.Satoshi();
+                        decimal amount = Balance * (1 - exchange.FeeRate) / bidPrice;
+
+                        var orderData = await exchange.BuyLimit(MarketSymbol, amount, bidPrice);
 
                         if (orderData?.Status == OrderStatus.OPEN)
                         {

@@ -26,6 +26,8 @@ namespace SpreadBot.Infrastructure.Exchanges
 
         public bool IsSetup { get; private set; }
 
+        public decimal FeeRate => 0.002m;
+
         public Bittrex(string apiKey, string apiSecret)
         {
             ApiKey = apiKey;
