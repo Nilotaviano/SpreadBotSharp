@@ -107,12 +107,12 @@ namespace SpreadBot.Logic
                     {
                         var orderData = await exchange.BuyLimit(MarketSymbol, Balance, marketData.BidRate + 1.Satoshi());
 
-                        if (orderData != null && orderData.Status == OrderStatus.OPEN)
+                        if (orderData?.Status == OrderStatus.OPEN)
                         {
                             CurrentOrderData = orderData;
                             botState = BotState.BuyOrderActive;
                         }
-                        else if (orderData.Status == OrderStatus.CLOSED) //TODO: Check if this ever happens
+                        else if (orderData?.Status == OrderStatus.CLOSED) //TODO: Check if this ever happens
                             await ProcessOrderData(orderData);
                     }
                     catch (ExchangeRequestException e)
