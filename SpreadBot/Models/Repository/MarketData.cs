@@ -4,8 +4,10 @@ using System.Text;
 
 namespace SpreadBot.Models.Repository
 {
-    public class MarketData
+    public class MarketData : IMessage
     {
+        public MessageType MessageType => MessageType.MarketData;
+
         public string Symbol { get; set; }
         public decimal LastTradeRate { get; set; }
         public decimal BidRate { get; set; }

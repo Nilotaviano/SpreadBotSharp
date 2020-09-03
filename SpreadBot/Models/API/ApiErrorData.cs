@@ -8,5 +8,6 @@ namespace SpreadBot.Models.API
     {
         public string Code { get; set; }
         public string Detail { get; set; }
+        public object Data { get; set; }
     }
 }

@@ -11,6 +11,13 @@ using System.Threading.Tasks;
 
 namespace SpreadBot.Infrastructure
 {
+    /*
+     * TODO list:
+     * Message queue using ConcurrentQueue
+     * Implement SubscribeToBalances, SubscribeToMarketsData, SubscribeToOrdersData, which should create a subscription to all data 
+     * Implement UpdateBalance, UpdateSummaries, UpdateTickers and UpdateOrder
+     * Implement Rest API redundancy (make API calls every X minutes so that we have a fallback in case the Websocket becomes unreliable)
+     */
     public class DataRepository
     {
         private readonly IExchange _exchange;
@@ -28,16 +35,28 @@ namespace SpreadBot.Infrastructure
             _exchange.OnOrder(UpdateOrder);
         }
 
+        public IExchange Exchange => _exchange;
+
+        /// <summary>
+        /// BalanceData dictionary indexed by CurrencyAbbreviation
+        /// </summary>
         public ConcurrentDictionary<string, BalanceData> BalancesData { get; private set; } = new ConcurrentDictionary<string, BalanceData>();
+        /// <summary>
+        /// MarketData dictionary indexed by Symbol
+        /// </summary>
         public ConcurrentDictionary<string, MarketData> MarketsData { get; private set; } = new ConcurrentDictionary<string, MarketData>();
+        /// <summary>
+        /// OrderData dictionary indexed by OrderId
+        /// </summary>
         public ConcurrentDictionary<string, OrderData> OrdersData { get; private set; } = new ConcurrentDictionary<string, OrderData>();
 
-        private ConcurrentDictionary<string, List<Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, List<Action<BalanceData>>>();
-        private ConcurrentDictionary<string, List<Action<MarketData>>> MarketHandlers { get; set; } = new ConcurrentDictionary<string, List<Action<MarketData>>>();
-        private ConcurrentDictionary<string, List<Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, List<Action<OrderData>>>();
+        // key: currency abbreviation, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
+        // key: market symbol, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>> MarketHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>>();
+        // key: order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
 
-
-        //TODO: Unsubscribing
 
         /// <summary>
         /// Subscribe to all balance changes
@@ -64,14 +83,12 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific currency balance by currencyName
         /// </summary>
-        public void SubscribeToCurrencyBalance(string currencyName, Action<BalanceData> callback)
+        public void SubscribeToCurrencyBalance(string currencyName, Guid handlerGuid, Action<BalanceData> callback)
         {
-            List<Action<BalanceData>> handlers;
+            if (!BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
+                BalanceHandlers[currencyName] = handlers = new ConcurrentDictionary<Guid, Action<BalanceData>>();
 
-            if (!BalanceHandlers.TryGetValue(currencyName, out handlers))
-                BalanceHandlers[currencyName] = handlers = new List<Action<BalanceData>>();
-
-            handlers.Add(callback);
+            handlers[handlerGuid] = callback;
 
             //If there is already data for the currency balance, fire callback
             if (BalancesData.ContainsKey(currencyName))
@@ -81,14 +98,12 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific market by marketName
         /// </summary>
-        public void SubscribeToMarketData(string marketName, Action<MarketData> callback)
+        public void SubscribeToMarketData(string marketName, Guid handlerGuid, Action<MarketData> callback)
         {
-            List<Action<MarketData>> handlers;
+            if (!MarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
+                MarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
 
-            if (!MarketHandlers.TryGetValue(marketName, out handlers))
-                MarketHandlers[marketName] = handlers = new List<Action<MarketData>>();
-
-            handlers.Add(callback);
+            handlers[handlerGuid] = callback;
 
             //If there is already data for the market, fire callback
             if (MarketsData.ContainsKey(marketName))
@@ -98,18 +113,47 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific order by orderId
         /// </summary>
-        public void SubscribeToOrderData(string orderId, Action<OrderData> callback)
+        public void SubscribeToOrderData(string orderId, Guid handlerGuid, Action<OrderData> callback)
         {
-            List<Action<OrderData>> handlers;
+            if (!OrderHandlers.TryGetValue(orderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+                OrderHandlers[orderId] = handlers = new ConcurrentDictionary<Guid, Action<OrderData>>();
 
-            if (!OrderHandlers.TryGetValue(orderId, out handlers))
-                OrderHandlers[orderId] = handlers = new List<Action<OrderData>>();
-
-            handlers.Add(callback);
+            handlers[handlerGuid] = callback;
 
             //If there is already data for the order, fire callback
             if (OrdersData.ContainsKey(orderId))
                 callback(OrdersData[orderId]);
+        }
+
+        /// <summary>
+        /// Unsubscribe to a specific currency balance by currencyName
+        /// </summary>
+        public void UnsubscribeToCurrencyBalance(string currencyName, Guid handlerGuid)
+        {
+            if (!BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
+                BalanceHandlers[currencyName] = handlers = new ConcurrentDictionary<Guid, Action<BalanceData>>();
+
+            handlers.Remove(handlerGuid, out _);
+        }
+
+        /// <summary>
+        /// Unsubscribe to a specific market by marketName
+        /// </summary>
+        public void UnsubscribeToMarketData(string marketName, Guid handlerGuid)
+        {
+            if (!MarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
+                MarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
+
+            handlers.Remove(handlerGuid, out _);
+        }
+
+        /// <summary>
+        /// Unsubscribe to a specific order by orderId
+        /// </summary>
+        public void UnsubscribeToOrderData(string orderId, Guid handlerGuid)
+        {
+            if (!OrderHandlers.TryGetValue(orderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+                handlers.Remove(handlerGuid, out _);
         }
 
         private void UpdateBalance(ApiBalanceData balanceData)

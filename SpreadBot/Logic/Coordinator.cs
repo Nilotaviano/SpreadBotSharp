@@ -55,11 +55,12 @@ namespace SpreadBot.Logic
 
                     var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot);
                     AllocatedBotsByGuid[bot.Guid] = bot;
-
                     allocatedMarketsForConfiguration.Add(market.Symbol);
 
                     //TODO: This is not atomic, so we might end up running into issues if unallocating a bot is done in parallel (or any other operation that changes availableBalanceForBaseMarket)
                     availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
+
+                    bot.Start();
                 }
 
                 if (!CanAllocateBotForConfiguration(configuration))
