@@ -1,13 +1,10 @@
 ﻿using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Models;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Text;
-using System.Text.Json;
-using System.Threading.Tasks;
+using System.Linq;
 
 namespace SpreadBot.Infrastructure
 {
@@ -20,22 +17,25 @@ namespace SpreadBot.Infrastructure
      */
     public class DataRepository
     {
-        private readonly IExchange _exchange;
+        private int? lastBalanceSequence;
+        private int? lastSummarySequence;
+        private int? lastTickerSequence;
+        private int? lastOrderSequence;
 
         public DataRepository(IExchange exchange)
         {
             if (!exchange.IsSetup)
                 throw new ArgumentException("Exchange is not setup");
 
-            _exchange = exchange;
+            Exchange = exchange;
 
-            _exchange.OnBalance(UpdateBalance);
-            _exchange.OnSummaries(UpdateSummaries);
-            _exchange.OnTickers(UpdateTickers);
-            _exchange.OnOrder(UpdateOrder);
+            Exchange.OnBalance(UpdateBalance);
+            Exchange.OnSummaries(UpdateSummaries);
+            Exchange.OnTickers(UpdateTickers);
+            Exchange.OnOrder(UpdateOrder);
         }
 
-        public IExchange Exchange => _exchange;
+        public IExchange Exchange { get; }
 
         /// <summary>
         /// BalanceData dictionary indexed by CurrencyAbbreviation
@@ -158,22 +158,75 @@ namespace SpreadBot.Infrastructure
 
         private void UpdateBalance(ApiBalanceData balanceData)
         {
-            throw new NotImplementedException();
+            var balance = new BalanceData
+            {
+                Amount = balanceData.Delta.Available,
+                CurrencyAbbreviation = balanceData.Delta.CurrencySymbol
+            };
+
+            this.BalancesData[balance.CurrencyAbbreviation] = balance;
+            
+            InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
         }
 
-        private void UpdateSummaries(ApiMarketSummariesData balanceData)
+        private void UpdateSummaries(ApiMarketSummariesData summariesData)
         {
-            throw new NotImplementedException();
+            var marketData = summariesData.Deltas.Select(delta => new MarketData(delta));
+
+            UpdateMarketData(marketData);
         }
 
-        private void UpdateTickers(ApiTickersData balanceData)
+        private void UpdateTickers(ApiTickersData tickersData)
         {
-            throw new NotImplementedException();
+            var marketData = tickersData.Deltas.Select(delta => new MarketData(delta));
+            
+            UpdateMarketData(marketData);
         }
 
         private void UpdateOrder(ApiOrderData orderData)
         {
-            throw new NotImplementedException();
+            var data = new OrderData(orderData);
+
+            this.OrdersData[data.ClientOrderId] = data;
+
+            InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
+        }
+
+        private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
+        {
+            var handlers = handlersDict.GetOrAdd(key, new ConcurrentDictionary<Guid, Action<T>>());
+
+            handlers.Values.AsParallel()
+                           .ForAll(handler => handler?.Invoke(data));
+        }
+
+        private void UpdateMarketData(IEnumerable<MarketData> marketData)
+        {
+            var newData = marketData.AsParallel().Select(data =>
+                            this.MarketsData.AddOrUpdate(data.Symbol,
+                                                         data,
+                                                         (key, existingData) => this.MergeMarketData(existingData, data))
+                        );
+
+            newData.AsParallel()
+                   .ForAll(data => InvokeHandlers(this.MarketHandlers, data.Symbol, data));
+        }
+
+        private MarketData MergeMarketData(MarketData existingData, MarketData data)
+        {
+            return new MarketData
+            {
+                AskRate = data.AskRate ?? existingData.AskRate,
+                BidRate = data.BidRate ?? existingData.BidRate,
+                High = data.High ?? existingData.High,
+                LastTradeRate = data.LastTradeRate ?? existingData.LastTradeRate,
+                Low = data.Low ?? existingData.Low,
+                PercentChange = data.PercentChange ?? existingData.PercentChange,
+                QuoteVolume = data.QuoteVolume ?? existingData.QuoteVolume,
+                UpdatedAt = data.UpdatedAt ?? existingData.UpdatedAt,
+                Volume = data.Volume ?? existingData.Volume,
+                Symbol = data.Symbol
+            };
         }
     }
 }
