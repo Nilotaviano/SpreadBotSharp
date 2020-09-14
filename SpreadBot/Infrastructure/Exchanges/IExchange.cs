@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
+using static SpreadBot.Models.API.ApiBalanceData;
 
 namespace SpreadBot.Infrastructure.Exchanges
 {
@@ -27,5 +28,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> CancelOrder(string orderId);
+
+        Task<IEnumerable<BalanceData>> GetBalanceData();
     }
 }

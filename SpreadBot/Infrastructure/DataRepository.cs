@@ -5,6 +5,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SpreadBot.Infrastructure
 {
@@ -27,12 +28,21 @@ namespace SpreadBot.Infrastructure
             if (!exchange.IsSetup)
                 throw new ArgumentException("Exchange is not setup");
 
+            pendingBalanceMessages = new BlockingCollection<ApiBalanceData>();
+            pendingMarketSummaryMessages = new BlockingCollection<ApiMarketSummariesData>();
+            pendingOrderMessages = new BlockingCollection<ApiOrderData>();
+            pendingTickersMessages = new BlockingCollection<ApiTickersData>();
+
             Exchange = exchange;
 
-            Exchange.OnBalance(UpdateBalance);
-            Exchange.OnSummaries(UpdateSummaries);
-            Exchange.OnTickers(UpdateTickers);
-            Exchange.OnOrder(UpdateOrder);
+            FetchAllData();
+
+            Exchange.OnBalance(pendingBalanceMessages.Add);
+            Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
+            Exchange.OnTickers(pendingTickersMessages.Add);
+            Exchange.OnOrder(pendingOrderMessages.Add);
+
+            ConsumeData();
         }
 
         public IExchange Exchange { get; }
@@ -45,10 +55,6 @@ namespace SpreadBot.Infrastructure
         /// MarketData dictionary indexed by Symbol
         /// </summary>
         public ConcurrentDictionary<string, MarketData> MarketsData { get; private set; } = new ConcurrentDictionary<string, MarketData>();
-        /// <summary>
-        /// OrderData dictionary indexed by OrderId
-        /// </summary>
-        public ConcurrentDictionary<string, OrderData> OrdersData { get; private set; } = new ConcurrentDictionary<string, OrderData>();
 
         // key: currency abbreviation, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
@@ -57,28 +63,10 @@ namespace SpreadBot.Infrastructure
         // key: order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
 
-
-        /// <summary>
-        /// Subscribe to all balance changes
-        /// </summary>
-        public void SubscribeToBalances(Action<IEnumerable<BalanceData>> callback)
-        {
-
-        }
-        /// <summary>
-        /// Subscribe to all market changes
-        /// </summary>
-        public void SubscribeToMarketsData(Action<IEnumerable<MarketData>> callback)
-        {
-
-        }
-        /// <summary>
-        /// Subscribe to all order changes
-        /// </summary>
-        public void SubscribeToOrdersData(Action<IEnumerable<OrderData>> callback)
-        {
-
-        }
+        private BlockingCollection<ApiBalanceData> pendingBalanceMessages;
+        private BlockingCollection<ApiMarketSummariesData> pendingMarketSummaryMessages;
+        private BlockingCollection<ApiOrderData> pendingOrderMessages;
+        private BlockingCollection<ApiTickersData> pendingTickersMessages;
 
         /// <summary>
         /// Subscribe to a specific currency balance by currencyName
@@ -119,10 +107,6 @@ namespace SpreadBot.Infrastructure
                 OrderHandlers[orderId] = handlers = new ConcurrentDictionary<Guid, Action<OrderData>>();
 
             handlers[handlerGuid] = callback;
-
-            //If there is already data for the order, fire callback
-            if (OrdersData.ContainsKey(orderId))
-                callback(OrdersData[orderId]);
         }
 
         /// <summary>
@@ -156,48 +140,78 @@ namespace SpreadBot.Infrastructure
                 handlers.Remove(handlerGuid, out _);
         }
 
-        private void UpdateBalance(ApiBalanceData balanceData)
+        private void ConsumeData()
         {
-            var balance = new BalanceData
+            ConsumeBalanceData();
+            ConsumeOrderData();
+            ConsumeMarketSummaryData();
+            ConsumeTickersData();
+        }
+
+        private void ConsumeBalanceData()
+        {
+            foreach (var balanceData in pendingBalanceMessages.GetConsumingEnumerable())
             {
-                Amount = balanceData.Delta.Available,
-                CurrencyAbbreviation = balanceData.Delta.CurrencySymbol
-            };
+                if (lastBalanceSequence.HasValue && balanceData.Sequence != lastBalanceSequence.Value + 1)
+                    continue;
 
-            this.BalancesData[balance.CurrencyAbbreviation] = balance;
-            
-            InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
+                var balance = new BalanceData
+                {
+                    Amount = balanceData.Delta.Available,
+                    CurrencyAbbreviation = balanceData.Delta.CurrencySymbol
+                };
+
+                this.BalancesData[balance.CurrencyAbbreviation] = balance;
+
+                InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
+
+                lastBalanceSequence += 1;
+            }
         }
 
-        private void UpdateSummaries(ApiMarketSummariesData summariesData)
+        private void ConsumeOrderData()
         {
-            var marketData = summariesData.Deltas.Select(delta => new MarketData(delta));
+            foreach (var orderData in pendingOrderMessages.GetConsumingEnumerable())
+            {
+                if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
+                    continue;
 
-            UpdateMarketData(marketData);
+                var data = new OrderData(orderData);
+
+                InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
+
+                lastOrderSequence += 1;
+            }
         }
 
-        private void UpdateTickers(ApiTickersData tickersData)
+        private void ConsumeMarketSummaryData()
         {
-            var marketData = tickersData.Deltas.Select(delta => new MarketData(delta));
-            
-            UpdateMarketData(marketData);
+            foreach (var summaryData in pendingMarketSummaryMessages.GetConsumingEnumerable())
+            {
+                if (lastSummarySequence.HasValue && summaryData.Sequence != lastSummarySequence.Value + 1)
+                    continue;
+
+                var marketData = summaryData.Deltas.Select(delta => new MarketData(delta));
+
+                UpdateMarketData(marketData);
+
+                lastSummarySequence += 1;
+            }
         }
 
-        private void UpdateOrder(ApiOrderData orderData)
+        private void ConsumeTickersData()
         {
-            var data = new OrderData(orderData);
+            foreach (var tickersData in pendingTickersMessages.GetConsumingEnumerable())
+            {
+                if (lastTickerSequence.HasValue && tickersData.Sequence != lastTickerSequence.Value + 1)
+                    continue;
 
-            this.OrdersData[data.ClientOrderId] = data;
+                var marketData = tickersData.Deltas.Select(delta => new MarketData(delta));
 
-            InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
-        }
+                UpdateMarketData(marketData);
 
-        private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
-        {
-            var handlers = handlersDict.GetOrAdd(key, new ConcurrentDictionary<Guid, Action<T>>());
-
-            handlers.Values.AsParallel()
-                           .ForAll(handler => handler?.Invoke(data));
+                lastTickerSequence += 1;
+            }
         }
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
@@ -210,6 +224,34 @@ namespace SpreadBot.Infrastructure
 
             newData.AsParallel()
                    .ForAll(data => InvokeHandlers(this.MarketHandlers, data.Symbol, data));
+        }
+
+        private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
+        {
+            var handlers = handlersDict.GetOrAdd(key, new ConcurrentDictionary<Guid, Action<T>>());
+
+            handlers.Values.AsParallel()
+                           .ForAll(handler => handler?.Invoke(data));
+        }
+
+        private void FetchAllData()
+        {
+            Task.WaitAll(FetchBalanceData(), FetchMarketData(), FetchOrdersData());
+        }
+
+        private async Task FetchBalanceData()
+        {
+            var balances = await Exchange.GetBalanceData();
+
+            balances.AsParallel().ForAll(balance => BalancesData[balance.CurrencyAbbreviation] = balance);
+        }
+
+        private async Task FetchMarketData()
+        {
+        }
+
+        private async Task FetchOrdersData()
+        {
         }
 
         private MarketData MergeMarketData(MarketData existingData, MarketData data)

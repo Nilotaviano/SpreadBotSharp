@@ -3,11 +3,13 @@ using SpreadBot.Models;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
+using static SpreadBot.Models.API.ApiBalanceData;
 
 namespace SpreadBot.Infrastructure.Exchanges
 {
@@ -62,6 +64,15 @@ namespace SpreadBot.Infrastructure.Exchanges
         public void OnOrder(Action<ApiOrderData> callback)
         {
             SocketClient.On("order", callback);
+        }
+
+        public async Task<IEnumerable<BalanceData>> GetBalanceData()
+        {
+            var request = new RestRequest("/balances", Method.GET, DataFormat.Json);
+
+            var balances = await ExecuteRequest<Balance[]>(request);
+
+            return balances.Select(balance => new BalanceData(balance));
         }
 
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
