@@ -1,4 +1,5 @@
-﻿using SpreadBot.Infrastructure.Exchanges;
+﻿using SpreadBot.Infrastructure;
+using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models;
 using System;
 using System.Text.Json;
@@ -13,10 +14,7 @@ namespace SpreadBot
             var bittrex = new Bittrex(Environment.GetEnvironmentVariable("apikey"), Environment.GetEnvironmentVariable("apisecret"));
             await bittrex.Setup();
 
-            bittrex.OnBalance((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
-            bittrex.OnSummaries((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
-            bittrex.OnTickers((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
-            bittrex.OnOrder((x) => Console.WriteLine(JsonSerializer.Serialize(x)));
+            var dataRepository = new DataRepository(bittrex);
 
             Console.ReadLine();
         }

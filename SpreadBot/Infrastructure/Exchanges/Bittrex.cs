@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using static SpreadBot.Models.API.ApiBalanceData;
@@ -70,7 +71,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         {
             var request = new RestRequest("/balances", Method.GET, DataFormat.Json);
 
-            var balances = await ExecuteRequest<Balance[]>(request);
+            var balances = await ExecuteAuthenticatedRequest<Balance[]>(request);
 
             return balances.Select(balance => new BalanceData(balance));
         }
@@ -78,7 +79,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            request.AddJsonBody(new
+            var body = JsonSerializer.Serialize(new
             {
                 marketSymbol,
                 quantity,
@@ -87,8 +88,9 @@ namespace SpreadBot.Infrastructure.Exchanges
                 type = OrderType.LIMIT.ToString(),
                 timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString() //TODO Nilo: Check if this breaks anything
             });
+            request.AddParameter("application/json", body, ParameterType.RequestBody);
 
-            var apiOrderData = await ExecuteRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<ApiOrderData>(request);
 
             return new OrderData(apiOrderData);
         }
@@ -96,7 +98,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            request.AddJsonBody(new
+            var body = JsonSerializer.Serialize(new
             {
                 marketSymbol,
                 quantity,
@@ -105,8 +107,9 @@ namespace SpreadBot.Infrastructure.Exchanges
                 type = OrderType.LIMIT.ToString(),
                 timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString() //TODO Nilo: Check if this breaks anything
             });
+            request.AddParameter("application/json", body, ParameterType.RequestBody);
 
-            var apiOrderData = await ExecuteRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<ApiOrderData>(request);
 
             return new OrderData(apiOrderData);
         }
@@ -115,7 +118,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         {
             var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
 
-            var apiOrderData = await ExecuteRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<ApiOrderData>(request);
 
             return new OrderData(apiOrderData);
         }
@@ -143,6 +146,29 @@ namespace SpreadBot.Infrastructure.Exchanges
 
         private async Task<T> ExecuteRequest<T>(RestRequest request)
         {
+            var response = await ApiClient.ExecuteAsync(request);
+
+            if (response.StatusCode == HttpStatusCode.Created)
+                return JsonSerializer.Deserialize<T>(response.Content);
+            else
+            {
+                var errorData = JsonSerializer.Deserialize<ApiErrorData>(response.Content);
+                throw new ExchangeRequestException(errorData);
+            }
+        }
+
+        private async Task<T> ExecuteAuthenticatedRequest<T>(RestRequest request)
+        {
+            string timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+            string method = request.Method.ToString();
+            string requestUri = ApiClient.BuildUri(request).ToString();
+            string contentHash = (request.Parameters?.Single(p => p.Type == ParameterType.RequestBody).Value as string ?? string.Empty).Hash();
+
+            request.AddHeader("Api-Key", ApiKey);
+            request.AddHeader("Api-Timestamp", timestamp);
+            request.AddHeader("Api-Content-Hash", contentHash);
+            request.AddHeader("Api-Signature", $"{timestamp}{requestUri}{method}{contentHash}".Sign(ApiSecret));
+
             var response = await ApiClient.ExecuteAsync(request);
 
             if (response.StatusCode == HttpStatusCode.Created)

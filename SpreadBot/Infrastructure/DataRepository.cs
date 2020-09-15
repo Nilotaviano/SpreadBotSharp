@@ -270,5 +270,10 @@ namespace SpreadBot.Infrastructure
                 Symbol = data.Symbol
             };
         }
+
+        internal void SubscribeToMarketsData(Action<IEnumerable<MarketData>> evaluateMarkets)
+        {
+            throw new NotImplementedException();
+        }
     }
 }
