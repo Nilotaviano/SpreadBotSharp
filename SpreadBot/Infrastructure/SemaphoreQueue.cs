@@ -40,5 +40,10 @@ namespace SpreadBot.Infrastructure
         {
             semaphore.Release();
         }
+
+        public void Clear()
+        {
+            queue.Clear();
+        }
     }
 }
