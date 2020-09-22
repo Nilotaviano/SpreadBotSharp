@@ -117,7 +117,8 @@ namespace SpreadBot.Logic
                                 decimal amount = Balance * (1 - exchange.FeeRate) / bidPrice;
 
                                 var orderData = await exchange.BuyLimit(MarketSymbol, amount, bidPrice);
-                                await ProcessOrderDataInternal(orderData);
+                                SetCurrentOrderData(orderData);
+                                await ProcessOrderData(orderData);
                             }
                             else
                                 FinishWork();
@@ -138,13 +139,15 @@ namespace SpreadBot.Logic
                             {
                                 //Cancel order and exit
                                 var orderData = await exchange.CancelOrder(currentOrderData.Id);
-                                await ProcessOrderDataInternal(orderData);
+                                SetCurrentOrderData(orderData);
+                                await ProcessOrderData(orderData);
                             }
                             else if (marketData.BidRate - currentOrderData.Limit > spreadConfiguration.MaxBidAskDifferenceFromOrder)
                             {
                                 //Cancel order and switch to BotState.Buy
                                 var orderData = await exchange.CancelOrder(currentOrderData.Id);
-                                await ProcessOrderDataInternal(orderData);
+                                SetCurrentOrderData(orderData);
+                                await ProcessOrderData(orderData);
                             }
                         }
                         catch (ExchangeRequestException e)
@@ -165,7 +168,8 @@ namespace SpreadBot.Logic
                             decimal askPrice = marketData.AskRate.Value - 1.Satoshi();
 
                             var orderData = await exchange.SellLimit(MarketSymbol, HeldAmount, askPrice);
-                            await ProcessOrderDataInternal(orderData);
+                            SetCurrentOrderData(orderData);
+                            await ProcessOrderData(orderData);
                         }
                         catch (ExchangeRequestException e)
                         {
@@ -184,7 +188,8 @@ namespace SpreadBot.Logic
                             if (buyStopwatch.Elapsed.TotalMinutes > spreadConfiguration.MinutesForLoss)
                             {
                                 var orderData = await exchange.CancelOrder(currentOrderData.Id);
-                                await ProcessOrderDataInternal(orderData);
+                                SetCurrentOrderData(orderData);
+                                await ProcessOrderData(orderData);
                             }
                         }
                     }
@@ -198,17 +203,6 @@ namespace SpreadBot.Logic
             }
         }
 
-        private async Task ProcessOrderDataInternal(OrderData orderData)
-        {
-            if(orderData?.Status == OrderStatus.OPEN)
-                SetCurrentOrderData(orderData);
-
-            await ProcessOrderData(orderData);
-        }
-
-        /// <summary>
-        /// ProcessOrderData should only be called from ProcessOrderDataInternalInternal or as a callback to dataRepository.SubscribeToOrderData
-        /// </summary>
         private async Task ProcessOrderData(OrderData orderData)
         {
             if (orderData.Id != currentOrderData?.Id)
