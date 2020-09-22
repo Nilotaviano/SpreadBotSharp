@@ -3,11 +3,8 @@ using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic

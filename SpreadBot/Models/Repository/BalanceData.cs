@@ -1,4 +1,5 @@
-﻿using System;
+﻿using SpreadBot.Models.API;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using static SpreadBot.Models.API.ApiBalanceData;
@@ -16,7 +17,7 @@ namespace SpreadBot.Models.Repository
         }
 
         public MessageType MessageType => MessageType.BalanceData;
-        
+
         public string CurrencyAbbreviation { get; set; }
         public decimal Amount { get; set; }
     }

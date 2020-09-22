@@ -1,4 +1,5 @@
-﻿using RestSharp;
+﻿using Newtonsoft.Json;
+using RestSharp;
 using SpreadBot.Models;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
@@ -7,8 +8,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
-using System.Security.Cryptography;
-using System.Text.Json;
 using System.Threading.Tasks;
 using static SpreadBot.Models.API.ApiBalanceData;
 
@@ -42,7 +41,7 @@ namespace SpreadBot.Infrastructure.Exchanges
 
         public async Task Setup()
         {
-            await ConnectWebsocket();
+            await ConnectWebsocket(SocketClient);
 
             IsSetup = true;
         }
@@ -79,7 +78,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            var body = JsonSerializer.Serialize(new
+            var body = JsonConvert.SerializeObject(new
             {
                 marketSymbol,
                 quantity,
@@ -98,7 +97,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            var body = JsonSerializer.Serialize(new
+            var body = JsonConvert.SerializeObject(new
             {
                 marketSymbol,
                 quantity,
@@ -123,25 +122,25 @@ namespace SpreadBot.Infrastructure.Exchanges
             return new OrderData(apiOrderData);
         }
 
-        private async Task ConnectWebsocket()
+        private async Task ConnectWebsocket(SocketClient socketClient)
         {
-            if (!await SocketClient.Connect())
+            if (!await socketClient.Connect())
                 throw new Exception("Error connecting to websocket");
 
-            var authResponse = await SocketClient.Authenticate(ApiKey, ApiSecret);
+            var authResponse = await socketClient.Authenticate(ApiKey, ApiSecret);
 
             if (!authResponse.Success)
                 throw new Exception($"Error authenticating to websocket. Code: {authResponse.ErrorCode}");
 
-            SocketClient.SetAuthExpiringHandler(ApiKey, ApiSecret);
+            socketClient.SetAuthExpiringHandler(ApiKey, ApiSecret);
 
-            var subscribeResponse = await SocketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
+            var subscribeResponse = await socketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
 
             if (subscribeResponse.Any(r => !r.Success))
-                throw new Exception(message: $"Error subscribing to data streams. Code: {JsonSerializer.Serialize(subscribeResponse)}");
+                throw new Exception(message: $"Error subscribing to data streams. Code: {JsonConvert.SerializeObject(subscribeResponse)}");
 
             HeartbeatStopwatch.Start();
-            SocketClient.On("heartbeat", HeartbeatStopwatch.Restart);
+            socketClient.On("heartbeat", HeartbeatStopwatch.Restart);
         }
 
         private async Task<T> ExecuteRequest<T>(RestRequest request)
@@ -149,10 +148,10 @@ namespace SpreadBot.Infrastructure.Exchanges
             var response = await ApiClient.ExecuteAsync(request);
 
             if (response.StatusCode == HttpStatusCode.Created)
-                return JsonSerializer.Deserialize<T>(response.Content);
+                return JsonConvert.DeserializeObject<T>(response.Content);
             else
             {
-                var errorData = JsonSerializer.Deserialize<ApiErrorData>(response.Content);
+                var errorData = JsonConvert.DeserializeObject<ApiErrorData>(response.Content);
                 throw new ExchangeRequestException(errorData);
             }
         }
@@ -162,7 +161,7 @@ namespace SpreadBot.Infrastructure.Exchanges
             string timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
             string method = request.Method.ToString();
             string requestUri = ApiClient.BuildUri(request).ToString();
-            string contentHash = (request.Parameters?.Single(p => p.Type == ParameterType.RequestBody).Value as string ?? string.Empty).Hash();
+            string contentHash = (request.Parameters.SingleOrDefault(p => p.Type == ParameterType.RequestBody)?.Value as string ?? string.Empty).Hash();
 
             request.AddHeader("Api-Key", ApiKey);
             request.AddHeader("Api-Timestamp", timestamp);
@@ -171,11 +170,11 @@ namespace SpreadBot.Infrastructure.Exchanges
 
             var response = await ApiClient.ExecuteAsync(request);
 
-            if (response.StatusCode == HttpStatusCode.Created)
-                return JsonSerializer.Deserialize<T>(response.Content);
+            if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Created)
+                return JsonConvert.DeserializeObject<T>(response.Content);
             else
             {
-                var errorData = JsonSerializer.Deserialize<ApiErrorData>(response.Content);
+                var errorData = JsonConvert.DeserializeObject<ApiErrorData>(response.Content);
                 throw new ExchangeRequestException(errorData);
             }
         }

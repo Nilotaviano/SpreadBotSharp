@@ -16,6 +16,8 @@ namespace SpreadBot.Logic
         private readonly DataRepository dataRepository;
         private decimal availableBalanceForBaseMarket;
 
+        private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
+
         public Coordinator(AppSettings appSettings, DataRepository dataRepository)
         {
             this.appSettings = appSettings;
@@ -45,7 +47,6 @@ namespace SpreadBot.Logic
             {
                 var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, new HashSet<string>());
 
-                //TODO Verify if AsParallel would speed this up
                 var marketsToAllocate = marketDeltas.Where(m => !allocatedMarketsForConfiguration.Contains(m.Symbol) && EvaluateMarketBasedOnConfiguration(m, configuration));
 
                 foreach (var market in marketsToAllocate)
@@ -57,8 +58,9 @@ namespace SpreadBot.Logic
                     AllocatedBotsByGuid[bot.Guid] = bot;
                     allocatedMarketsForConfiguration.Add(market.Symbol);
 
-                    //TODO: This is not atomic, so we might end up running into issues if unallocating a bot is done in parallel (or any other operation that changes availableBalanceForBaseMarket)
+                    balanceSemaphore.Wait();
                     availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
+                    balanceSemaphore.Release();
 
                     bot.Start();
                 }
@@ -86,8 +88,9 @@ namespace SpreadBot.Logic
             Debug.Assert(AllocatedBotsByGuid.TryRemove(bot.Guid, out _), "Bot should have been removed successfully");
             Debug.Assert(AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].Remove(bot.MarketSymbol));
 
-            //TODO: This is not atomic
+            balanceSemaphore.Wait();
             availableBalanceForBaseMarket += bot.Balance;
+            balanceSemaphore.Release();
         }
     }
 }
