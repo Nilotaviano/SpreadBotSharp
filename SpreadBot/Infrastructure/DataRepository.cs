@@ -1,4 +1,4 @@
-using SpreadBot.Infrastructure.Exchanges;
+﻿using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
@@ -236,7 +236,9 @@ namespace SpreadBot.Infrastructure
         {
             var balances = await Exchange.GetBalanceData();
 
-            balances.AsParallel().ForAll(balance => BalancesData[balance.CurrencyAbbreviation] = balance);
+            balances.Balances?.AsParallel().ForAll(balance => BalancesData[balance.CurrencyAbbreviation] = balance);
+
+            lastBalanceSequence = balances.Sequence;
         }
 
         private async Task FetchMarketData()
