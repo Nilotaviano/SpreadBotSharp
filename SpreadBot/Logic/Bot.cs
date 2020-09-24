@@ -3,11 +3,8 @@ using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic
@@ -85,7 +82,7 @@ namespace SpreadBot.Logic
                         await ProcessMarketData(message as MarketData);
                         break;
                     case MessageType.OrderData:
-                        ProcessOrderData(message as OrderData);
+                        await ProcessOrderData(message as OrderData);
                         break;
                     default:
                         throw new ArgumentException();
@@ -110,11 +107,16 @@ namespace SpreadBot.Logic
                             if (!marketData.BidRate.HasValue)
                                 return;
 
-                            decimal bidPrice = marketData.BidRate.Value + 1.Satoshi();
-                            decimal amount = Balance * (1 - exchange.FeeRate) / bidPrice;
+                            if (marketData.Spread >= spreadConfiguration.MinimumSpread)
+                            {
 
-                            var orderData = await exchange.BuyLimit(MarketSymbol, amount, bidPrice);
-                            ProcessOrderData(orderData);
+                                decimal bidPrice = marketData.BidRate.Value + 1.Satoshi();
+                                decimal amount = Balance * (1 - exchange.FeeRate) / bidPrice;
+
+                                await ExecuteOrderFunction(async () => await exchange.BuyLimit(MarketSymbol, amount, bidPrice)); 
+                            }
+                            else
+                                FinishWork();
                         }
                         catch (ExchangeRequestException e)
                         {
@@ -131,15 +133,12 @@ namespace SpreadBot.Logic
                             if (marketData.Spread < spreadConfiguration.MinimumSpread)
                             {
                                 //Cancel order and exit
-                                var orderData = await exchange.CancelOrder(currentOrderData.Id);
-                                ProcessOrderData(orderData);
-                                FinishWork();
+                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
                             }
                             else if (marketData.BidRate - currentOrderData.Limit > spreadConfiguration.MaxBidAskDifferenceFromOrder)
                             {
                                 //Cancel order and switch to BotState.Buy
-                                var orderData = await exchange.CancelOrder(currentOrderData.Id);
-                                ProcessOrderData(orderData);
+                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
                             }
                         }
                         catch (ExchangeRequestException e)
@@ -158,9 +157,7 @@ namespace SpreadBot.Logic
                                 return;
 
                             decimal askPrice = marketData.AskRate.Value - 1.Satoshi();
-
-                            var orderData = await exchange.SellLimit(MarketSymbol, HeldAmount, askPrice);
-                            ProcessOrderData(orderData);
+                            await ExecuteOrderFunction(async () => await exchange.SellLimit(MarketSymbol, HeldAmount, askPrice));
                         }
                         catch (ExchangeRequestException e)
                         {
@@ -177,10 +174,7 @@ namespace SpreadBot.Logic
                         {
                             //cancel order and switch to BotState.Sell
                             if (buyStopwatch.Elapsed.TotalMinutes > spreadConfiguration.MinutesForLoss)
-                            {
-                                var orderData = await exchange.CancelOrder(currentOrderData.Id);
-                                ProcessOrderData(orderData);
-                            }
+                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
                         }
                     }
                     catch (ExchangeRequestException e)
@@ -193,13 +187,21 @@ namespace SpreadBot.Logic
             }
         }
 
-        private void ProcessOrderData(OrderData orderData)
+        private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
         {
+            var orderData = await func();
+            SetCurrentOrderData(orderData);
+            await ProcessOrderData(orderData);
+        }
+
+        private async Task ProcessOrderData(OrderData orderData)
+        {
+            if (orderData.Id != currentOrderData?.Id)
+                return;
+
             switch (orderData?.Status)
             {
                 case OrderStatus.OPEN:
-                    SetCurrentOrderData(orderData);
-
                     botState = (orderData?.Direction) switch
                     {
                         OrderDirection.BUY => BotState.BuyOrderActive,
@@ -226,7 +228,10 @@ namespace SpreadBot.Logic
                     }
 
                     if (HeldAmount * latestMarketData.AskRate > appSettings.MinimumNegotiatedAmount)
+                    {
                         botState = BotState.Sell;
+                        await ProcessMarketData(latestMarketData); //So that we immediatelly set a sell order
+                    }
                     else if (Balance > appSettings.MinimumNegotiatedAmount)
                         botState = BotState.Buy;
                     else

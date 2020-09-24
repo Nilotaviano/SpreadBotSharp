@@ -11,7 +11,6 @@ namespace SpreadBot.Infrastructure
 {
     /*
      * TODO list:
-     * Message queue using ConcurrentQueue
      * Implement SubscribeToBalances, SubscribeToMarketsData, SubscribeToOrdersData, which should create a subscription to all data 
      * Implement UpdateBalance, UpdateSummaries, UpdateTickers and UpdateOrder
      * Implement Rest API redundancy (make API calls every X minutes so that we have a fallback in case the Websocket becomes unreliable)
@@ -41,8 +40,6 @@ namespace SpreadBot.Infrastructure
             Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
             Exchange.OnTickers(pendingTickersMessages.Add);
             Exchange.OnOrder(pendingOrderMessages.Add);
-
-            ConsumeData();
         }
 
         public IExchange Exchange { get; }
@@ -140,12 +137,12 @@ namespace SpreadBot.Infrastructure
                 handlers.Remove(handlerGuid, out _);
         }
 
-        private void ConsumeData()
+        public void StartConsumingData()
         {
-            ConsumeBalanceData();
-            ConsumeOrderData();
-            ConsumeMarketSummaryData();
-            ConsumeTickersData();
+            Task.Run(ConsumeBalanceData);
+            Task.Run(ConsumeOrderData);
+            Task.Run(ConsumeMarketSummaryData);
+            Task.Run(ConsumeTickersData);
         }
 
         private void ConsumeBalanceData()
@@ -155,11 +152,7 @@ namespace SpreadBot.Infrastructure
                 if (lastBalanceSequence.HasValue && balanceData.Sequence != lastBalanceSequence.Value + 1)
                     continue;
 
-                var balance = new BalanceData
-                {
-                    Amount = balanceData.Delta.Available,
-                    CurrencyAbbreviation = balanceData.Delta.CurrencySymbol
-                };
+                var balance = new BalanceData(balanceData.Delta);
 
                 this.BalancesData[balance.CurrencyAbbreviation] = balance;
 
@@ -178,7 +171,7 @@ namespace SpreadBot.Infrastructure
 
                 var data = new OrderData(orderData);
 
-                InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
+                InvokeHandlers(this.OrderHandlers, data.Id, data);
 
                 lastOrderSequence += 1;
             }
