@@ -29,6 +29,7 @@ namespace SpreadBot.Infrastructure
 
         public async Task<bool> Connect()
         {
+            Console.WriteLine("Connecting..");
             await _hubConnection.Start();
             return _hubConnection.State == ConnectionState.Connected;
         }
@@ -37,8 +38,9 @@ namespace SpreadBot.Infrastructure
         {
             _hubConnection.StateChanged += async (obj) =>
             {
+                Console.WriteLine($"State change: {obj.OldState}->{obj.NewState}");
                 if (obj.NewState == ConnectionState.Disconnected)
-                    while(!await Connect()); //TODO: Switch to set timer or sleep
+                    while (!await Connect()) ; //TODO: Switch to set timer or sleep
             };
         }
 

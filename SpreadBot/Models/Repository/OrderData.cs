@@ -1,4 +1,5 @@
-﻿using SpreadBot.Models.API;
+﻿using SpreadBot.Infrastructure.Exchanges;
+using SpreadBot.Models.API;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -8,8 +9,15 @@ namespace SpreadBot.Models.Repository
     public class OrderData : IMessage
     {
         public OrderData() { }
+        public OrderData(ApiRestResponse<ApiOrderData> apiOrderData)
+            : this(apiOrderData.Data)
+        {
+            this.Sequence = apiOrderData.Sequence;
+        }
+
         public OrderData(ApiOrderData apiOrderData)
         {
+            Sequence = apiOrderData.Sequence;
             AccountId = apiOrderData.AccountId;
             Ceiling = apiOrderData.Delta.Ceiling;
             ClientOrderId = apiOrderData.Delta.ClientOrderId;
@@ -30,6 +38,8 @@ namespace SpreadBot.Models.Repository
         }
 
         public MessageType MessageType => MessageType.OrderData;
+
+        public int Sequence { get; private set; }
 
         public string AccountId { get; set; }
         public string Id { get; set; }

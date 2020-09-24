@@ -66,13 +66,13 @@ namespace SpreadBot.Infrastructure.Exchanges
             SocketClient.On("order", callback);
         }
 
-        public async Task<IEnumerable<BalanceData>> GetBalanceData()
+        public async Task<CompleteBalanceData> GetBalanceData()
         {
             var request = new RestRequest("/balances", Method.GET, DataFormat.Json);
 
             var balances = await ExecuteAuthenticatedRequest<Balance[]>(request);
 
-            return balances.Select(balance => new BalanceData(balance));
+            return new CompleteBalanceData(balances);
         }
 
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
@@ -156,7 +156,7 @@ namespace SpreadBot.Infrastructure.Exchanges
             }
         }
 
-        private async Task<T> ExecuteAuthenticatedRequest<T>(RestRequest request)
+        private async Task<ApiRestResponse<T>> ExecuteAuthenticatedRequest<T>(RestRequest request)
         {
             string timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
             string method = request.Method.ToString();
@@ -171,12 +171,29 @@ namespace SpreadBot.Infrastructure.Exchanges
             var response = await ApiClient.ExecuteAsync(request);
 
             if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Created)
-                return JsonConvert.DeserializeObject<T>(response.Content);
+            {
+                T data = JsonConvert.DeserializeObject<T>(response.Content);
+                int sequence = GetSequence(response);
+
+                return new ApiRestResponse<T>
+                {
+                    Data = data,
+                    Sequence = sequence
+                };
+            }
             else
             {
                 var errorData = JsonConvert.DeserializeObject<ApiErrorData>(response.Content);
                 throw new ExchangeRequestException(errorData);
             }
+        }
+
+        private static int GetSequence(IRestResponse response)
+        {
+            string sequenceStr = response.Headers.SingleOrDefault(p => p.Name.Equals("Sequence"))?.Value as string;
+            int sequence = !string.IsNullOrEmpty(sequenceStr) ? int.Parse(sequenceStr) : 0;
+            Debug.Assert(sequence > 0);
+            return sequence;
         }
     }
 }

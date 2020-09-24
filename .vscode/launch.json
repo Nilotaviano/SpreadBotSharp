@@ -1,0 +1,29 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": ".NET Core Launch (console)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/SpreadBot/bin/Debug/netcoreapp3.1/SpreadBot.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/SpreadBot",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "env": {
+        "apikey": "y",
+        "apisecret": "x"
+      }
+    },
+    {
+      "name": ".NET Core Attach",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ]
+}

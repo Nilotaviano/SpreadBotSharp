@@ -158,7 +158,7 @@ namespace SpreadBot.Infrastructure
 
                 InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
 
-                lastBalanceSequence += 1;
+                lastBalanceSequence = balanceData.Sequence;
             }
         }
 
@@ -173,7 +173,7 @@ namespace SpreadBot.Infrastructure
 
                 InvokeHandlers(this.OrderHandlers, data.Id, data);
 
-                lastOrderSequence += 1;
+                lastOrderSequence = orderData.Sequence;
             }
         }
 
@@ -188,7 +188,7 @@ namespace SpreadBot.Infrastructure
 
                 UpdateMarketData(marketData);
 
-                lastSummarySequence += 1;
+                lastSummarySequence = summaryData.Sequence;
             }
         }
 
@@ -203,7 +203,7 @@ namespace SpreadBot.Infrastructure
 
                 UpdateMarketData(marketData);
 
-                lastTickerSequence += 1;
+                lastTickerSequence = tickersData.Sequence;
             }
         }
 
@@ -236,7 +236,9 @@ namespace SpreadBot.Infrastructure
         {
             var balances = await Exchange.GetBalanceData();
 
-            balances.AsParallel().ForAll(balance => BalancesData[balance.CurrencyAbbreviation] = balance);
+            balances.Balances?.AsParallel().ForAll(balance => BalancesData[balance.CurrencyAbbreviation] = balance);
+
+            lastBalanceSequence = balances.Sequence;
         }
 
         private async Task FetchMarketData()
