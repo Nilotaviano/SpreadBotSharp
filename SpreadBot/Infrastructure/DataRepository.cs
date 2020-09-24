@@ -1,4 +1,4 @@
-﻿using SpreadBot.Infrastructure.Exchanges;
+using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
@@ -158,7 +158,7 @@ namespace SpreadBot.Infrastructure
 
                 InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
 
-                lastBalanceSequence += 1;
+                lastBalanceSequence = balanceData.Sequence;
             }
         }
 
@@ -173,7 +173,7 @@ namespace SpreadBot.Infrastructure
 
                 InvokeHandlers(this.OrderHandlers, data.Id, data);
 
-                lastOrderSequence += 1;
+                lastOrderSequence = orderData.Sequence;
             }
         }
 
@@ -188,7 +188,7 @@ namespace SpreadBot.Infrastructure
 
                 UpdateMarketData(marketData);
 
-                lastSummarySequence += 1;
+                lastSummarySequence = summaryData.Sequence;
             }
         }
 
@@ -203,7 +203,7 @@ namespace SpreadBot.Infrastructure
 
                 UpdateMarketData(marketData);
 
-                lastTickerSequence += 1;
+                lastTickerSequence = tickersData.Sequence;
             }
         }
 
