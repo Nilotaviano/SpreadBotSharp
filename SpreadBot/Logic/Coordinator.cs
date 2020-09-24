@@ -74,7 +74,7 @@ namespace SpreadBot.Logic
         {
             return marketData.PercentChange <= spreadConfiguration.MaxPercentChangeFromPreviousDay
                 && marketData.QuoteVolume >= spreadConfiguration.MinimumQuoteVolume
-                && marketData.Spread >= spreadConfiguration.MinimumSpread;
+                && marketData.SpreadPercentage >= spreadConfiguration.MinimumSpreadPercentage;
         }
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
