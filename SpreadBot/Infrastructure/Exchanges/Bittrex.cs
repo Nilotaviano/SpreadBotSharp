@@ -192,6 +192,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         {
             string sequenceStr = response.Headers.SingleOrDefault(p => p.Name.Equals("Sequence"))?.Value as string;
             int sequence = !string.IsNullOrEmpty(sequenceStr) ? int.Parse(sequenceStr) : 0;
+            Debug.Assert(sequence > 0);
             return sequence;
         }
     }
