@@ -3,10 +3,8 @@ using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
-using System.Text;
+using System.Diagnostics;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic
@@ -19,6 +17,7 @@ namespace SpreadBot.Logic
         private readonly SpreadConfiguration spreadConfiguration;
         private MarketData latestMarketData;
         private readonly Action<Bot> unallocateBotCallback;
+        private readonly Stopwatch buyStopwatch = new Stopwatch();
 
         private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
 
@@ -43,27 +42,23 @@ namespace SpreadBot.Logic
         public Guid SpreadConfigurationGuid => spreadConfiguration.Guid;
         public string MarketSymbol => latestMarketData.Symbol;
         public decimal Balance { get; private set; } //Initial balance + profit/loss
+        public decimal HeldAmount { get; private set; } //Amount held of the market currency
 
-        private OrderData CurrentOrderData
+        private void SetCurrentOrderData(OrderData value)
         {
-            get => currentOrderData;
-            set
+            if (currentOrderData?.Id != value?.Id)
             {
-                //TODO: I just wanted to get this logic done, it shouldn't be here in the final bot implementation
-                if (currentOrderData?.Id != value?.Id)
-                {
-                    if (currentOrderData != null)
-                        dataRepository.UnsubscribeToOrderData(currentOrderData.Id, Guid);
+                if (currentOrderData != null)
+                    dataRepository.UnsubscribeToOrderData(currentOrderData.Id, Guid);
 
-                    if (value?.Status == OrderStatus.OPEN)
-                        dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
-                }
-                if (value?.Status == OrderStatus.CLOSED)
-                    dataRepository.UnsubscribeToOrderData(value.Id, Guid);
-
-
-                currentOrderData = value;
+                if (value?.Status == OrderStatus.OPEN)
+                    dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
             }
+            if (value?.Status == OrderStatus.CLOSED)
+                dataRepository.UnsubscribeToOrderData(value.Id, Guid);
+
+
+            currentOrderData = value;
         }
 
         public void Start()
@@ -101,48 +96,158 @@ namespace SpreadBot.Logic
 
         private async Task ProcessMarketData(MarketData marketData)
         {
+            latestMarketData = marketData;
+
             switch (botState)
             {
                 case BotState.Buy:
+                    {
+                        try
+                        {
+                            if (!marketData.BidRate.HasValue)
+                                return;
+
+                            if (marketData.Spread >= spreadConfiguration.MinimumSpread)
+                            {
+
+                                decimal bidPrice = marketData.BidRate.Value + 1.Satoshi();
+                                decimal amount = Balance * (1 - exchange.FeeRate) / bidPrice;
+
+                                await ExecuteOrderFunction(async () => await exchange.BuyLimit(MarketSymbol, amount, bidPrice)); 
+                            }
+                            else
+                                FinishWork();
+                        }
+                        catch (ExchangeRequestException e)
+                        {
+                            //TODO: Handle specific errors
+                            Logger.LogError($"BuyLimit error: {JsonSerializer.Serialize(e)}");
+                        }
+
+                        break;
+                    }
+                case BotState.BuyOrderActive:
+                    {
+                        try
+                        {
+                            if (marketData.Spread < spreadConfiguration.MinimumSpread)
+                            {
+                                //Cancel order and exit
+                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
+                            }
+                            else if (marketData.BidRate - currentOrderData.Limit > spreadConfiguration.MaxBidAskDifferenceFromOrder)
+                            {
+                                //Cancel order and switch to BotState.Buy
+                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
+                            }
+                        }
+                        catch (ExchangeRequestException e)
+                        {
+                            //TODO: Handle specific errors
+                            Logger.LogError($"CancelOrder error: {JsonSerializer.Serialize(e)}");
+                        }
+
+                        break;
+                    }
+                case BotState.Sell:
+                    {
+                        try
+                        {
+                            if (!marketData.AskRate.HasValue)
+                                return;
+
+                            decimal askPrice = marketData.AskRate.Value - 1.Satoshi();
+                            await ExecuteOrderFunction(async () => await exchange.SellLimit(MarketSymbol, HeldAmount, askPrice));
+                        }
+                        catch (ExchangeRequestException e)
+                        {
+                            //TODO: Handle specific errors
+                            Logger.LogError($"SellLimit error: {JsonSerializer.Serialize(e)}");
+                        }
+
+                        break;
+                    }
+                case BotState.SellOrderActive:
                     try
                     {
-                        decimal bidPrice = marketData.BidRate + 1.Satoshi();
-                        decimal amount = Balance * (1 - exchange.FeeRate) / bidPrice;
-
-                        var orderData = await exchange.BuyLimit(MarketSymbol, amount, bidPrice);
-
-                        if (orderData?.Status == OrderStatus.OPEN)
+                        if (currentOrderData.Limit - marketData.AskRate > spreadConfiguration.MaxBidAskDifferenceFromOrder)
                         {
-                            CurrentOrderData = orderData;
-                            botState = BotState.BuyOrderActive;
+                            //cancel order and switch to BotState.Sell
+                            if (buyStopwatch.Elapsed.TotalMinutes > spreadConfiguration.MinutesForLoss)
+                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
                         }
-                        else if (orderData?.Status == OrderStatus.CLOSED) //TODO: Check if this ever happens
-                            await ProcessOrderData(orderData);
                     }
                     catch (ExchangeRequestException e)
                     {
                         //TODO: Handle specific errors
-                        Logger.LogError($"BuyLimit error: {JsonSerializer.Serialize(e)}");
+                        Logger.LogError($"CancelOrder error: {JsonSerializer.Serialize(e)}");
                     }
 
-                    break;
-                case BotState.BuyOrderActive:
-                    break;
-                case BotState.Sell:
-                    break;
-                case BotState.SellOrderActive:
                     break;
             }
         }
 
+        private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
+        {
+            var orderData = await func();
+            SetCurrentOrderData(orderData);
+            await ProcessOrderData(orderData);
+        }
+
         private async Task ProcessOrderData(OrderData orderData)
         {
-            CurrentOrderData = orderData;
+            if (orderData.Id != currentOrderData?.Id)
+                return;
+
+            switch (orderData?.Status)
+            {
+                case OrderStatus.OPEN:
+                    botState = (orderData?.Direction) switch
+                    {
+                        OrderDirection.BUY => BotState.BuyOrderActive,
+                        OrderDirection.SELL => BotState.SellOrderActive,
+                        _ => throw new ArgumentException(),
+                    };
+                    break;
+                case OrderStatus.CLOSED:
+                    SetCurrentOrderData(null);
+
+                    switch (orderData?.Direction)
+                    {
+                        case OrderDirection.BUY:
+                            HeldAmount += orderData.FillQuantity;
+                            Balance -= orderData.Proceeds + orderData.Commission;
+                            buyStopwatch.Restart();
+                            break;
+                        case OrderDirection.SELL:
+                            HeldAmount -= orderData.FillQuantity;
+                            Balance += orderData.Proceeds - orderData.Commission;
+                            break;
+                        default:
+                            throw new ArgumentException();
+                    }
+
+                    if (HeldAmount * latestMarketData.AskRate > appSettings.MinimumNegotiatedAmount)
+                    {
+                        botState = BotState.Sell;
+                        await ProcessMarketData(latestMarketData); //So that we immediatelly set a sell order
+                    }
+                    else if (Balance > appSettings.MinimumNegotiatedAmount)
+                        botState = BotState.Buy;
+                    else
+                        FinishWork(); //Can't buy or sell, so stop
+
+                    break;
+                default:
+                    throw new ArgumentException();
+            }
         }
 
         private void FinishWork()
         {
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
+            SetCurrentOrderData(null);
+            semaphore.Clear();
             unallocateBotCallback(this);
         }
 

@@ -24,12 +24,24 @@ namespace SpreadBot.Infrastructure
             _url = url;
             _hubConnection = new HubConnection(_url);
             _hubProxy = _hubConnection.CreateHubProxy("c3");
+            _hubConnection.StateChanged += _hubConnection_StateChanged;
         }
 
         public async Task<bool> Connect()
         {
+            Console.WriteLine("Connecting..");
             await _hubConnection.Start();
             return _hubConnection.State == ConnectionState.Connected;
+        }
+
+        private void _hubConnection_StateChanged(StateChange obj)
+        {
+            _hubConnection.StateChanged += async (obj) =>
+            {
+                Console.WriteLine($"State change: {obj.OldState}->{obj.NewState}");
+                if (obj.NewState == ConnectionState.Disconnected)
+                    while (!await Connect()) ; //TODO: Switch to set timer or sleep
+            };
         }
 
         public async Task<SocketResponse> Authenticate(string apiKey, string apiKeySecret)

@@ -1,9 +1,6 @@
-﻿using SpreadBot.Models;
-using SpreadBot.Models.API;
+﻿using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Infrastructure.Exchanges
@@ -27,5 +24,7 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> CancelOrder(string orderId);
+
+        Task<CompleteBalanceData> GetBalanceData();
     }
 }
