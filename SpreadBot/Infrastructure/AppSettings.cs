@@ -20,7 +20,7 @@ namespace SpreadBot.Infrastructure
     {
         public Guid Guid { get; } = Guid.NewGuid();
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
-        public decimal MinimumSpread { get; set; }
+        public decimal MinimumSpreadPercentage { get; set; }
         public decimal MinimumQuoteVolume { get; set; }
         public decimal AllocatedAmountOfBaseCurrency { get; set; }
         public decimal MaxBidAskDifferenceFromOrder { get; set; } = 1.Satoshi(); //default 1 satoshi

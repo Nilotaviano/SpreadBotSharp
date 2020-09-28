@@ -47,6 +47,6 @@ namespace SpreadBot.Models.Repository
         public DateTime? UpdatedAt { get; set; }
 
         public string BaseMarket => Symbol.Split('-')[1];
-        public decimal Spread => (AskRate.GetValueOrDefault(0) - BidRate.GetValueOrDefault(0)) / BidRate.GetValueOrDefault(1) * 100; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php
+        public decimal SpreadPercentage => (AskRate.GetValueOrDefault(0) - BidRate.GetValueOrDefault(0)) / BidRate.GetValueOrDefault(1) * 100; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php
     }
 }

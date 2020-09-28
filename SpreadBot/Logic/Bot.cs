@@ -107,7 +107,7 @@ namespace SpreadBot.Logic
                             if (!marketData.BidRate.HasValue)
                                 return;
 
-                            if (marketData.Spread >= spreadConfiguration.MinimumSpread)
+                            if (marketData.SpreadPercentage >= spreadConfiguration.MinimumSpreadPercentage)
                             {
 
                                 decimal bidPrice = marketData.BidRate.Value + 1.Satoshi();
@@ -130,7 +130,7 @@ namespace SpreadBot.Logic
                     {
                         try
                         {
-                            if (marketData.Spread < spreadConfiguration.MinimumSpread)
+                            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage)
                             {
                                 //Cancel order and exit
                                 await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));

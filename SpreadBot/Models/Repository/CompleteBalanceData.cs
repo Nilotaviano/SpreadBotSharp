@@ -7,6 +7,12 @@ namespace SpreadBot.Models.Repository
 {
     public class CompleteBalanceData
     {
+        public CompleteBalanceData(int sequence, IEnumerable<BalanceData> balances)
+        {
+            Sequence = sequence;
+            Balances = balances;
+        }
+
         public CompleteBalanceData(ApiRestResponse<ApiBalanceData.Balance[]> balancesData)
         {
             Sequence = balancesData.Sequence;

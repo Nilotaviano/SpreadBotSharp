@@ -209,7 +209,7 @@ namespace SpreadBot.Infrastructure
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
         {
-            var newData = marketData.AsParallel().Select(data =>
+            var newData = marketData.Select(data =>
                             this.MarketsData.AddOrUpdate(data.Symbol,
                                                          data,
                                                          (key, existingData) => this.MergeMarketData(existingData, data))
