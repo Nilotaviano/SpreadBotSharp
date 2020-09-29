@@ -16,25 +16,30 @@ namespace SpreadBot.Models.Repository
         }
 
         public OrderData(ApiOrderData apiOrderData)
+            : this(apiOrderData.Delta)
         {
             Sequence = apiOrderData.Sequence;
             AccountId = apiOrderData.AccountId;
-            Ceiling = apiOrderData.Delta.Ceiling;
-            ClientOrderId = apiOrderData.Delta.ClientOrderId;
-            ClosedAt = apiOrderData.Delta.ClosedAt;
-            Commission = apiOrderData.Delta.Commission;
-            CreatedAt = apiOrderData.Delta.CreatedAt;
-            Direction = apiOrderData.Delta.Direction;
-            FillQuantity = apiOrderData.Delta.FillQuantity;
-            Id = apiOrderData.Delta.Id;
-            Limit = apiOrderData.Delta.Limit;
-            MarketSymbol = apiOrderData.Delta.MarketSymbol;
-            Proceeds = apiOrderData.Delta.Proceeds;
-            Quantity = apiOrderData.Delta.Quantity;
-            Status = apiOrderData.Delta.Status;
-            TimeInForce = apiOrderData.Delta.TimeInForce;
-            Type = apiOrderData.Delta.Type;
-            UpdatedAt = apiOrderData.Delta.UpdatedAt;
+        }
+
+        public OrderData(ApiOrderData.Order order)
+        {
+            Ceiling = order.Ceiling;
+            ClientOrderId = order.ClientOrderId;
+            ClosedAt = order.ClosedAt;
+            Commission = order.Commission;
+            CreatedAt = order.CreatedAt;
+            Direction = order.Direction;
+            FillQuantity = order.FillQuantity;
+            Id = order.Id;
+            Limit = order.Limit;
+            MarketSymbol = order.MarketSymbol;
+            Proceeds = order.Proceeds;
+            Quantity = order.Quantity;
+            Status = order.Status;
+            TimeInForce = order.TimeInForce;
+            Type = order.Type;
+            UpdatedAt = order.UpdatedAt;
         }
 
         public MessageType MessageType => MessageType.OrderData;

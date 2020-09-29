@@ -26,5 +26,8 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<OrderData> CancelOrder(string orderId);
 
         Task<CompleteBalanceData> GetBalanceData();
+        Task<ApiTickersData> GetTickersData();
+        Task<ApiMarketSummariesData> GetMarketSummariesData();
+        Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(DateTime? startDate = null);
     }
 }

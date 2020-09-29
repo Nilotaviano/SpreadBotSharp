@@ -20,6 +20,8 @@ namespace SpreadBot.Infrastructure
         private int? lastTickerSequence;
         private int? lastOrderSequence;
 
+        private DateTime lastOrderSnapshot;
+
         public DataRepository(IExchange exchange)
         {
             if (!exchange.IsSetup)
@@ -32,12 +34,7 @@ namespace SpreadBot.Infrastructure
 
             Exchange = exchange;
 
-            FetchAllData();
-
-            Exchange.OnBalance(pendingBalanceMessages.Add);
-            Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
-            Exchange.OnTickers(pendingTickersMessages.Add);
-            Exchange.OnOrder(pendingOrderMessages.Add);
+            lastOrderSnapshot = DateTime.UtcNow;
         }
 
         public IExchange Exchange { get; }
@@ -137,6 +134,13 @@ namespace SpreadBot.Infrastructure
 
         public void StartConsumingData()
         {
+            Exchange.OnBalance(pendingBalanceMessages.Add);
+            Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
+            Exchange.OnTickers(pendingTickersMessages.Add);
+            Exchange.OnOrder(pendingOrderMessages.Add);
+
+            FetchAllData();
+
             Task.Run(ConsumeBalanceData);
             Task.Run(ConsumeOrderData);
             Task.Run(ConsumeMarketSummaryData);
@@ -207,14 +211,15 @@ namespace SpreadBot.Infrastructure
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
         {
-            var newData = marketData.Select(data =>
-                            this.MarketsData.AddOrUpdate(data.Symbol,
-                                                         data,
-                                                         (key, existingData) => this.MergeMarketData(existingData, data))
-                        );
+            marketData.AsParallel().ForAll(UpdateMarketData);
+        }
 
-            newData.AsParallel()
-                   .ForAll(data => InvokeHandlers(this.MarketHandlers, data.Symbol, data));
+        private void UpdateMarketData(MarketData data)
+        {
+            var newData = this.MarketsData.AddOrUpdate(data.Symbol,
+                                                        data,
+                                                        (key, existingData) => this.MergeMarketData(existingData, data));
+            InvokeHandlers(this.MarketHandlers, data.Symbol, newData);
         }
 
         private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
@@ -227,24 +232,68 @@ namespace SpreadBot.Infrastructure
 
         private void FetchAllData()
         {
-            Task.WaitAll(FetchBalanceData(), FetchMarketData(), FetchOrdersData());
+            Task.Run(FetchBalanceData);
+            Task.Run(FetchMarketSummariesData);
+            Task.Run(FetchTickersData);
+
+            // TODO Signature not working
+            Task.Run(FetchClosedOrdersData);
         }
 
         private async Task FetchBalanceData()
         {
             var balances = await Exchange.GetBalanceData();
 
-            balances.Balances?.AsParallel().ForAll(balance => BalancesData[balance.CurrencyAbbreviation] = balance);
+            balances.Balances?.AsParallel().ForAll(balance =>
+            {
+                BalancesData[balance.CurrencyAbbreviation] = balance;
+                InvokeHandlers(BalanceHandlers, balance.CurrencyAbbreviation, balance);
+            });
 
             lastBalanceSequence = balances.Sequence;
         }
 
-        private async Task FetchMarketData()
+        private async Task FetchMarketSummariesData()
         {
+            var summaries = await Exchange.GetMarketSummariesData();
+
+            summaries.Deltas?.AsParallel().ForAll(summary =>
+            {
+                var marketData = new MarketData(summary);
+
+                UpdateMarketData(marketData);
+            });
+
+            lastSummarySequence = summaries.Sequence;
         }
 
-        private async Task FetchOrdersData()
+        private async Task FetchTickersData()
         {
+            var tickers = await Exchange.GetTickersData();
+
+            tickers.Deltas?.AsParallel().ForAll(ticker =>
+            {
+                var marketData = new MarketData(ticker);
+
+                UpdateMarketData(marketData);
+            });
+
+            lastSummarySequence = tickers.Sequence;
+        }
+
+        private async Task FetchClosedOrdersData()
+        {
+            var closedOrders = await Exchange.GetClosedOrdersData(lastOrderSnapshot);
+
+            closedOrders.Data?.AsParallel().ForAll(order =>
+            {
+                var orderData = new OrderData(order);
+                InvokeHandlers(OrderHandlers, orderData.Id, orderData);
+            });
+
+            // There is not sequence information in ClosedOrders
+            // lastOrderSequence = closedOrders.Sequence;
+            lastOrderSnapshot = DateTime.UtcNow;
         }
 
         private MarketData MergeMarketData(MarketData existingData, MarketData data)
