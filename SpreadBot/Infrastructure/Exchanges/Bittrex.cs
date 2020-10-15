@@ -85,7 +85,7 @@ namespace SpreadBot.Infrastructure.Exchanges
                 limit,
                 direction = OrderDirection.BUY.ToString(),
                 type = OrderType.LIMIT.ToString(),
-                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString() //TODO Nilo: Check if this breaks anything
+                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString()
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
@@ -104,7 +104,7 @@ namespace SpreadBot.Infrastructure.Exchanges
                 limit,
                 direction = OrderDirection.SELL.ToString(),
                 type = OrderType.LIMIT.ToString(),
-                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString() //TODO Nilo: Check if this breaks anything
+                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString()
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 

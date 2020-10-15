@@ -11,8 +11,6 @@ namespace SpreadBot.Infrastructure
 {
     /*
      * TODO list:
-     * Implement SubscribeToBalances, SubscribeToMarketsData, SubscribeToOrdersData, which should create a subscription to all data 
-     * Implement UpdateBalance, UpdateSummaries, UpdateTickers and UpdateOrder
      * Implement Rest API redundancy (make API calls every X minutes so that we have a fallback in case the Websocket becomes unreliable)
      */
     public class DataRepository
