@@ -69,7 +69,7 @@ namespace SpreadBot.Tests
                 .Setup(e => e.GetTickersData())
                 .ReturnsAsync(new ApiTickersData { Deltas = new ApiTickersData.Ticker[0] });
             mockExchange
-                .Setup(e => e.GetClosedOrdersData(It.IsAny<DateTime>()))
+                .Setup(e => e.GetClosedOrdersData(It.IsAny<string>()))
                 .ReturnsAsync(new ApiRestResponse<ApiOrderData.Order[]> { Data = new ApiOrderData.Order[0] });
             mockExchange
                 .Setup(e => e.OnBalance(It.IsAny<Action<ApiBalanceData>>()))
