@@ -75,6 +75,38 @@ namespace SpreadBot.Infrastructure.Exchanges
             return new CompleteBalanceData(balances);
         }
 
+        public async Task<ApiTickersData> GetTickersData()
+        {
+            var request = new RestRequest("/markets/tickers", Method.GET, DataFormat.Json);
+
+            var tickers = await ExecuteAuthenticatedRequest<ApiTickersData.Ticker[]>(request);
+
+            return new ApiTickersData { Sequence = tickers.Sequence, Deltas = tickers.Data };
+        }
+
+        public async Task<ApiMarketSummariesData> GetMarketSummariesData()
+        {
+            var request = new RestRequest("/markets/summaries", Method.GET, DataFormat.Json);
+
+            var marketSummaries = await ExecuteAuthenticatedRequest<ApiMarketSummariesData.MarketSummary[]>(request);
+
+            return new ApiMarketSummariesData { Sequence = marketSummaries.Sequence, Deltas = marketSummaries.Data };
+        }
+
+        public async Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(DateTime startDate)
+        {
+            var request = new RestRequest("/orders/closed", Method.GET, DataFormat.Json);
+
+            // Signature not working
+            // request.AddQueryParameter("pageSize", "200");
+
+            // TODO Signature not working because query parameters are not being considered
+            //var formattedstartdate = startdate.touniversaltime().tostring("o");
+            //request.addqueryparameter("startdate", formattedstartdate);
+
+            return await ExecuteAuthenticatedRequest<ApiOrderData.Order[]>(request);
+        }
+
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);

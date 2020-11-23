@@ -38,7 +38,7 @@ namespace SpreadBot.Infrastructure
         {
             Console.WriteLine($"State change: {obj.OldState}->{obj.NewState}");
             if (obj.NewState == ConnectionState.Disconnected)
-                while (await Connect());
+                while (!await Connect()) ; //TODO: Switch to set timer or sleep
         }
 
         public async Task<SocketResponse> Authenticate(string apiKey, string apiKeySecret)

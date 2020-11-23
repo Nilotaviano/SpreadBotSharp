@@ -10,10 +10,11 @@ using System.Threading;
 
 namespace SpreadBot.Logic
 {
-    public class Coordinator
+    public class Coordinator : IDisposable
     {
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
+        private readonly Guid guid;
         private decimal availableBalanceForBaseMarket;
 
         private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
@@ -22,11 +23,11 @@ namespace SpreadBot.Logic
         {
             this.appSettings = appSettings;
             this.dataRepository = dataRepository;
+            this.guid = new Guid();
 
-            this.dataRepository.SubscribeToMarketsData(EvaluateMarkets);
+            this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             availableBalanceForBaseMarket = this.dataRepository.BalancesData[appSettings.BaseMarket].Amount;
         }
-
 
         public ConcurrentDictionary<Guid, HashSet<string>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, HashSet<string>>();
         public ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
@@ -91,6 +92,11 @@ namespace SpreadBot.Logic
             balanceSemaphore.Wait();
             availableBalanceForBaseMarket += bot.Balance;
             balanceSemaphore.Release();
+        }
+
+        public void Dispose()
+        {
+            this.dataRepository.UnsubscribeToMarketsData(guid);
         }
     }
 }
