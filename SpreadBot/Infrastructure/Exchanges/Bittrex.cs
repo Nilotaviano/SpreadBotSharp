@@ -93,16 +93,14 @@ namespace SpreadBot.Infrastructure.Exchanges
             return new ApiMarketSummariesData { Sequence = marketSummaries.Sequence, Deltas = marketSummaries.Data };
         }
 
-        public async Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(DateTime startDate)
+        public async Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId)
         {
             var request = new RestRequest("/orders/closed", Method.GET, DataFormat.Json);
 
-            // Signature not working
-            // request.AddQueryParameter("pageSize", "200");
+            request.AddQueryParameter("pageSize", "200");
 
-            // TODO Signature not working because query parameters are not being considered
-            //var formattedstartdate = startdate.touniversaltime().tostring("o");
-            //request.addqueryparameter("startdate", formattedstartdate);
+            if(startAfterOrderId != null)
+                request.AddQueryParameter("previousPageToken", startAfterOrderId);
 
             return await ExecuteAuthenticatedRequest<ApiOrderData.Order[]>(request);
         }
@@ -224,7 +222,6 @@ namespace SpreadBot.Infrastructure.Exchanges
         {
             string sequenceStr = response.Headers.SingleOrDefault(p => p.Name.Equals("Sequence"))?.Value as string;
             int sequence = !string.IsNullOrEmpty(sequenceStr) ? int.Parse(sequenceStr) : 0;
-            Debug.Assert(sequence > 0);
             return sequence;
         }
     }

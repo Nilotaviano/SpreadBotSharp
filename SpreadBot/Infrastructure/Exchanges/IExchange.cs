@@ -28,6 +28,6 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<CompleteBalanceData> GetBalanceData();
         Task<ApiTickersData> GetTickersData();
         Task<ApiMarketSummariesData> GetMarketSummariesData();
-        Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(DateTime startDate);
+        Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId);
     }
 }

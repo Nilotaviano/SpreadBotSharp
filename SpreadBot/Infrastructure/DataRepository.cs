@@ -20,7 +20,7 @@ namespace SpreadBot.Infrastructure
         private int? lastTickerSequence;
         private int? lastOrderSequence;
 
-        private DateTime lastOrderSnapshot;
+        private string mostRecentClosedOrderId;
 
         public DataRepository(IExchange exchange)
         {
@@ -34,7 +34,7 @@ namespace SpreadBot.Infrastructure
 
             Exchange = exchange;
 
-            lastOrderSnapshot = DateTime.UtcNow;
+            mostRecentClosedOrderId = null;
         }
 
         public IExchange Exchange { get; }
@@ -226,7 +226,8 @@ namespace SpreadBot.Infrastructure
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
         {
-            marketData.AsParallel().ForAll(UpdateMarketData);
+            foreach (var market in marketData)
+                UpdateMarketData(market);
         }
 
         private void UpdateMarketData(MarketData data)
@@ -248,7 +249,8 @@ namespace SpreadBot.Infrastructure
 
         private static void InvokeHandlers<T>(ConcurrentDictionary<Guid, Action<T>> handlers, T data)
         {
-            handlers.Values.AsParallel().ForAll(handler => handler?.Invoke(data));
+            foreach (var handler in handlers.Values)
+                handler?.Invoke(data);
         }
 
         private void FetchAllData()
@@ -265,11 +267,14 @@ namespace SpreadBot.Infrastructure
         {
             var balances = await Exchange.GetBalanceData();
 
-            balances.Balances?.AsParallel().ForAll(balance =>
+            if (balances.Balances != null)
             {
-                BalancesData[balance.CurrencyAbbreviation] = balance;
-                InvokeHandlers(BalanceHandlers, balance.CurrencyAbbreviation, balance);
-            });
+                foreach (var balance in balances.Balances)
+                {
+                    BalancesData[balance.CurrencyAbbreviation] = balance;
+                    InvokeHandlers(BalanceHandlers, balance.CurrencyAbbreviation, balance);
+                }
+            }
 
             lastBalanceSequence = balances.Sequence;
         }
@@ -278,12 +283,14 @@ namespace SpreadBot.Infrastructure
         {
             var summaries = await Exchange.GetMarketSummariesData();
 
-            summaries.Deltas?.AsParallel().ForAll(summary =>
+            if (summaries.Deltas != null)
             {
-                var marketData = new MarketData(summary);
-
-                UpdateMarketData(marketData);
-            });
+                foreach (var summary in summaries.Deltas)
+                {
+                    var marketData = new MarketData(summary);
+                    UpdateMarketData(marketData);
+                }
+            }
 
             lastSummarySequence = summaries.Sequence;
         }
@@ -292,29 +299,35 @@ namespace SpreadBot.Infrastructure
         {
             var tickers = await Exchange.GetTickersData();
 
-            tickers.Deltas?.AsParallel().ForAll(ticker =>
+            if (tickers.Deltas != null)
             {
-                var marketData = new MarketData(ticker);
-
-                UpdateMarketData(marketData);
-            });
+                foreach (var ticker in tickers.Deltas)
+                {
+                    var marketData = new MarketData(ticker);
+                    UpdateMarketData(marketData);
+                }
+            }
 
             lastSummarySequence = tickers.Sequence;
         }
 
         private async Task FetchClosedOrdersData()
         {
-            var closedOrders = await Exchange.GetClosedOrdersData(lastOrderSnapshot);
+            var closedOrders = await Exchange.GetClosedOrdersData(mostRecentClosedOrderId);
 
-            closedOrders.Data?.AsParallel().ForAll(order =>
+            if (closedOrders.Data != null && closedOrders.Data.Any())
             {
-                var orderData = new OrderData(order);
-                InvokeHandlers(OrderHandlers, orderData.Id, orderData);
-            });
+                mostRecentClosedOrderId = closedOrders.Data?.FirstOrDefault()?.Id;
+
+                foreach (var order in closedOrders.Data)
+                {
+                    var orderData = new OrderData(order);
+                    InvokeHandlers(OrderHandlers, orderData.Id, orderData);
+                }
+            }
 
             // There is not sequence information in ClosedOrders
             // lastOrderSequence = closedOrders.Sequence;
-            lastOrderSnapshot = DateTime.UtcNow;
         }
 
         private MarketData MergeMarketData(MarketData existingData, MarketData data)
