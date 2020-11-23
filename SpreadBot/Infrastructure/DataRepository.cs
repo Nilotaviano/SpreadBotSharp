@@ -50,8 +50,10 @@ namespace SpreadBot.Infrastructure
 
         // key: currency abbreviation, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
+        // key: Guid — which will be used for unsubscribing, value: handlers 
+        private ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>> AllMarketHandlers { get; set; } = new ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>>();
         // key: market symbol, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
-        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>> MarketHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>>();
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>> SpecificMarketHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>>();
         // key: order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
 
@@ -59,6 +61,14 @@ namespace SpreadBot.Infrastructure
         private BlockingCollection<ApiMarketSummariesData> pendingMarketSummaryMessages;
         private BlockingCollection<ApiOrderData> pendingOrderMessages;
         private BlockingCollection<ApiTickersData> pendingTickersMessages;
+
+        public void SubscribeToMarketsData(Guid handlerGuid, Action<IEnumerable<MarketData>> evaluateMarkets)
+        {
+            AllMarketHandlers[handlerGuid] = evaluateMarkets;
+
+            if (MarketsData.Count > 0)
+                evaluateMarkets(MarketsData.Values);
+        }
 
         /// <summary>
         /// Subscribe to a specific currency balance by currencyName
@@ -80,8 +90,8 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void SubscribeToMarketData(string marketName, Guid handlerGuid, Action<MarketData> callback)
         {
-            if (!MarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
-                MarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
+            if (!SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
+                SpecificMarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
 
             handlers[handlerGuid] = callback;
 
@@ -101,6 +111,11 @@ namespace SpreadBot.Infrastructure
             handlers[handlerGuid] = callback;
         }
 
+        public void UnsubscribeToMarketsData(Guid handlerGuid)
+        {
+            AllMarketHandlers.Remove(handlerGuid, out _);
+        }
+
         /// <summary>
         /// Unsubscribe to a specific currency balance by currencyName
         /// </summary>
@@ -117,8 +132,8 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void UnsubscribeToMarketData(string marketName, Guid handlerGuid)
         {
-            if (!MarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
-                MarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
+            if (!SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
+                SpecificMarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
 
             handlers.Remove(handlerGuid, out _);
         }
@@ -219,25 +234,31 @@ namespace SpreadBot.Infrastructure
             var newData = this.MarketsData.AddOrUpdate(data.Symbol,
                                                         data,
                                                         (key, existingData) => this.MergeMarketData(existingData, data));
-            InvokeHandlers(this.MarketHandlers, data.Symbol, newData);
+            InvokeHandlers(this.SpecificMarketHandlers, data.Symbol, newData);
+
+            InvokeHandlers(AllMarketHandlers, new List<MarketData>() { newData });
         }
 
         private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
         {
             var handlers = handlersDict.GetOrAdd(key, new ConcurrentDictionary<Guid, Action<T>>());
 
-            handlers.Values.AsParallel()
-                           .ForAll(handler => handler?.Invoke(data));
+            InvokeHandlers(handlers, data);
+        }
+
+        private static void InvokeHandlers<T>(ConcurrentDictionary<Guid, Action<T>> handlers, T data)
+        {
+            handlers.Values.AsParallel().ForAll(handler => handler?.Invoke(data));
         }
 
         private void FetchAllData()
         {
-            Task.Run(FetchBalanceData);
-            Task.Run(FetchMarketSummariesData);
-            Task.Run(FetchTickersData);
-
-            // TODO Signature not working
-            Task.Run(FetchClosedOrdersData);
+            Task.WaitAll(
+                Task.Run(FetchBalanceData),
+                Task.Run(FetchMarketSummariesData),
+                Task.Run(FetchTickersData),
+                Task.Run(FetchClosedOrdersData)
+            );
         }
 
         private async Task FetchBalanceData()
@@ -311,11 +332,6 @@ namespace SpreadBot.Infrastructure
                 Volume = data.Volume ?? existingData.Volume,
                 Symbol = data.Symbol
             };
-        }
-
-        internal void SubscribeToMarketsData(Action<IEnumerable<MarketData>> evaluateMarkets)
-        {
-            throw new NotImplementedException();
         }
     }
 }
