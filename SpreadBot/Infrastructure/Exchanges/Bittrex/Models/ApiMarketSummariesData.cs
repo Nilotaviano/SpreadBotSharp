@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace SpreadBot.Models.API
+namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
     public class ApiMarketSummariesData
     {
@@ -18,6 +18,8 @@ namespace SpreadBot.Models.API
             public decimal Volume { get; set; }
             public decimal QuoteVolume { get; set; }
             public decimal PercentChange { get; set; }
+            public decimal MinTradeSize { get; set; }
+            public int Precision { get; set; }
             public DateTime UpdatedAt { get; set; }
         }
     }

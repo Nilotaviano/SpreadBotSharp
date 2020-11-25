@@ -1,10 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace SpreadBot.Models.API
+﻿namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
-    public class ApiErrorData
+    public class BittrexApiErrorData
     {
         public string Code { get; set; }
         public string Detail { get; set; }

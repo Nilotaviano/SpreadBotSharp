@@ -1,5 +1,5 @@
 ﻿using SpreadBot.Infrastructure;
-using SpreadBot.Models.API;
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -31,6 +31,8 @@ namespace SpreadBot.Models.Repository
             QuoteVolume = marketSummary.QuoteVolume;
             UpdatedAt = marketSummary.UpdatedAt;
             Symbol = marketSummary.Symbol;
+            MinTradeSize = marketSummary.MinTradeSize;
+            Precision = marketSummary.Precision;
         }
 
         public MessageType MessageType => MessageType.MarketData;
@@ -42,8 +44,10 @@ namespace SpreadBot.Models.Repository
         public decimal? High { get; set; }
         public decimal? Low { get; set; }
         public decimal? Volume { get; set; }
-        public decimal? QuoteVolume { get; set; } //Volume of the base market (i.e. BTC)
+        public decimal? QuoteVolume { get; set; } //"Quote" means BTC in the LTC-BTC market, for example
         public decimal? PercentChange { get; set; }
+        public decimal? MinTradeSize { get; set; } //In base currency (minTradeSize is the minimum order quantity in the base currency (e.g. LTC)
+        public int? Precision { get; set; } //Number of decimal places allowed on the price when creating an order
         public DateTime? UpdatedAt { get; set; }
 
         public string BaseMarket => Symbol.Split('-')[1];

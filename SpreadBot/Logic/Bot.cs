@@ -1,8 +1,10 @@
 ﻿using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges;
+using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -25,7 +27,9 @@ namespace SpreadBot.Logic
 
         private BotState botState;
 
-        public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback)
+        private readonly Dictionary<BotState, IBotStateStrategy> botStateStrategyDictionary;
+
+        public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
             this.appSettings = appSettings;
             this.dataRepository = dataRepository;
@@ -36,6 +40,7 @@ namespace SpreadBot.Logic
             Balance = spreadConfiguration.AllocatedAmountOfBaseCurrency;
             Guid = Guid.NewGuid();
             botState = BotState.Buy;
+            botStateStrategyDictionary = botStrategiesFactory.GetStrategiesDictionary();
         }
 
         public Guid Guid { get; private set; }
@@ -72,25 +77,32 @@ namespace SpreadBot.Logic
         {
             message.ThrowIfArgumentIsNull(nameof(message));
 
-            try
+            if (botState == BotState.FinishedWork)
             {
-                await semaphore.WaitAsync();
-
-                switch (message.MessageType)
-                {
-                    case MessageType.MarketData:
-                        await ProcessMarketData(message as MarketData);
-                        break;
-                    case MessageType.OrderData:
-                        await ProcessOrderData(message as OrderData);
-                        break;
-                    default:
-                        throw new ArgumentException();
-                }
+                Logger.LogError("Bot is still running after FinishWork was called");
             }
-            finally
+            else
             {
-                semaphore.Release();
+                try
+                {
+                    await semaphore.WaitAsync();
+
+                    switch (message.MessageType)
+                    {
+                        case MessageType.MarketData:
+                            await ProcessMarketData(message as MarketData);
+                            break;
+                        case MessageType.OrderData:
+                            await ProcessOrderData(message as OrderData);
+                            break;
+                        default:
+                            throw new ArgumentException();
+                    }
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
             }
         }
 
@@ -98,92 +110,14 @@ namespace SpreadBot.Logic
         {
             latestMarketData = marketData;
 
-            switch (botState)
+            try
             {
-                case BotState.Buy:
-                    {
-                        try
-                        {
-                            if (!marketData.BidRate.HasValue)
-                                return;
-
-                            if (marketData.SpreadPercentage >= spreadConfiguration.MinimumSpreadPercentage)
-                            {
-
-                                decimal bidPrice = marketData.BidRate.Value + 1.Satoshi();
-                                decimal amount = Balance * (1 - exchange.FeeRate) / bidPrice;
-
-                                await ExecuteOrderFunction(async () => await exchange.BuyLimit(MarketSymbol, amount, bidPrice)); 
-                            }
-                            else
-                                FinishWork();
-                        }
-                        catch (ExchangeRequestException e)
-                        {
-                            //TODO: Handle specific errors
-                            Logger.LogError($"BuyLimit error: {JsonSerializer.Serialize(e)}");
-                        }
-
-                        break;
-                    }
-                case BotState.BuyOrderActive:
-                    {
-                        try
-                        {
-                            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage)
-                            {
-                                //Cancel order and exit
-                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
-                            }
-                            else if (marketData.BidRate - currentOrderData.Limit > spreadConfiguration.MaxBidAskDifferenceFromOrder)
-                            {
-                                //Cancel order and switch to BotState.Buy
-                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
-                            }
-                        }
-                        catch (ExchangeRequestException e)
-                        {
-                            //TODO: Handle specific errors
-                            Logger.LogError($"CancelOrder error: {JsonSerializer.Serialize(e)}");
-                        }
-
-                        break;
-                    }
-                case BotState.Sell:
-                    {
-                        try
-                        {
-                            if (!marketData.AskRate.HasValue)
-                                return;
-
-                            decimal askPrice = marketData.AskRate.Value - 1.Satoshi();
-                            await ExecuteOrderFunction(async () => await exchange.SellLimit(MarketSymbol, HeldAmount, askPrice));
-                        }
-                        catch (ExchangeRequestException e)
-                        {
-                            //TODO: Handle specific errors
-                            Logger.LogError($"SellLimit error: {JsonSerializer.Serialize(e)}");
-                        }
-
-                        break;
-                    }
-                case BotState.SellOrderActive:
-                    try
-                    {
-                        if (currentOrderData.Limit - marketData.AskRate > spreadConfiguration.MaxBidAskDifferenceFromOrder)
-                        {
-                            //cancel order and switch to BotState.Sell
-                            if (buyStopwatch.Elapsed.TotalMinutes > spreadConfiguration.MinutesForLoss)
-                                await ExecuteOrderFunction(async () => await exchange.CancelOrder(currentOrderData.Id));
-                        }
-                    }
-                    catch (ExchangeRequestException e)
-                    {
-                        //TODO: Handle specific errors
-                        Logger.LogError($"CancelOrder error: {JsonSerializer.Serialize(e)}");
-                    }
-
-                    break;
+                await botStateStrategyDictionary[botState].ProcessMarketData(exchange, spreadConfiguration, buyStopwatch, Balance, HeldAmount, ExecuteOrderFunction, FinishWork, currentOrderData, latestMarketData);
+            }
+            catch (Exception e)
+            {
+                //TODO: log all bot properties and fields here as well
+                Logger.LogError($"ProcessMarketData error on {botState} state : {JsonSerializer.Serialize(e)}");
             }
         }
 
@@ -194,6 +128,7 @@ namespace SpreadBot.Logic
             await ProcessOrderData(orderData);
         }
 
+        //Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
             if (orderData.Id != currentOrderData?.Id)
@@ -245,18 +180,21 @@ namespace SpreadBot.Logic
 
         private void FinishWork()
         {
+            botState = BotState.FinishedWork;
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
             semaphore.Clear();
             unallocateBotCallback(this);
         }
-
-        private enum BotState
-        {
-            Buy,
-            BuyOrderActive,
-            Sell,
-            SellOrderActive
-        }
     }
+
+    public enum BotState
+    {
+        Buy,
+        BuyOrderActive,
+        Sell,
+        SellOrderActive,
+        FinishedWork
+    }
+
 }

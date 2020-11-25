@@ -1,4 +1,5 @@
 ﻿using SpreadBot.Infrastructure;
+using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
@@ -55,7 +56,7 @@ namespace SpreadBot.Logic
                     if (!CanAllocateBotForConfiguration(configuration))
                         break;
 
-                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot);
+                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
                     AllocatedBotsByGuid[bot.Guid] = bot;
                     allocatedMarketsForConfiguration.Add(market.Symbol);
 

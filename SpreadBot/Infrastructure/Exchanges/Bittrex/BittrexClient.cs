@@ -1,19 +1,18 @@
 ﻿using Newtonsoft.Json;
 using RestSharp;
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
-using static SpreadBot.Models.API.ApiBalanceData;
 
-namespace SpreadBot.Infrastructure.Exchanges
+namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 {
-    public class Bittrex : IExchange
+    public class BittrexClient : IExchange
     {
         private const string apiUrl = "https://api.bittrex.com/v3";
         private const string websocketUrl = "https://socket-v3.bittrex.com/signalr";
@@ -30,7 +29,7 @@ namespace SpreadBot.Infrastructure.Exchanges
 
         public decimal FeeRate => 0.002m;
 
-        public Bittrex(string apiKey, string apiSecret)
+        public BittrexClient(string apiKey, string apiSecret)
         {
             ApiKey = apiKey;
             ApiSecret = apiSecret;
@@ -99,7 +98,7 @@ namespace SpreadBot.Infrastructure.Exchanges
 
             request.AddQueryParameter("pageSize", "200");
 
-            if(startAfterOrderId != null)
+            if (startAfterOrderId != null)
                 request.AddQueryParameter("previousPageToken", startAfterOrderId);
 
             return await ExecuteAuthenticatedRequest<ApiOrderData.Order[]>(request);
@@ -173,16 +172,29 @@ namespace SpreadBot.Infrastructure.Exchanges
             socketClient.On("heartbeat", HeartbeatStopwatch.Restart);
         }
 
-        private async Task<T> ExecuteRequest<T>(RestRequest request)
+        private async Task<ApiRestResponse<T>> ExecuteRequest<T>(RestRequest request)
         {
             var response = await ApiClient.ExecuteAsync(request);
 
-            if (response.StatusCode == HttpStatusCode.Created)
-                return JsonConvert.DeserializeObject<T>(response.Content);
+            if (response.IsSuccessful)
+            {
+                T data = JsonConvert.DeserializeObject<T>(response.Content);
+                int sequence = GetSequence(response);
+
+                return new ApiRestResponse<T>
+                {
+                    Data = data,
+                    Sequence = sequence
+                };
+            }
             else
             {
-                var errorData = JsonConvert.DeserializeObject<ApiErrorData>(response.Content);
-                throw new ExchangeRequestException(errorData);
+                ApiErrorType errorType = GetErrorType(response);
+
+                return new ApiRestResponse<T>
+                {
+                    Error = errorType
+                };
             }
         }
 
@@ -198,24 +210,7 @@ namespace SpreadBot.Infrastructure.Exchanges
             request.AddHeader("Api-Content-Hash", contentHash);
             request.AddHeader("Api-Signature", $"{timestamp}{requestUri}{method}{contentHash}".Sign(ApiSecret));
 
-            var response = await ApiClient.ExecuteAsync(request);
-
-            if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Created)
-            {
-                T data = JsonConvert.DeserializeObject<T>(response.Content);
-                int sequence = GetSequence(response);
-
-                return new ApiRestResponse<T>
-                {
-                    Data = data,
-                    Sequence = sequence
-                };
-            }
-            else
-            {
-                var errorData = JsonConvert.DeserializeObject<ApiErrorData>(response.Content);
-                throw new ExchangeRequestException(errorData);
-            }
+            return await ExecuteRequest<T>(request);
         }
 
         private static int GetSequence(IRestResponse response)
@@ -223,6 +218,44 @@ namespace SpreadBot.Infrastructure.Exchanges
             string sequenceStr = response.Headers.SingleOrDefault(p => p.Name.Equals("Sequence"))?.Value as string;
             int sequence = !string.IsNullOrEmpty(sequenceStr) ? int.Parse(sequenceStr) : 0;
             return sequence;
+        }
+
+        /*
+         * 400 - Bad Request	The request was malformed, often due to a missing or invalid parameter. See the error code and response data for more details.
+         * 401 - Unauthorized	The request failed to authenticate (example: a valid api key was not included in your request header)
+         * 403 - Forbidden	The provided api key is not authorized to perform the requested operation (example: attempting to trade with an api key not authorized to make trades)
+         * 404 - Not Found	The requested resource does not exist.
+         * 409 - Conflict	The request parameters were valid but the request failed due to an operational error. (example: INSUFFICIENT_FUNDS)
+         * 429 - Too Many Requests	Too many requests hit the API too quickly. Please make sure to implement exponential backoff with your requests.
+         * 501 - Not Implemented	The service requested has not yet been implemented.
+         * 503 - Service Unavailable	The request parameters were valid but the request failed because the resource is temporarily unavailable (example: CURRENCY_OFFLINE)
+         */
+        public static ApiErrorType GetErrorType(IRestResponse restResponse)
+        {
+            try
+            {
+                var errorData = JsonConvert.DeserializeObject<BittrexApiErrorData>(restResponse.Content);
+
+                return errorData.Code.ToUpperInvariant() switch
+                {
+                    "INSUFFICIENT_FUNDS" => ApiErrorType.InsufficientFunds,
+                    "MIN_TRADE_REQUIREMENT_NOT_MET " => ApiErrorType.DustTrade,
+                    "DUST_TRADE_DISALLOWED" => ApiErrorType.DustTrade,
+                    "DUST_TRADE_DISALLOWED_MIN_VALUE" => ApiErrorType.DustTrade,
+                    _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
+                    _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline, //TODO: Confirm
+                    _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline, //TODO: Confirm
+                    _ when restResponse.StatusCode == HttpStatusCode.Unauthorized => ApiErrorType.Unauthorized,
+                    _ when restResponse.StatusCode == HttpStatusCode.Forbidden => ApiErrorType.Unauthorized,
+                    _ => ApiErrorType.UnknownError
+                };
+            }
+            catch(Exception e)
+            {
+                Logger.LogError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
+
+                return ApiErrorType.UnknownError;
+            }
         }
     }
 }

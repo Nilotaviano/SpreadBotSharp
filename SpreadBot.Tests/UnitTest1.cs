@@ -3,6 +3,7 @@ using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Logic;
+using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
 using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
@@ -200,7 +201,7 @@ namespace SpreadBot.Tests
                 }
             });
 
-            var bot = new Bot(appSettings, datarepository, spreadConfiguration, openingMarketData, (bot) => { });
+            var bot = new Bot(appSettings, datarepository, spreadConfiguration, openingMarketData, (bot) => { }, new BotStrategiesFactory());
             bot.Start();
 
             summariesEvent.WaitOne(100);

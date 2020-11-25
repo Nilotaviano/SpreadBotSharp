@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace SpreadBot.Models.API
+namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
     public class ApiBalanceData
     {

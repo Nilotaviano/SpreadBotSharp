@@ -4,7 +4,7 @@ using System.Text;
 
 namespace SpreadBot.Models.Repository
 {
-    interface IMessage
+    public interface IMessage
     {
         public MessageType MessageType { get; }
     }
