@@ -1,6 +1,6 @@
 ﻿namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
-    public class ApiTickersData
+    public class BittrexApiTickersData
     {
         public int Sequence { get; set; }
 

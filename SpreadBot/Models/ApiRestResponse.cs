@@ -6,6 +6,5 @@ namespace SpreadBot.Models
     {
         public T Data { get; set; }
         public int Sequence { get; set; }
-        public ApiErrorType Error { get; set; }
     }
 }

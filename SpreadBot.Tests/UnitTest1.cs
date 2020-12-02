@@ -48,10 +48,10 @@ namespace SpreadBot.Tests
                 SpreadConfigurations = new[] { spreadConfiguration }
             };
 
-            Action<ApiBalanceData> onBalancecallback = null;
-            Action<ApiMarketSummariesData> onSummariesCallBack = null;
-            Action<ApiTickersData> onTickersCallback = null;
-            Action<ApiOrderData> onOrderCallback = null;
+            Action<BittrexApiBalanceData> onBalancecallback = null;
+            Action<BittrexApiMarketSummariesData> onSummariesCallBack = null;
+            Action<BittrexApiTickersData> onTickersCallback = null;
+            Action<BittrexApiOrderData> onOrderCallback = null;
             var mockExchange = new Mock<IExchange>();
 
             mockExchange
@@ -65,25 +65,25 @@ namespace SpreadBot.Tests
                 .ReturnsAsync(openingBalanceData);
             mockExchange
                 .Setup(e => e.GetMarketSummariesData())
-                .ReturnsAsync(new ApiMarketSummariesData { Deltas = new ApiMarketSummariesData.MarketSummary[0] });
+                .ReturnsAsync(new BittrexApiMarketSummariesData { Deltas = new BittrexApiMarketSummariesData.MarketSummary[0] });
             mockExchange
                 .Setup(e => e.GetTickersData())
-                .ReturnsAsync(new ApiTickersData { Deltas = new ApiTickersData.Ticker[0] });
+                .ReturnsAsync(new BittrexApiTickersData { Deltas = new BittrexApiTickersData.Ticker[0] });
             mockExchange
                 .Setup(e => e.GetClosedOrdersData(It.IsAny<string>()))
-                .ReturnsAsync(new ApiRestResponse<ApiOrderData.Order[]> { Data = new ApiOrderData.Order[0] });
+                .ReturnsAsync(new ApiRestResponse<BittrexApiOrderData.Order[]> { Data = new BittrexApiOrderData.Order[0] });
             mockExchange
-                .Setup(e => e.OnBalance(It.IsAny<Action<ApiBalanceData>>()))
-                .Callback((Action<ApiBalanceData> action) => onBalancecallback = action);
+                .Setup(e => e.OnBalance(It.IsAny<Action<BittrexApiBalanceData>>()))
+                .Callback((Action<BittrexApiBalanceData> action) => onBalancecallback = action);
             mockExchange
-                .Setup(e => e.OnSummaries(It.IsAny<Action<ApiMarketSummariesData>>()))
-                .Callback((Action<ApiMarketSummariesData> action) => onSummariesCallBack = action);
+                .Setup(e => e.OnSummaries(It.IsAny<Action<BittrexApiMarketSummariesData>>()))
+                .Callback((Action<BittrexApiMarketSummariesData> action) => onSummariesCallBack = action);
             mockExchange
-                .Setup(e => e.OnTickers(It.IsAny<Action<ApiTickersData>>()))
-                .Callback((Action<ApiTickersData> action) => onTickersCallback = action);
+                .Setup(e => e.OnTickers(It.IsAny<Action<BittrexApiTickersData>>()))
+                .Callback((Action<BittrexApiTickersData> action) => onTickersCallback = action);
             mockExchange
-                .Setup(e => e.OnOrder(It.IsAny<Action<ApiOrderData>>()))
-                .Callback((Action<ApiOrderData> action) => onOrderCallback = action);
+                .Setup(e => e.OnOrder(It.IsAny<Action<BittrexApiOrderData>>()))
+                .Callback((Action<BittrexApiOrderData> action) => onOrderCallback = action);
 
             var bidPrice = openingMarketData.BidRate.Value + 1.Satoshi();
             var askPrice = openingMarketData.AskRate.Value - 1.Satoshi();
@@ -104,10 +104,10 @@ namespace SpreadBot.Tests
                 {
                     Thread.Sleep(10);
 
-                    onOrderCallback(new ApiOrderData()
+                    onOrderCallback(new BittrexApiOrderData()
                     {
                         Sequence = 1,
-                        Delta = new ApiOrderData.Order
+                        Delta = new BittrexApiOrderData.Order
                         {
                             Id = buyOrderId,
                             Direction = OrderDirection.BUY,
@@ -129,10 +129,10 @@ namespace SpreadBot.Tests
                 {
                     Thread.Sleep(10);
 
-                    onOrderCallback(new ApiOrderData()
+                    onOrderCallback(new BittrexApiOrderData()
                     {
                         Sequence = 2,
-                        Delta = new ApiOrderData.Order
+                        Delta = new BittrexApiOrderData.Order
                         {
                             Id = sellOrderId,
                             Direction = OrderDirection.SELL,
@@ -170,12 +170,12 @@ namespace SpreadBot.Tests
                     sellEvent.Set();
             });
 
-            onSummariesCallBack(new ApiMarketSummariesData()
+            onSummariesCallBack(new BittrexApiMarketSummariesData()
             {
                 Sequence = 1,
                 Deltas = new[]
                 {
-                    new ApiMarketSummariesData.MarketSummary()
+                    new BittrexApiMarketSummariesData.MarketSummary()
                     {
                         PercentChange = openingMarketData.PercentChange.Value,
                         QuoteVolume = openingMarketData.QuoteVolume.Value,
@@ -187,12 +187,12 @@ namespace SpreadBot.Tests
             // Without this sleep test breaks because it tries to cancel the buy order
             Thread.Sleep(10);
 
-            onTickersCallback(new ApiTickersData()
+            onTickersCallback(new BittrexApiTickersData()
             {
                 Sequence = 1,
                 Deltas = new[]
                 {
-                    new ApiTickersData.Ticker()
+                    new BittrexApiTickersData.Ticker()
                     {
                         AskRate = openingMarketData.AskRate.Value,
                         BidRate = openingMarketData.BidRate.Value,
@@ -214,10 +214,10 @@ namespace SpreadBot.Tests
             datarepository.UnsubscribeToOrderData(sellOrderId, testGuid);
 
             mockExchange.Verify(e => e.IsSetup, Times.Once);
-            mockExchange.Verify(e => e.OnBalance(It.IsAny<Action<ApiBalanceData>>()), Times.Once);
-            mockExchange.Verify(e => e.OnSummaries(It.IsAny<Action<ApiMarketSummariesData>>()), Times.Once);
-            mockExchange.Verify(e => e.OnTickers(It.IsAny<Action<ApiTickersData>>()), Times.Once);
-            mockExchange.Verify(e => e.OnOrder(It.IsAny<Action<ApiOrderData>>()), Times.Once);
+            mockExchange.Verify(e => e.OnBalance(It.IsAny<Action<BittrexApiBalanceData>>()), Times.Once);
+            mockExchange.Verify(e => e.OnSummaries(It.IsAny<Action<BittrexApiMarketSummariesData>>()), Times.Once);
+            mockExchange.Verify(e => e.OnTickers(It.IsAny<Action<BittrexApiTickersData>>()), Times.Once);
+            mockExchange.Verify(e => e.OnOrder(It.IsAny<Action<BittrexApiOrderData>>()), Times.Once);
             mockExchange.Verify(e => e.GetBalanceData(), Times.Once);
             mockExchange.Verify(e => e.BuyLimit(openingMarketData.Symbol, quantity, bidPrice), Times.Once);
             mockExchange.Verify(e => e.SellLimit(openingMarketData.Symbol, quantity, askPrice), Times.Once);

@@ -10,7 +10,7 @@ namespace SpreadBot.Models.Repository
     {
         public MarketData() { }
 
-        public MarketData(ApiTickersData.Ticker ticker)
+        public MarketData(BittrexApiTickersData.Ticker ticker)
         {
             ticker.ThrowIfArgumentIsNull(nameof(ticker));
 
@@ -20,7 +20,7 @@ namespace SpreadBot.Models.Repository
             Symbol = ticker.Symbol;
         }
 
-        public MarketData(ApiMarketSummariesData.MarketSummary marketSummary)
+        public MarketData(BittrexApiMarketSummariesData.MarketSummary marketSummary)
         {
             marketSummary.ThrowIfArgumentIsNull(nameof(marketSummary));
 

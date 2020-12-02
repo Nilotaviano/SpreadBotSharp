@@ -4,7 +4,7 @@ using System.Text;
 
 namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
-    public class ApiMarketSummariesData
+    public class BittrexApiMarketSummariesData
     {
         public int Sequence { get; set; }
 

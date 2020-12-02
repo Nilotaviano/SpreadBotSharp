@@ -1,4 +1,4 @@
-﻿namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
+﻿namespace SpreadBot.Models
 {
     public enum ApiErrorType
     {

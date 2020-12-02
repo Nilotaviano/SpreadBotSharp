@@ -79,7 +79,7 @@ namespace SpreadBot.Logic
 
             if (botState == BotState.FinishedWork)
             {
-                Logger.LogError("Bot is still running after FinishWork was called");
+                Logger.LogUnexpectedError("Bot is still running after FinishWork was called");
             }
             else
             {
@@ -99,6 +99,36 @@ namespace SpreadBot.Logic
                             throw new ArgumentException();
                     }
                 }
+                catch (ApiException e)
+                {
+                    //TODO: Clean up/refactor
+                    switch (e.ApiErrorType)
+                    {
+                        case ApiErrorType.DustTrade when botState == BotState.Sell:
+                            //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
+                            botState = BotState.Buy;
+                            break;
+                        case ApiErrorType.InsufficientFunds:
+                            //Too many bots running?
+                            FinishWork();
+                            break;
+                        case ApiErrorType.MarketOffline when botState == BotState.Buy:
+                            FinishWork();
+                            break;
+                        case ApiErrorType.MarketOffline:
+                        case ApiErrorType.Throttled:
+                            //Do nothing, try again on the next cycle
+                            break;
+                        default:
+                            //TODO: Log all of the bot's state/properties/fields
+                            Logger.LogUnexpectedError(e.ToString());
+                            break;
+                    };
+                }
+                catch (Exception e)
+                {
+                    Logger.LogUnexpectedError($"Unexpected exception: {e}");
+                }
                 finally
                 {
                     semaphore.Release();
@@ -110,15 +140,7 @@ namespace SpreadBot.Logic
         {
             latestMarketData = marketData;
 
-            try
-            {
-                await botStateStrategyDictionary[botState].ProcessMarketData(exchange, spreadConfiguration, buyStopwatch, Balance, HeldAmount, ExecuteOrderFunction, FinishWork, currentOrderData, latestMarketData);
-            }
-            catch (Exception e)
-            {
-                //TODO: log all bot properties and fields here as well
-                Logger.LogError($"ProcessMarketData error on {botState} state : {JsonSerializer.Serialize(e)}");
-            }
+            await botStateStrategyDictionary[botState].ProcessMarketData(exchange, spreadConfiguration, buyStopwatch, Balance, HeldAmount, ExecuteOrderFunction, FinishWork, currentOrderData, latestMarketData);
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
@@ -128,7 +150,7 @@ namespace SpreadBot.Logic
             await ProcessOrderData(orderData);
         }
 
-        //Refactor/clean this method
+        //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
             if (orderData.Id != currentOrderData?.Id)

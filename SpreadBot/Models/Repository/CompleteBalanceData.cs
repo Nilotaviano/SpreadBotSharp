@@ -12,7 +12,7 @@ namespace SpreadBot.Models.Repository
             Balances = balances;
         }
 
-        public CompleteBalanceData(ApiRestResponse<ApiBalanceData.Balance[]> balancesData)
+        public CompleteBalanceData(ApiRestResponse<BittrexApiBalanceData.Balance[]> balancesData)
         {
             Sequence = balancesData.Sequence;
             Balances = balancesData.Data?.Select(balance => new BalanceData(balance));

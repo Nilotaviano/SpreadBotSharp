@@ -6,7 +6,7 @@ namespace SpreadBot.Models.Repository
     {
         public BalanceData() { }
 
-        public BalanceData(ApiBalanceData.Balance balance)
+        public BalanceData(BittrexApiBalanceData.Balance balance)
         {
             CurrencyAbbreviation = balance.CurrencySymbol;
             Amount = balance.Available;

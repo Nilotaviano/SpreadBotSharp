@@ -44,22 +44,22 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             IsSetup = true;
         }
 
-        public void OnBalance(Action<ApiBalanceData> callback)
+        public void OnBalance(Action<BittrexApiBalanceData> callback)
         {
             SocketClient.On("balance", callback);
         }
 
-        public void OnSummaries(Action<ApiMarketSummariesData> callback)
+        public void OnSummaries(Action<BittrexApiMarketSummariesData> callback)
         {
             SocketClient.On("marketsummaries", callback);
         }
 
-        public void OnTickers(Action<ApiTickersData> callback)
+        public void OnTickers(Action<BittrexApiTickersData> callback)
         {
             SocketClient.On("tickers", callback);
         }
 
-        public void OnOrder(Action<ApiOrderData> callback)
+        public void OnOrder(Action<BittrexApiOrderData> callback)
         {
             SocketClient.On("order", callback);
         }
@@ -68,30 +68,30 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         {
             var request = new RestRequest("/balances", Method.GET, DataFormat.Json);
 
-            var balances = await ExecuteAuthenticatedRequest<ApiBalanceData.Balance[]>(request);
+            var balances = await ExecuteAuthenticatedRequest<BittrexApiBalanceData.Balance[]>(request);
 
             return new CompleteBalanceData(balances);
         }
 
-        public async Task<ApiTickersData> GetTickersData()
+        public async Task<BittrexApiTickersData> GetTickersData()
         {
             var request = new RestRequest("/markets/tickers", Method.GET, DataFormat.Json);
 
-            var tickers = await ExecuteAuthenticatedRequest<ApiTickersData.Ticker[]>(request);
+            var tickers = await ExecuteAuthenticatedRequest<BittrexApiTickersData.Ticker[]>(request);
 
-            return new ApiTickersData { Sequence = tickers.Sequence, Deltas = tickers.Data };
+            return new BittrexApiTickersData { Sequence = tickers.Sequence, Deltas = tickers.Data };
         }
 
-        public async Task<ApiMarketSummariesData> GetMarketSummariesData()
+        public async Task<BittrexApiMarketSummariesData> GetMarketSummariesData()
         {
             var request = new RestRequest("/markets/summaries", Method.GET, DataFormat.Json);
 
-            var marketSummaries = await ExecuteAuthenticatedRequest<ApiMarketSummariesData.MarketSummary[]>(request);
+            var marketSummaries = await ExecuteAuthenticatedRequest<BittrexApiMarketSummariesData.MarketSummary[]>(request);
 
-            return new ApiMarketSummariesData { Sequence = marketSummaries.Sequence, Deltas = marketSummaries.Data };
+            return new BittrexApiMarketSummariesData { Sequence = marketSummaries.Sequence, Deltas = marketSummaries.Data };
         }
 
-        public async Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId)
+        public async Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId)
         {
             var request = new RestRequest("/orders/closed", Method.GET, DataFormat.Json);
 
@@ -100,7 +100,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             if (startAfterOrderId != null)
                 request.AddQueryParameter("previousPageToken", startAfterOrderId);
 
-            return await ExecuteAuthenticatedRequest<ApiOrderData.Order[]>(request);
+            return await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
         }
 
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
@@ -117,7 +117,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
-            var apiOrderData = await ExecuteAuthenticatedRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData>(request);
 
             return new OrderData(apiOrderData);
         }
@@ -136,7 +136,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
-            var apiOrderData = await ExecuteAuthenticatedRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData>(request);
 
             return new OrderData(apiOrderData);
         }
@@ -145,7 +145,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         {
             var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
 
-            var apiOrderData = await ExecuteAuthenticatedRequest<ApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData>(request);
 
             return new OrderData(apiOrderData);
         }
@@ -190,10 +190,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             {
                 ApiErrorType errorType = GetErrorType(response);
 
-                return new ApiRestResponse<T>
-                {
-                    Error = errorType
-                };
+                if (errorType == ApiErrorType.UnknownError)
+                    Logger.LogUnexpectedError($"Unexpected API error: {response.Content}");
+                else
+                    Logger.LogError($"API error: {response.Content}");
+
+                throw new ApiException(errorType, response.Content);
             }
         }
 
@@ -249,9 +251,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     _ => ApiErrorType.UnknownError
                 };
             }
-            catch(Exception e)
+            catch (Exception e)
             {
-                Logger.LogError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
+                Logger.LogUnexpectedError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
 
                 return ApiErrorType.UnknownError;
             }

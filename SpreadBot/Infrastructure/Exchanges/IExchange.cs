@@ -16,10 +16,10 @@ namespace SpreadBot.Infrastructure.Exchanges
 
         //Websocket subscription methods
         //For exchanges that don't support websockets, use an interval-based cycle to call equivalent API methods to simulate Websocket behavior
-        void OnBalance(Action<ApiBalanceData> callback);
-        void OnSummaries(Action<ApiMarketSummariesData> callback);
-        void OnTickers(Action<ApiTickersData> callback);
-        void OnOrder(Action<ApiOrderData> callback);
+        void OnBalance(Action<BittrexApiBalanceData> callback);
+        void OnSummaries(Action<BittrexApiMarketSummariesData> callback);
+        void OnTickers(Action<BittrexApiTickersData> callback);
+        void OnOrder(Action<BittrexApiOrderData> callback);
 
         //Rest API methods
         Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
@@ -27,8 +27,8 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<OrderData> CancelOrder(string orderId);
 
         Task<CompleteBalanceData> GetBalanceData();
-        Task<ApiTickersData> GetTickersData();
-        Task<ApiMarketSummariesData> GetMarketSummariesData();
-        Task<ApiRestResponse<ApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId);
+        Task<BittrexApiTickersData> GetTickersData();
+        Task<BittrexApiMarketSummariesData> GetMarketSummariesData();
+        Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId);
     }
 }

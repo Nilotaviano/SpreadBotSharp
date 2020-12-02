@@ -3,7 +3,7 @@ using System;
 
 namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
-    public class ApiOrderData
+    public class BittrexApiOrderData
     {
         public string AccountId { get; set; }
         public int Sequence { get; set; }
