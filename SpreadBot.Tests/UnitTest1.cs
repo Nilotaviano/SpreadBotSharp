@@ -25,6 +25,7 @@ namespace SpreadBot.Tests
                 PercentChange = 5,
                 QuoteVolume = 10,
                 Symbol = "NMR-BTC",
+                Precision = 8
             };
             var openingBalanceData = new CompleteBalanceData(1, new[] { new BalanceData() { Amount = 1, CurrencyAbbreviation = "BTC" } });
 
@@ -35,7 +36,8 @@ namespace SpreadBot.Tests
                 MaxPercentChangeFromPreviousDay = 10,
                 MinimumQuoteVolume = 10,
                 MinimumSpreadPercentage = 1,
-                MinutesForLoss = 0
+                MinutesForLoss = 0,
+                MinimumProfitPercentage = 0
             };
             var appSettings = new AppSettings()
             {

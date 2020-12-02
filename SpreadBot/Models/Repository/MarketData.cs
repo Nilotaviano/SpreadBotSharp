@@ -31,8 +31,6 @@ namespace SpreadBot.Models.Repository
             QuoteVolume = marketSummary.QuoteVolume;
             UpdatedAt = marketSummary.UpdatedAt;
             Symbol = marketSummary.Symbol;
-            MinTradeSize = marketSummary.MinTradeSize;
-            Precision = marketSummary.Precision;
         }
 
         public MarketData(BittrexApiMarketData marketData)
