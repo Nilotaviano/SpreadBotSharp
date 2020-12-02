@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
-using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Models.API;
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 
 namespace SpreadBot.Models.Repository
 {

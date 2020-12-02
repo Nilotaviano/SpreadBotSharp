@@ -1,4 +1,5 @@
-﻿using System;
+﻿using SpreadBot.Models;
+using System;
 
 namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {

@@ -1,8 +1,5 @@
-﻿using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Models.API;
+﻿using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace SpreadBot.Models.Repository
 {

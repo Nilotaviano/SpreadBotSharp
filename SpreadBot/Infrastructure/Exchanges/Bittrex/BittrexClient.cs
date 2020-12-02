@@ -2,7 +2,6 @@
 using RestSharp;
 using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models;
-using SpreadBot.Models.API;
 using SpreadBot.Models.Repository;
 using System;
 using System.Diagnostics;
@@ -69,7 +68,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         {
             var request = new RestRequest("/balances", Method.GET, DataFormat.Json);
 
-            var balances = await ExecuteAuthenticatedRequest<Balance[]>(request);
+            var balances = await ExecuteAuthenticatedRequest<ApiBalanceData.Balance[]>(request);
 
             return new CompleteBalanceData(balances);
         }

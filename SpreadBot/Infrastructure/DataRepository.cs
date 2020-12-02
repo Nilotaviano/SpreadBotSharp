@@ -1,5 +1,5 @@
 ﻿using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Models.API;
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
