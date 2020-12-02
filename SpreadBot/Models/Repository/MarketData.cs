@@ -39,6 +39,7 @@ namespace SpreadBot.Models.Repository
         {
             marketData.ThrowIfArgumentIsNull(nameof(marketData));
 
+            Symbol = marketData.Symbol;
             MinTradeSize = marketData.MinTradeSize;
             Precision = marketData.Precision;
             CreatedAt = marketData.CreatedAt;

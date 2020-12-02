@@ -29,7 +29,13 @@ namespace SpreadBot
                 {
                     new SpreadConfiguration()
                     {
-                        MaxPercentChangeFromPreviousDay
+                        MaxPercentChangeFromPreviousDay = 40,
+                        AllocatedAmountOfBaseCurrency = 0.1m,
+                        MinimumQuoteVolume = 10,
+                        MinimumSpreadPercentage = 1,
+                        MinutesForLoss = 20,
+                        MinimumProfitPercentage = 1,
+                        SpreadThresholdBeforeCancelingCurrentOrder = 20.Satoshi()
                     }
                 }
             };

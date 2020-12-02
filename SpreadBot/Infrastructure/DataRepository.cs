@@ -255,13 +255,11 @@ namespace SpreadBot.Infrastructure
 
         private void FetchAllData()
         {
-            Task.WaitAll(
-                Task.Run(FetchBalanceData),
-                Task.Run(FetchMarketSummariesData),
-                Task.Run(FetchTickersData),
-                Task.Run(FetchClosedOrdersData),
-                Task.Run()
-            );
+            FetchBalanceData().Wait();
+            FetchMarketSummariesData().Wait();
+            FetchTickersData().Wait();
+            FetchClosedOrdersData().Wait();
+            FetchMarketsData().Wait();
         }
 
         private async Task FetchBalanceData()

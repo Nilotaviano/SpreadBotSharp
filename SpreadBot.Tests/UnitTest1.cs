@@ -31,7 +31,7 @@ namespace SpreadBot.Tests
             SpreadConfiguration spreadConfiguration = new SpreadConfiguration()
             {
                 AllocatedAmountOfBaseCurrency = 100000.Satoshi(),
-                MaxBidAskDifferenceFromOrder = 10.Satoshi(),
+                SpreadThresholdBeforeCancelingCurrentOrder = 10.Satoshi(),
                 MaxPercentChangeFromPreviousDay = 10,
                 MinimumQuoteVolume = 10,
                 MinimumSpreadPercentage = 1,

@@ -1,4 +1,5 @@
-﻿using SpreadBot.Infrastructure;
+﻿using Newtonsoft.Json;
+using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
@@ -24,6 +25,7 @@ namespace SpreadBot.Logic
         private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
 
         private OrderData currentOrderData = null;
+        private decimal boughtPrice = 0;
 
         private BotState botState;
 
@@ -68,6 +70,7 @@ namespace SpreadBot.Logic
 
         public void Start()
         {
+            LogMessage($"started on {MarketSymbol}");
             //This will trigger a call to ProcessMessage
             dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
         }
@@ -76,6 +79,8 @@ namespace SpreadBot.Logic
         private async void ProcessMessage(IMessage message)
         {
             message.ThrowIfArgumentIsNull(nameof(message));
+
+            LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
 
             if (botState == BotState.FinishedWork)
             {
@@ -140,7 +145,7 @@ namespace SpreadBot.Logic
         {
             latestMarketData = marketData;
 
-            await botStateStrategyDictionary[botState].ProcessMarketData(exchange, spreadConfiguration, buyStopwatch, Balance, HeldAmount, ExecuteOrderFunction, FinishWork, currentOrderData, latestMarketData);
+            await botStateStrategyDictionary[botState].ProcessMarketData(exchange, spreadConfiguration, buyStopwatch, Balance, HeldAmount, ExecuteOrderFunction, FinishWork, currentOrderData, latestMarketData, boughtPrice);
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
@@ -174,6 +179,7 @@ namespace SpreadBot.Logic
                         case OrderDirection.BUY:
                             HeldAmount += orderData.FillQuantity;
                             Balance -= orderData.Proceeds + orderData.Commission;
+                            boughtPrice = orderData.Limit;
                             buyStopwatch.Restart();
                             break;
                         case OrderDirection.SELL:
@@ -207,6 +213,12 @@ namespace SpreadBot.Logic
             SetCurrentOrderData(null);
             semaphore.Clear();
             unallocateBotCallback(this);
+            LogMessage($"finished on {MarketSymbol}");
+        }
+
+        private void LogMessage(string message)
+        {
+            Logger.LogMessage($"Bot {Guid}: {message}");
         }
     }
 

@@ -126,9 +126,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
-            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
 
-            return new OrderData(apiOrderData);
+            return new OrderData(apiOrderData.Data);
         }
 
         public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
@@ -145,18 +145,18 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
-            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
 
-            return new OrderData(apiOrderData);
+            return new OrderData(apiOrderData.Data);
         }
 
         public async Task<OrderData> CancelOrder(string orderId)
         {
             var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
 
-            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData>(request);
+            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
 
-            return new OrderData(apiOrderData);
+            return new OrderData(apiOrderData.Data);
         }
 
         private async Task ConnectWebsocket(SocketClient socketClient)
