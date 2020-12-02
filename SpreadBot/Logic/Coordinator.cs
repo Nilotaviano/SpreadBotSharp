@@ -26,8 +26,12 @@ namespace SpreadBot.Logic
             this.dataRepository = dataRepository;
             this.guid = new Guid();
 
-            this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             availableBalanceForBaseMarket = this.dataRepository.BalancesData[appSettings.BaseMarket].Amount;
+        }
+
+        public void Start()
+        {
+            this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
         }
 
         public ConcurrentDictionary<Guid, HashSet<string>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, HashSet<string>>();

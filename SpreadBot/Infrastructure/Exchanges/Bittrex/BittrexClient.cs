@@ -91,6 +91,15 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return new BittrexApiMarketSummariesData { Sequence = marketSummaries.Sequence, Deltas = marketSummaries.Data };
         }
 
+        public async Task<BittrexApiMarketData[]> GetMarketsData()
+        {
+            var request = new RestRequest("/markets", Method.GET, DataFormat.Json);
+
+            var marketSummaries = await ExecuteAuthenticatedRequest<BittrexApiMarketData[]>(request);
+
+            return marketSummaries.Data;
+        }
+
         public async Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId)
         {
             var request = new RestRequest("/orders/closed", Method.GET, DataFormat.Json);

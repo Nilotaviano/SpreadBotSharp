@@ -259,7 +259,8 @@ namespace SpreadBot.Infrastructure
                 Task.Run(FetchBalanceData),
                 Task.Run(FetchMarketSummariesData),
                 Task.Run(FetchTickersData),
-                Task.Run(FetchClosedOrdersData)
+                Task.Run(FetchClosedOrdersData),
+                Task.Run()
             );
         }
 
@@ -314,6 +315,22 @@ namespace SpreadBot.Infrastructure
             lastSummarySequence = tickers.Sequence;
         }
 
+
+        private async Task FetchMarketsData()
+        {
+            //TODO: Handle exceptions here
+            var markets = await Exchange.GetMarketsData();
+
+            if (markets != null)
+            {
+                foreach (var market in markets)
+                {
+                    var marketData = new MarketData(market);
+                    UpdateMarketData(marketData);
+                }
+            }
+        }
+
         private async Task FetchClosedOrdersData()
         {
             //TODO: Handle exceptions here
@@ -347,7 +364,11 @@ namespace SpreadBot.Infrastructure
                 QuoteVolume = data.QuoteVolume ?? existingData.QuoteVolume,
                 UpdatedAt = data.UpdatedAt ?? existingData.UpdatedAt,
                 Volume = data.Volume ?? existingData.Volume,
-                Symbol = data.Symbol
+                Symbol = data.Symbol ?? existingData.Symbol,
+                Precision = data.Precision ?? existingData.Precision,
+                MinTradeSize = data.MinTradeSize ?? existingData.MinTradeSize,
+                Notice = data.Notice ?? existingData.Notice,
+                CreatedAt = data.CreatedAt ?? existingData.CreatedAt,
             };
         }
     }

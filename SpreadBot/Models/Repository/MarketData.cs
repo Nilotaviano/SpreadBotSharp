@@ -35,6 +35,16 @@ namespace SpreadBot.Models.Repository
             Precision = marketSummary.Precision;
         }
 
+        public MarketData(BittrexApiMarketData marketData)
+        {
+            marketData.ThrowIfArgumentIsNull(nameof(marketData));
+
+            MinTradeSize = marketData.MinTradeSize;
+            Precision = marketData.Precision;
+            CreatedAt = marketData.CreatedAt;
+            Notice = marketData.Notice;
+        }
+
         public MessageType MessageType => MessageType.MarketData;
 
         public string Symbol { get; set; }
@@ -46,9 +56,12 @@ namespace SpreadBot.Models.Repository
         public decimal? Volume { get; set; }
         public decimal? QuoteVolume { get; set; } //"Quote" means BTC in the LTC-BTC market, for example
         public decimal? PercentChange { get; set; }
+        public DateTime? UpdatedAt { get; set; }
+
         public decimal? MinTradeSize { get; set; } //In base currency (minTradeSize is the minimum order quantity in the base currency (e.g. LTC)
         public int? Precision { get; set; } //Number of decimal places allowed on the price when creating an order
-        public DateTime? UpdatedAt { get; set; }
+        public DateTime? CreatedAt { get; set; }
+        public string Notice { get; set; }
 
         public string BaseMarket => Symbol.Split('-')[1];
         public decimal SpreadPercentage => (AskRate.GetValueOrDefault(0) - BidRate.GetValueOrDefault(0)) / BidRate.GetValueOrDefault(1) * 100; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php

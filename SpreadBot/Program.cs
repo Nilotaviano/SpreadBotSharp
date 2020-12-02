@@ -1,5 +1,6 @@
 ﻿using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Bittrex;
+using SpreadBot.Logic;
 using System;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -14,9 +15,27 @@ namespace SpreadBot
             await bittrex.Setup();
 
             var dataRepository = new DataRepository(bittrex);
-            dataRepository.SubscribeToCurrencyBalance("ETH", new Guid(), (balanceData) => Console.WriteLine(JsonSerializer.Serialize(balanceData)));
-            dataRepository.SubscribeToMarketData("ETH-BTC", new Guid(), (marketData) => Console.WriteLine(JsonSerializer.Serialize(marketData)));
             dataRepository.StartConsumingData();
+
+            var appSettings = new AppSettings()
+            {
+                ApiKey = Environment.GetEnvironmentVariable("apikey"), 
+                ApiSecret = Environment.GetEnvironmentVariable("apisecret"),
+                BaseMarket = "ETH",
+                MaxNumberOfBots = 1,
+                MinimumNegotiatedAmount = 50000.Satoshi(),
+                MinimumPrice = 1000.Satoshi(),
+                SpreadConfigurations = new []
+                {
+                    new SpreadConfiguration()
+                    {
+                        MaxPercentChangeFromPreviousDay
+                    }
+                }
+            };
+
+            var coordinator = new Coordinator(appSettings, dataRepository);
+            coordinator.Start();
 
             Console.ReadLine();
         }
