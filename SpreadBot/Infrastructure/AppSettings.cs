@@ -14,6 +14,17 @@ namespace SpreadBot.Infrastructure
         public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
+
+        public void Reload(AppSettings newSettings)
+        {
+            //No reason to reload ApiKey and ApiSecret atm
+
+            MaxNumberOfBots = newSettings.MaxNumberOfBots;
+            BaseMarket = newSettings.BaseMarket;
+            MinimumPrice = newSettings.MinimumPrice;
+            MinimumNegotiatedAmount = newSettings.MinimumNegotiatedAmount;
+            SpreadConfigurations = newSettings.SpreadConfigurations;
+        }
     }
 
     public class SpreadConfiguration
