@@ -5,7 +5,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using Threading = System.Threading;
 using System.Threading.Tasks;
+using System.Timers;
 
 namespace SpreadBot.Infrastructure
 {
@@ -15,10 +17,12 @@ namespace SpreadBot.Infrastructure
      */
     public class DataRepository
     {
+        private Timer resyncTimer;
         private int? lastBalanceSequence;
         private int? lastSummarySequence;
         private int? lastTickerSequence;
         private int? lastOrderSequence;
+        private Threading.CancellationTokenSource cancellationToken;
 
         private string mostRecentClosedOrderId;
 
@@ -35,6 +39,9 @@ namespace SpreadBot.Infrastructure
             Exchange = exchange;
 
             mostRecentClosedOrderId = null;
+            resyncTimer = new Timer(30000);
+            resyncTimer.Elapsed += ResyncTimer_Elapsed;
+            resyncTimer.AutoReset = true;
         }
 
         public IExchange Exchange { get; }
@@ -156,10 +163,28 @@ namespace SpreadBot.Infrastructure
 
             FetchAllData();
 
+            resyncTimer.Start();
+
+            ResumeConsumingData();
+        }
+
+        private void ResumeConsumingData()
+        {
+            if (cancellationToken != null)
+                cancellationToken.Dispose();
+
+            cancellationToken = new Threading.CancellationTokenSource();
+
             Task.Run(ConsumeBalanceData);
             Task.Run(ConsumeOrderData);
             Task.Run(ConsumeMarketSummaryData);
             Task.Run(ConsumeTickersData);
+        }
+
+        private void StopConsumingData()
+        {
+            if (cancellationToken != null)
+                cancellationToken.Cancel();
         }
 
         private void ConsumeBalanceData()
@@ -167,7 +192,12 @@ namespace SpreadBot.Infrastructure
             foreach (var balanceData in pendingBalanceMessages.GetConsumingEnumerable())
             {
                 if (lastBalanceSequence.HasValue && balanceData.Sequence != lastBalanceSequence.Value + 1)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+
                     continue;
+                }
 
                 var balance = new BalanceData(balanceData.Delta);
 
@@ -176,6 +206,9 @@ namespace SpreadBot.Infrastructure
                 InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
 
                 lastBalanceSequence = balanceData.Sequence;
+
+                if (cancellationToken.IsCancellationRequested)
+                    break;
             }
         }
 
@@ -184,13 +217,21 @@ namespace SpreadBot.Infrastructure
             foreach (var orderData in pendingOrderMessages.GetConsumingEnumerable())
             {
                 if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+
                     continue;
+                }
 
                 var data = new OrderData(orderData);
 
                 InvokeHandlers(this.OrderHandlers, data.Id, data);
 
                 lastOrderSequence = orderData.Sequence;
+
+                if (cancellationToken.IsCancellationRequested)
+                    break;
             }
         }
 
@@ -199,13 +240,21 @@ namespace SpreadBot.Infrastructure
             foreach (var summaryData in pendingMarketSummaryMessages.GetConsumingEnumerable())
             {
                 if (lastSummarySequence.HasValue && summaryData.Sequence != lastSummarySequence.Value + 1)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+
                     continue;
+                }
 
                 var marketData = summaryData.Deltas.Select(delta => new MarketData(delta));
 
                 UpdateMarketData(marketData);
 
                 lastSummarySequence = summaryData.Sequence;
+
+                if (cancellationToken.IsCancellationRequested)
+                    break;
             }
         }
 
@@ -214,13 +263,21 @@ namespace SpreadBot.Infrastructure
             foreach (var tickersData in pendingTickersMessages.GetConsumingEnumerable())
             {
                 if (lastTickerSequence.HasValue && tickersData.Sequence != lastTickerSequence.Value + 1)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+
                     continue;
+                }
 
                 var marketData = tickersData.Deltas.Select(delta => new MarketData(delta));
 
                 UpdateMarketData(marketData);
 
                 lastTickerSequence = tickersData.Sequence;
+
+                if (cancellationToken.IsCancellationRequested)
+                    break;
             }
         }
 
@@ -255,11 +312,13 @@ namespace SpreadBot.Infrastructure
 
         private void FetchAllData()
         {
-            FetchBalanceData().Wait();
-            FetchMarketSummariesData().Wait();
-            FetchTickersData().Wait();
-            FetchClosedOrdersData().Wait();
-            FetchMarketsData().Wait();
+            Task.WaitAll(
+                FetchBalanceData(),
+                FetchMarketSummariesData(),
+                FetchTickersData(),
+                FetchClosedOrdersData(),
+                FetchMarketsData()
+            );
         }
 
         private async Task FetchBalanceData()
@@ -310,7 +369,7 @@ namespace SpreadBot.Infrastructure
                 }
             }
 
-            lastSummarySequence = tickers.Sequence;
+            lastTickerSequence = tickers.Sequence;
         }
 
 
@@ -345,8 +404,8 @@ namespace SpreadBot.Infrastructure
                 }
             }
 
-            // There is not sequence information in ClosedOrders
-            // lastOrderSequence = closedOrders.Sequence;
+            // There is no sequence information in ClosedOrders
+            lastOrderSequence = null;
         }
 
         private MarketData MergeMarketData(MarketData existingData, MarketData data)
@@ -368,6 +427,15 @@ namespace SpreadBot.Infrastructure
                 Notice = data.Notice ?? existingData.Notice,
                 CreatedAt = data.CreatedAt ?? existingData.CreatedAt,
             };
+        }
+
+        private void ResyncTimer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            StopConsumingData();
+
+            FetchAllData();
+
+            ResumeConsumingData();
         }
     }
 }
