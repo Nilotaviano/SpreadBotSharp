@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNet.SignalR.Client;
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -24,6 +25,7 @@ namespace SpreadBot.Infrastructure
             _url = url;
             _hubConnection = new HubConnection(_url);
             _hubProxy = _hubConnection.CreateHubProxy("c3");
+            ServicePointManager.DefaultConnectionLimit = 10;
             _hubConnection.StateChanged += _hubConnection_StateChanged;
         }
 
@@ -38,10 +40,23 @@ namespace SpreadBot.Infrastructure
         {
             Console.WriteLine($"State change: {obj.OldState}->{obj.NewState}");
             if (obj.NewState == ConnectionState.Disconnected)
+            {
+                Console.WriteLine("HubConnection isconnected");
                 while (!await Connect()) ; //TODO: Switch to set timer or sleep
+            }
         }
 
         public async Task<SocketResponse> Authenticate(string apiKey, string apiKeySecret)
+        {
+            SocketResponse result = await _Authenticate(apiKey, apiKeySecret);
+
+            if (result.Success)
+                SetAuthExpiringHandler(apiKey, apiKeySecret);
+
+            return result;
+        }
+
+        private async Task<SocketResponse> _Authenticate(string apiKey, string apiKeySecret)
         {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var randomContent = $"{ Guid.NewGuid() }";
@@ -53,14 +68,15 @@ namespace SpreadBot.Infrastructure
                 timestamp,
                 randomContent,
                 signedContent);
+
             return result;
         }
 
-        public void SetAuthExpiringHandler(string apiKey, string apiKeySecret)
+        private void SetAuthExpiringHandler(string apiKey, string apiKeySecret)
         {
             _hubProxy.On("authenticationExpiring", async () =>
             {
-                await Authenticate(apiKey, apiKeySecret);
+                await _Authenticate(apiKey, apiKeySecret);
             });
         }
 

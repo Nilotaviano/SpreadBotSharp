@@ -173,8 +173,6 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             if (!authResponse.Success)
                 throw new Exception($"Error authenticating to websocket. Code: {authResponse.ErrorCode}");
 
-            socketClient.SetAuthExpiringHandler(ApiKey, ApiSecret);
-
             var subscribeResponse = await socketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
 
             if (subscribeResponse.Any(r => !r.Success))
