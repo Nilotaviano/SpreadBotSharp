@@ -8,6 +8,8 @@
         Throttled,
         MarketOffline,
         DustTrade,
-        Unauthorized
+        Unauthorized,
+        RetryLater,
+        OrderNotOpen
     }
 }

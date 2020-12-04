@@ -24,6 +24,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
         private Stopwatch HeartbeatStopwatch { get; set; } //To check if the websocket is still working
 
+        private bool UseBittrexCredits { get; set; } = true; //Initially true, set to false if we get an INSUFFICIENT_AWARDS error
+
         public bool IsSetup { get; private set; }
 
         public decimal FeeRate => 0.002m;
@@ -122,7 +124,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 limit,
                 direction = OrderDirection.BUY.ToString(),
                 type = OrderType.LIMIT.ToString(),
-                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString()
+                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString(),
+                useAwards = UseBittrexCredits
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
@@ -141,7 +144,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 limit,
                 direction = OrderDirection.SELL.ToString(),
                 type = OrderType.LIMIT.ToString(),
-                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString()
+                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString(),
+                useAwards = UseBittrexCredits
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
@@ -239,12 +243,43 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
          * 429 - Too Many Requests	Too many requests hit the API too quickly. Please make sure to implement exponential backoff with your requests.
          * 501 - Not Implemented	The service requested has not yet been implemented.
          * 503 - Service Unavailable	The request parameters were valid but the request failed because the resource is temporarily unavailable (example: CURRENCY_OFFLINE)
+         * 
+         * ACCOUNT_DISABLED	This account is disabled
+         * APIKEY_INVALID	The Api-Key request header is missing or invalid
+         * CLIENTORDERID_ALREADY_EXISTS	The value specified for clientOrderId has already been used. The corresponding Bittrex id for the order will be included in the response.
+         * CLIENTWITHDRAWALID_ALREADY_EXISTS	The value specified for clientWithdrawalId has already been used. The corresponding Bittrex id for the withdrawal will be included in the response.
+         * CURRENCY_DOES_NOT_EXIST	The currency symbol provided does not correspond to a currency
+         * CURRENCY_OFFLINE	The currency is offline
+         * DUST_TRADE_DISALLOWED_MIN_VALUE	The amount of quote currency involved in a transaction would be less than 50k satoshis
+         * FILL_OR_KILL	The order was submitted with the fill_or_kill time in force and could not be filled completely so it was cancelled
+         * INSUFFICIENT_AWARDS	The order was placed with useAwards: true but the user did not have sufficient balance of BTXCRD to cover commission
+         * INSUFFICIENT_FUNDS	The user is trying to buy or sell more currency than they can afford or currently hold, respectively
+         * INVALID_NEXT_PAGE_TOKEN	The specified value for nextPageToken doesn't correspond to an item in the list
+         * INVALID_PREVIOUS_PAGE_TOKEN	The specified value for previousPageToken doesn't correspond to an item in the list
+         * INVALID_SIGNATURE	The Api-Signature request header is missing or invalid
+         * MARKET_DOES_NOT_EXIST	The market symbol provided does not correspond to a market
+         * MARKET_NAME_REVERSED	Market symbols in v3 are in base-quote order whereas in v1 it was the reverse. This error occures when we think a market symbol was sent to v3 in quote-base order.
+         * MARKET_OFFLINE	Te market is offline
+         * MAX_ORDERS_ALLOWED	The user already has the maximum allowed open orders and cannot open another until one is closed
+         * MIN_TRADE_REQUIREMENT_NOT_MET	The trade was smaller than the min trade size quantity for the market
+         * NOT_ALLOWED	This account is not allowed to perform this action
+         * ORDER_NOT_OPEN	Tried to cancel an order that was not open
+         * ORDER_TYPE_INVALID	The order creation request is malformed in some way
+         * ORDERBOOK_DEPTH	If allowed to execute, the order would have been executed at least in part at a price in excess of what is allowed by the price slippage limit on the market
+         * POST_ONLY	The order was submitted as 'post only' but matched with an order already on the book and thus was cancelled
+         * REQUESTID_ALREADY_EXISTS	The value specified for requestId has already been used. The corresponding Bittrx id for the request will be included in the response.
+         * SELF_TRADE	The order matched with an order on the book placed by the same user
+         * SUBACCOUNT_OF_SUBACCOUNT_NOT_ALLOWED	Attempted to create a subaccout of a subaccount
+         * THROTTLED	Too many requests have been made
          */
-        public static ApiErrorType GetErrorType(IRestResponse restResponse)
+        public ApiErrorType GetErrorType(IRestResponse restResponse)
         {
             try
             {
                 var errorData = JsonConvert.DeserializeObject<BittrexApiErrorData>(restResponse.Content);
+
+                if (errorData.Code.Equals("INSUFFICIENT_AWARDS", StringComparison.OrdinalIgnoreCase))
+                    UseBittrexCredits = false;
 
                 return errorData.Code.ToUpperInvariant() switch
                 {
@@ -252,9 +287,15 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     "MIN_TRADE_REQUIREMENT_NOT_MET " => ApiErrorType.DustTrade,
                     "DUST_TRADE_DISALLOWED" => ApiErrorType.DustTrade,
                     "DUST_TRADE_DISALLOWED_MIN_VALUE" => ApiErrorType.DustTrade,
+                    "INSUFFICIENT_AWARDS" => ApiErrorType.RetryLater,
+                    "MARKET_OFFLINE" => ApiErrorType.MarketOffline,
+                    "POST_ONLY" => ApiErrorType.RetryLater,
+                    "MAX_ORDERS_ALLOWED" => ApiErrorType.RetryLater,
+                    "ORDER_NOT_OPEN" => ApiErrorType.OrderNotOpen,
+                    "THROTTLED" => ApiErrorType.Throttled,
                     _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
-                    _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline, //TODO: Confirm
-                    _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline, //TODO: Confirm
+                    _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,
+                    _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline,
                     _ when restResponse.StatusCode == HttpStatusCode.Unauthorized => ApiErrorType.Unauthorized,
                     _ when restResponse.StatusCode == HttpStatusCode.Forbidden => ApiErrorType.Unauthorized,
                     _ => ApiErrorType.UnknownError

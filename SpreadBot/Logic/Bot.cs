@@ -120,13 +120,17 @@ namespace SpreadBot.Logic
                         case ApiErrorType.MarketOffline when botState == BotState.Buy:
                             FinishWork();
                             break;
+                        case ApiErrorType.OrderNotOpen:
+                            //Bot tried to cancel an order that has just been executed (I'm assuming)
+                            //Closed order data will be received soon, so no need to do anything here
                         case ApiErrorType.MarketOffline:
                         case ApiErrorType.Throttled:
                             //Do nothing, try again on the next cycle
+                            Logger.LogError($"{e.ApiErrorType}: {e}");
                             break;
                         default:
                             //TODO: Log all of the bot's state/properties/fields
-                            Logger.LogUnexpectedError(e.ToString());
+                            Logger.LogUnexpectedError($"{e.ApiErrorType}: {e}");
                             break;
                     };
                 }
