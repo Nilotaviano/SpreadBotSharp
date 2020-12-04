@@ -1,8 +1,8 @@
 ﻿using System;
 
-namespace SpreadBot.Models.API
+namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
-    public class ApiBalanceData
+    public class BittrexApiBalanceData
     {
         public string AccountId { get; set; }
         public int Sequence { get; set; }

@@ -1,10 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace SpreadBot.Models.API
+﻿namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
-    public class ApiTickersData
+    public class BittrexApiTickersData
     {
         public int Sequence { get; set; }
 

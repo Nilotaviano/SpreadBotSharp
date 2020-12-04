@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
-using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Models.API;
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 
 namespace SpreadBot.Models.Repository
 {
@@ -13,7 +12,7 @@ namespace SpreadBot.Models.Repository
             Balances = balances;
         }
 
-        public CompleteBalanceData(ApiRestResponse<ApiBalanceData.Balance[]> balancesData)
+        public CompleteBalanceData(ApiRestResponse<BittrexApiBalanceData.Balance[]> balancesData)
         {
             Sequence = balancesData.Sequence;
             Balances = balancesData.Data?.Select(balance => new BalanceData(balance));

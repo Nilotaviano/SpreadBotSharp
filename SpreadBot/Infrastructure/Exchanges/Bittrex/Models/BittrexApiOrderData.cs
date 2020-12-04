@@ -1,10 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using SpreadBot.Models;
+using System;
 
-namespace SpreadBot.Models.API
+namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
-    public class ApiOrderData
+    public class BittrexApiOrderData
     {
         public string AccountId { get; set; }
         public int Sequence { get; set; }

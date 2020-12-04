@@ -1,28 +1,25 @@
-﻿using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Models.API;
+﻿using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace SpreadBot.Models.Repository
 {
     public class OrderData : IMessage
     {
         public OrderData() { }
-        public OrderData(ApiRestResponse<ApiOrderData> apiOrderData)
+        public OrderData(ApiRestResponse<BittrexApiOrderData> apiOrderData)
             : this(apiOrderData.Data)
         {
             this.Sequence = apiOrderData.Sequence;
         }
 
-        public OrderData(ApiOrderData apiOrderData)
+        public OrderData(BittrexApiOrderData apiOrderData)
             : this(apiOrderData.Delta)
         {
             Sequence = apiOrderData.Sequence;
             AccountId = apiOrderData.AccountId;
         }
 
-        public OrderData(ApiOrderData.Order order)
+        public OrderData(BittrexApiOrderData.Order order)
         {
             Ceiling = order.Ceiling;
             ClientOrderId = order.ClientOrderId;

@@ -1,4 +1,5 @@
 ﻿using SpreadBot.Infrastructure;
+using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
@@ -25,8 +26,12 @@ namespace SpreadBot.Logic
             this.dataRepository = dataRepository;
             this.guid = new Guid();
 
-            this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             availableBalanceForBaseMarket = this.dataRepository.BalancesData[appSettings.BaseMarket].Amount;
+        }
+
+        public void Start()
+        {
+            this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
         }
 
         public ConcurrentDictionary<Guid, HashSet<string>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, HashSet<string>>();
@@ -55,7 +60,7 @@ namespace SpreadBot.Logic
                     if (!CanAllocateBotForConfiguration(configuration))
                         break;
 
-                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot);
+                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
                     AllocatedBotsByGuid[bot.Guid] = bot;
                     allocatedMarketsForConfiguration.Add(market.Symbol);
 

@@ -1,4 +1,6 @@
-namespace SpreadBot.Infrastructure.Exchanges
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
+
+namespace SpreadBot.Models
 {
     public class ApiRestResponse<T>
     {

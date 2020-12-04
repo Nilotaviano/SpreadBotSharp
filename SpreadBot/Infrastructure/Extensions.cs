@@ -43,5 +43,13 @@ namespace SpreadBot.Infrastructure
 
             return hash;
         }
+
+        //TODO: Create test case to validate this behavior
+        //TODO: figure out if we should use Ceil/Floor instead of Round, 
+        //because if we do end up truncating a Satoshi unit, the price won't be incremented/decremented from the current bid/ask when creating an order
+        public static decimal RoundOrderLimitPrice(this decimal limit, int? precision)
+        {
+            return precision.HasValue ? Math.Round(limit, precision.Value) : limit;
+        }
     }
 }

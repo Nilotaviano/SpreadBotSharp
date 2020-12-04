@@ -1,8 +1,4 @@
-﻿using SpreadBot.Models.API;
-using System;
-using System.Collections.Generic;
-using System.Text;
-using static SpreadBot.Models.API.ApiBalanceData;
+﻿using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 
 namespace SpreadBot.Models.Repository
 {
@@ -10,7 +6,7 @@ namespace SpreadBot.Models.Repository
     {
         public BalanceData() { }
 
-        public BalanceData(Balance balance)
+        public BalanceData(BittrexApiBalanceData.Balance balance)
         {
             CurrencyAbbreviation = balance.CurrencySymbol;
             Amount = balance.Available;

@@ -1,5 +1,5 @@
 ﻿using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Models.API;
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
@@ -27,10 +27,10 @@ namespace SpreadBot.Infrastructure
             if (!exchange.IsSetup)
                 throw new ArgumentException("Exchange is not setup");
 
-            pendingBalanceMessages = new BlockingCollection<ApiBalanceData>();
-            pendingMarketSummaryMessages = new BlockingCollection<ApiMarketSummariesData>();
-            pendingOrderMessages = new BlockingCollection<ApiOrderData>();
-            pendingTickersMessages = new BlockingCollection<ApiTickersData>();
+            pendingBalanceMessages = new BlockingCollection<BittrexApiBalanceData>();
+            pendingMarketSummaryMessages = new BlockingCollection<BittrexApiMarketSummariesData>();
+            pendingOrderMessages = new BlockingCollection<BittrexApiOrderData>();
+            pendingTickersMessages = new BlockingCollection<BittrexApiTickersData>();
 
             Exchange = exchange;
 
@@ -57,10 +57,10 @@ namespace SpreadBot.Infrastructure
         // key: order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
 
-        private BlockingCollection<ApiBalanceData> pendingBalanceMessages;
-        private BlockingCollection<ApiMarketSummariesData> pendingMarketSummaryMessages;
-        private BlockingCollection<ApiOrderData> pendingOrderMessages;
-        private BlockingCollection<ApiTickersData> pendingTickersMessages;
+        private BlockingCollection<BittrexApiBalanceData> pendingBalanceMessages;
+        private BlockingCollection<BittrexApiMarketSummariesData> pendingMarketSummaryMessages;
+        private BlockingCollection<BittrexApiOrderData> pendingOrderMessages;
+        private BlockingCollection<BittrexApiTickersData> pendingTickersMessages;
 
         public void SubscribeToMarketsData(Guid handlerGuid, Action<IEnumerable<MarketData>> evaluateMarkets)
         {
@@ -255,16 +255,16 @@ namespace SpreadBot.Infrastructure
 
         private void FetchAllData()
         {
-            Task.WaitAll(
-                Task.Run(FetchBalanceData),
-                Task.Run(FetchMarketSummariesData),
-                Task.Run(FetchTickersData),
-                Task.Run(FetchClosedOrdersData)
-            );
+            FetchBalanceData().Wait();
+            FetchMarketSummariesData().Wait();
+            FetchTickersData().Wait();
+            FetchClosedOrdersData().Wait();
+            FetchMarketsData().Wait();
         }
 
         private async Task FetchBalanceData()
         {
+            //TODO: Handle exceptions here
             var balances = await Exchange.GetBalanceData();
 
             if (balances.Balances != null)
@@ -281,6 +281,7 @@ namespace SpreadBot.Infrastructure
 
         private async Task FetchMarketSummariesData()
         {
+            //TODO: Handle exceptions here
             var summaries = await Exchange.GetMarketSummariesData();
 
             if (summaries.Deltas != null)
@@ -297,6 +298,7 @@ namespace SpreadBot.Infrastructure
 
         private async Task FetchTickersData()
         {
+            //TODO: Handle exceptions here
             var tickers = await Exchange.GetTickersData();
 
             if (tickers.Deltas != null)
@@ -311,8 +313,25 @@ namespace SpreadBot.Infrastructure
             lastSummarySequence = tickers.Sequence;
         }
 
+
+        private async Task FetchMarketsData()
+        {
+            //TODO: Handle exceptions here
+            var markets = await Exchange.GetMarketsData();
+
+            if (markets != null)
+            {
+                foreach (var market in markets)
+                {
+                    var marketData = new MarketData(market);
+                    UpdateMarketData(marketData);
+                }
+            }
+        }
+
         private async Task FetchClosedOrdersData()
         {
+            //TODO: Handle exceptions here
             var closedOrders = await Exchange.GetClosedOrdersData(mostRecentClosedOrderId);
 
             if (closedOrders.Data != null && closedOrders.Data.Any())
@@ -343,7 +362,11 @@ namespace SpreadBot.Infrastructure
                 QuoteVolume = data.QuoteVolume ?? existingData.QuoteVolume,
                 UpdatedAt = data.UpdatedAt ?? existingData.UpdatedAt,
                 Volume = data.Volume ?? existingData.Volume,
-                Symbol = data.Symbol
+                Symbol = data.Symbol ?? existingData.Symbol,
+                Precision = data.Precision ?? existingData.Precision,
+                MinTradeSize = data.MinTradeSize ?? existingData.MinTradeSize,
+                Notice = data.Notice ?? existingData.Notice,
+                CreatedAt = data.CreatedAt ?? existingData.CreatedAt,
             };
         }
     }
