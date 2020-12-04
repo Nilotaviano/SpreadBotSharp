@@ -12,6 +12,7 @@ namespace SpreadBot.Infrastructure
         public string BaseMarket { get; set; }
         public decimal MinimumPrice { get; set; }
         public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
+        public int ResyncIntervalMs { get; set; }
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 

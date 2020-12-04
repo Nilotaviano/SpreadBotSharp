@@ -47,6 +47,7 @@ namespace SpreadBot.Tests
                 MaxNumberOfBots = 1,
                 MinimumNegotiatedAmount = 50000.Satoshi(),
                 MinimumPrice = 1000.Satoshi(),
+                ResyncIntervalMs = 30000,
                 SpreadConfigurations = new[] { spreadConfiguration }
             };
 
@@ -149,7 +150,7 @@ namespace SpreadBot.Tests
                     });
                 });
 
-            var datarepository = new DataRepository(mockExchange.Object);
+            var datarepository = new DataRepository(mockExchange.Object, appSettings);
             datarepository.StartConsumingData();
 
             var testGuid = new Guid();

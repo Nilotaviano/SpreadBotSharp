@@ -26,7 +26,7 @@ namespace SpreadBot.Infrastructure
 
         private string mostRecentClosedOrderId;
 
-        public DataRepository(IExchange exchange)
+        public DataRepository(IExchange exchange, AppSettings appSettings)
         {
             if (!exchange.IsSetup)
                 throw new ArgumentException("Exchange is not setup");
@@ -39,7 +39,7 @@ namespace SpreadBot.Infrastructure
             Exchange = exchange;
 
             mostRecentClosedOrderId = null;
-            resyncTimer = new Timer(30000);
+            resyncTimer = new Timer(appSettings.ResyncIntervalMs);
             resyncTimer.Elapsed += ResyncTimer_Elapsed;
             resyncTimer.AutoReset = true;
         }

@@ -19,7 +19,7 @@ namespace SpreadBot
             var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
             await bittrex.Setup();
 
-            var dataRepository = new DataRepository(bittrex);
+            var dataRepository = new DataRepository(bittrex, appSettings);
             dataRepository.StartConsumingData();
 
             var coordinator = new Coordinator(appSettings, dataRepository);
