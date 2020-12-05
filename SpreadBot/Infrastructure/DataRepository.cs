@@ -191,7 +191,7 @@ namespace SpreadBot.Infrastructure
         {
             foreach (var balanceData in pendingBalanceMessages.GetConsumingEnumerable())
             {
-                if (lastBalanceSequence.HasValue && balanceData.Sequence != lastBalanceSequence.Value + 1)
+                if (lastBalanceSequence.HasValue && balanceData.Sequence <= lastBalanceSequence.Value)
                 {
                     if (cancellationToken.IsCancellationRequested)
                         break;
@@ -239,7 +239,7 @@ namespace SpreadBot.Infrastructure
         {
             foreach (var summaryData in pendingMarketSummaryMessages.GetConsumingEnumerable())
             {
-                if (lastSummarySequence.HasValue && summaryData.Sequence != lastSummarySequence.Value + 1)
+                if (lastSummarySequence.HasValue && summaryData.Sequence <= lastSummarySequence.Value)
                 {
                     if (cancellationToken.IsCancellationRequested)
                         break;
@@ -262,7 +262,7 @@ namespace SpreadBot.Infrastructure
         {
             foreach (var tickersData in pendingTickersMessages.GetConsumingEnumerable())
             {
-                if (lastTickerSequence.HasValue && tickersData.Sequence != lastTickerSequence.Value + 1)
+                if (lastTickerSequence.HasValue && tickersData.Sequence <= lastTickerSequence.Value)
                 {
                     if (cancellationToken.IsCancellationRequested)
                         break;
