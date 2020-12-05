@@ -10,6 +10,7 @@
         DustTrade,
         Unauthorized,
         RetryLater,
-        OrderNotOpen
+        OrderNotOpen,
+        CannotEstimateCommission
     }
 }
