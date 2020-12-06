@@ -170,6 +170,8 @@ namespace SpreadBot.Infrastructure
 
         private void ResumeConsumingData()
         {
+            Logger.LogMessage("Start consuming WS data");
+
             if (cancellationToken != null)
                 cancellationToken.Dispose();
 
@@ -183,19 +185,23 @@ namespace SpreadBot.Infrastructure
 
         private void StopConsumingData()
         {
+            Logger.LogMessage("Stop consuming WS data");
+
             if (cancellationToken != null)
                 cancellationToken.Cancel();
         }
 
         private void ConsumeBalanceData()
         {
-            foreach (var balanceData in pendingBalanceMessages.GetConsumingEnumerable())
+            var enumerator = pendingBalanceMessages.GetConsumingEnumerable().GetEnumerator();
+
+            while (!cancellationToken.IsCancellationRequested && enumerator.MoveNext())
             {
+                var balanceData = enumerator.Current;
+
                 if (lastBalanceSequence.HasValue && balanceData.Sequence <= lastBalanceSequence.Value)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
+                    Logger.LogMessage("Balance WS data skipped");
                     continue;
                 }
 
@@ -206,21 +212,22 @@ namespace SpreadBot.Infrastructure
                 InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
 
                 lastBalanceSequence = balanceData.Sequence;
-
-                if (cancellationToken.IsCancellationRequested)
-                    break;
             }
+
+            Logger.LogMessage("Stopped Balance WS data consumption");
         }
 
         private void ConsumeOrderData()
         {
-            foreach (var orderData in pendingOrderMessages.GetConsumingEnumerable())
+            var enumerator = pendingOrderMessages.GetConsumingEnumerable().GetEnumerator();
+
+            while (!cancellationToken.IsCancellationRequested && enumerator.MoveNext())
             {
+                var orderData = enumerator.Current;
+
                 if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
+                    Logger.LogMessage("Order WS data skipped");
                     continue;
                 }
 
@@ -229,21 +236,22 @@ namespace SpreadBot.Infrastructure
                 InvokeHandlers(this.OrderHandlers, data.Id, data);
 
                 lastOrderSequence = orderData.Sequence;
-
-                if (cancellationToken.IsCancellationRequested)
-                    break;
             }
+
+            Logger.LogMessage("Stopped Order WS data consumption");
         }
 
         private void ConsumeMarketSummaryData()
         {
-            foreach (var summaryData in pendingMarketSummaryMessages.GetConsumingEnumerable())
+            var enumerator = pendingMarketSummaryMessages.GetConsumingEnumerable().GetEnumerator();
+
+            while (!cancellationToken.IsCancellationRequested && enumerator.MoveNext())
             {
+                var summaryData = enumerator.Current;
+
                 if (lastSummarySequence.HasValue && summaryData.Sequence <= lastSummarySequence.Value)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
+                    Logger.LogMessage("MarketSummary WS data skipped");
                     continue;
                 }
 
@@ -252,10 +260,9 @@ namespace SpreadBot.Infrastructure
                 UpdateMarketData(marketData);
 
                 lastSummarySequence = summaryData.Sequence;
-
-                if (cancellationToken.IsCancellationRequested)
-                    break;
             }
+
+            Logger.LogMessage("Stopped MarketSummary WS data consumption");
         }
 
         private void ConsumeTickersData()
@@ -265,8 +272,12 @@ namespace SpreadBot.Infrastructure
                 if (lastTickerSequence.HasValue && tickersData.Sequence <= lastTickerSequence.Value)
                 {
                     if (cancellationToken.IsCancellationRequested)
+                    {
+                        Logger.LogMessage("Stopped Tickers WS data consumption");
                         break;
+                    }
 
+                    Logger.LogMessage("Ticker WS data skipped");
                     continue;
                 }
 
@@ -277,7 +288,10 @@ namespace SpreadBot.Infrastructure
                 lastTickerSequence = tickersData.Sequence;
 
                 if (cancellationToken.IsCancellationRequested)
+                {
+                    Logger.LogMessage("Stopped Tickers WS data consumption");
                     break;
+                }
             }
         }
 
@@ -431,11 +445,15 @@ namespace SpreadBot.Infrastructure
 
         private void ResyncTimer_Elapsed(object sender, ElapsedEventArgs e)
         {
+            Logger.LogMessage("Resyncing data");
+
             StopConsumingData();
 
             FetchAllData();
 
             ResumeConsumingData();
+
+            Logger.LogMessage("Resync completed");
         }
     }
 }
