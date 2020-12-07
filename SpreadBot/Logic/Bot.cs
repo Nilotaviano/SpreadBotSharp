@@ -217,6 +217,7 @@ namespace SpreadBot.Logic
             SetCurrentOrderData(null);
             semaphore.Clear();
             unallocateBotCallback(this);
+            NetProfitRecorder.Instance.RecordProfit(spreadConfiguration, Balance);
             LogMessage($"finished on {MarketSymbol}");
         }
 
