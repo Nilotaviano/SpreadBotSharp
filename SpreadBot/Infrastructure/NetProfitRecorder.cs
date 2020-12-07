@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using SpreadBot.Logic;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -13,6 +14,7 @@ namespace SpreadBot.Infrastructure
         private BlockingCollection<NetProfit> pendingData;
 
         private Dictionary<SpreadConfiguration, decimal> netProfitPerSpreadConfiguration;
+        private Dictionary<string, decimal> netProfitPerMarket;
 
         private static NetProfitRecorder instance;
 
@@ -36,24 +38,35 @@ namespace SpreadBot.Infrastructure
             }
         }
 
-        public void RecordProfit(SpreadConfiguration spreadConfiguration, decimal finalBalance)
+        public void RecordProfit(SpreadConfiguration spreadConfiguration, Bot bot)
         {
-            decimal profit = finalBalance - spreadConfiguration.AllocatedAmountOfBaseCurrency;
+            decimal profit = bot.Balance - spreadConfiguration.AllocatedAmountOfBaseCurrency;
 
-            pendingData.Add(new NetProfit() { SpreadConfiguration = spreadConfiguration, Profit = profit });
+            pendingData.Add(new NetProfit() { SpreadConfiguration = spreadConfiguration, Profit = profit, Market = bot.MarketSymbol });
         }
 
         private void ConsumePendingData()
         {
             foreach (var log in pendingData.GetConsumingEnumerable())
             {
-                netProfitPerSpreadConfiguration.TryGetValue(log.SpreadConfiguration, out decimal spreadConfigurationProfit);
-                netProfitPerSpreadConfiguration[log.SpreadConfiguration] = spreadConfigurationProfit + (log.Profit);
+                try
+                {
+                    netProfitPerSpreadConfiguration.TryGetValue(log.SpreadConfiguration, out decimal spreadConfigurationProfit);
+                    netProfitPerSpreadConfiguration[log.SpreadConfiguration] = spreadConfigurationProfit + (log.Profit);
 
-                string jsonNetProfit = JsonConvert.SerializeObject(netProfitPerSpreadConfiguration, Formatting.Indented);
-                Logger.Instance.LogMessage($"Recorded profit:{Environment.NewLine}{jsonNetProfit}");
+                    netProfitPerMarket.TryGetValue(log.Market, out decimal marketProfit);
+                    netProfitPerMarket[log.Market] = marketProfit + (log.Profit);
 
-                File.WriteAllText(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "netprofit.json"), jsonNetProfit);
+                    File.WriteAllText(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "profitPerSpreadConfiguration.json"),
+                        JsonConvert.SerializeObject(netProfitPerSpreadConfiguration, Formatting.Indented));
+
+                    File.WriteAllText(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "profitPerMarket.json"),
+                        JsonConvert.SerializeObject(netProfitPerMarket, Formatting.Indented));
+                }
+                catch (Exception e)
+                {
+                    Logger.Instance.LogUnexpectedError($"Error while consuming profit data: {e}");
+                }
             }
         }
 
@@ -61,6 +74,7 @@ namespace SpreadBot.Infrastructure
         {
             public SpreadConfiguration SpreadConfiguration { get; set; }
             public decimal Profit { get; set; }
+            public string Market { get; set; }
         }
     }
 }

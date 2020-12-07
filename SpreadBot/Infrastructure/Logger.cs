@@ -52,17 +52,15 @@ namespace SpreadBot.Infrastructure
                 switch (log.LogLevel)
                 {
                     case LogLevel.Message:
-                        Console.ForegroundColor = ConsoleColor.Blue;
+                        Console.Out.WriteLine(log.Content);
                         break;
                     case LogLevel.Error:
-                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.Error.WriteLine(log.Content);
                         break;
                     case LogLevel.UnexpectedError:
-                        Console.ForegroundColor = ConsoleColor.DarkRed;
+                        Console.Error.WriteLine(log.Content);
                         break;
                 }
-
-                Console.WriteLine(log.Content);
             }
         }
 
