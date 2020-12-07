@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -51,6 +52,11 @@ namespace SpreadBot.Infrastructure
         public bool Equals(SpreadConfiguration obj)
         {
             return obj != null && obj.Guid == this.Guid;
+        }
+
+        public override string ToString()
+        {
+            return JsonConvert.SerializeObject(this);
         }
     }
 }
