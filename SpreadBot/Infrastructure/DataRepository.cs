@@ -151,8 +151,13 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void UnsubscribeToOrderData(string orderId, Guid handlerGuid)
         {
-            if (!OrderHandlers.TryGetValue(orderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+            if (OrderHandlers.TryGetValue(orderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+            {
                 handlers.Remove(handlerGuid, out _);
+
+                if (handlers.Count == 0)
+                    OrderHandlers.Remove(orderId, out _);
+            }
         }
 
         public void StartConsumingData()
