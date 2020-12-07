@@ -308,14 +308,15 @@ namespace SpreadBot.Infrastructure
                                                         (key, existingData) => this.MergeMarketData(existingData, data));
             InvokeHandlers(this.SpecificMarketHandlers, data.Symbol, newData);
 
-            InvokeHandlers(AllMarketHandlers, new List<MarketData>() { newData });
+            InvokeHandlers(AllMarketHandlers, new MarketData[] { newData });
         }
 
         private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
         {
-            var handlers = handlersDict.GetOrAdd(key, new ConcurrentDictionary<Guid, Action<T>>());
-
-            InvokeHandlers(handlers, data);
+            if (handlersDict.TryGetValue(key, out var handlers))
+            {
+                InvokeHandlers(handlers, data);
+            }
         }
 
         private static void InvokeHandlers<T>(ConcurrentDictionary<Guid, Action<T>> handlers, T data)
