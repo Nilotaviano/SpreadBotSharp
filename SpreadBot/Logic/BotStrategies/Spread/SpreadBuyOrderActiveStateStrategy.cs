@@ -18,7 +18,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
                 //Cancel order and exit
                 await executeOrderFunctionCallback(async () => await exchange.CancelOrder(currentOrderData.Id));
             }
-            else if (marketData.BidRate - currentOrderData.Limit > spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)
+            else if (marketData.BidRate - currentOrderData.Limit >= spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)
             {
                 //Cancel order and switch to BotState.Buy
                 //TODO: I think we should rate limit how often we cancel orders here
