@@ -62,7 +62,7 @@ namespace SpreadBot.Logic
                     if (!CanAllocateBotForConfiguration(configuration))
                         break;
 
-                    Logger.LogMessage($"Found market: {market.Symbol}");
+                    Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
                     var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
                     AllocatedBotsByGuid[bot.Guid] = bot;
@@ -92,7 +92,7 @@ namespace SpreadBot.Logic
             
             if (marketData.PercentChange > spreadConfiguration.MaxPercentChangeFromPreviousDay)
             {
-                Logger.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is pumping {marketData.PercentChange}%");
+                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is pumping {marketData.PercentChange}%");
                 return false;
             }
 

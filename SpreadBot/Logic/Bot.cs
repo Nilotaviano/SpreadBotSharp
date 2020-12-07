@@ -84,7 +84,7 @@ namespace SpreadBot.Logic
 
             if (botState == BotState.FinishedWork)
             {
-                Logger.LogUnexpectedError("Bot is still running after FinishWork was called");
+                Logger.Instance.LogUnexpectedError("Bot is still running after FinishWork was called");
             }
             else
             {
@@ -126,17 +126,17 @@ namespace SpreadBot.Logic
                         case ApiErrorType.MarketOffline:
                         case ApiErrorType.Throttled:
                             //Do nothing, try again on the next cycle
-                            Logger.LogError($"{e.ApiErrorType}: {e}");
+                            Logger.Instance.LogError($"{e.ApiErrorType}: {e}");
                             break;
                         default:
                             //TODO: Log all of the bot's state/properties/fields
-                            Logger.LogUnexpectedError($"{e.ApiErrorType}: {e}");
+                            Logger.Instance.LogUnexpectedError($"{e.ApiErrorType}: {e}");
                             break;
                     };
                 }
                 catch (Exception e)
                 {
-                    Logger.LogUnexpectedError($"Unexpected exception: {e}");
+                    Logger.Instance.LogUnexpectedError($"Unexpected exception: {e}");
                 }
                 finally
                 {
@@ -222,7 +222,7 @@ namespace SpreadBot.Logic
 
         private void LogMessage(string message)
         {
-            Logger.LogMessage($"Bot {Guid}: {message}");
+            Logger.Instance.LogMessage($"Bot {Guid}: {message}");
         }
     }
 

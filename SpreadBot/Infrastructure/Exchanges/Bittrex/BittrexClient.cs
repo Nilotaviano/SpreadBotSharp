@@ -175,7 +175,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.CannotEstimateCommission && useCredits)
             {
-                Logger.LogMessage("Handling CANNOT_ESTIMATE_COMMISSION for " + marketSymbol);
+                Logger.Instance.LogMessage("Handling CANNOT_ESTIMATE_COMMISSION for " + marketSymbol);
                 return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false);
             }
         }
@@ -200,9 +200,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 ApiErrorType errorType = GetErrorType(response);
 
                 if (errorType == ApiErrorType.UnknownError)
-                    Logger.LogUnexpectedError($"Unexpected API error: {response.Content}");
+                    Logger.Instance.LogUnexpectedError($"Unexpected API error: {response.Content}");
                 else
-                    Logger.LogError($"API error: {response.Content}");
+                    Logger.Instance.LogError($"API error: {response.Content}");
 
                 throw new ApiException(errorType, response.Content);
             }
@@ -300,7 +300,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             }
             catch (Exception e)
             {
-                Logger.LogUnexpectedError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
+                Logger.Instance.LogUnexpectedError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
 
                 return ApiErrorType.UnknownError;
             }

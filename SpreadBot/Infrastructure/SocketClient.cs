@@ -31,18 +31,26 @@ namespace SpreadBot.Infrastructure
 
         public async Task<bool> Connect()
         {
-            Console.WriteLine("Connecting..");
-            await _hubConnection.Start();
-            return _hubConnection.State == ConnectionState.Connected;
+            try
+            {
+                Logger.Instance.LogMessage("Connecting..");
+                await _hubConnection.Start();
+                return _hubConnection.State == ConnectionState.Connected;
+            }
+            catch(Exception e)
+            {
+                Logger.Instance.LogError($"Error connecting websocket: {e}");
+                return false;
+            }
         }
 
         private async void _hubConnection_StateChanged(StateChange obj)
         {
-            Console.WriteLine($"State change: {obj.OldState}->{obj.NewState}");
+            Logger.Instance.LogMessage($"State change: {obj.OldState}->{obj.NewState}");
             if (obj.NewState == ConnectionState.Disconnected)
             {
-                Console.WriteLine("HubConnection isconnected");
-                while (!await Connect()) ; //TODO: Switch to set timer or sleep
+                Logger.Instance.LogError("HubConnection disconnected");
+                await Connect();
             }
         }
 
