@@ -40,7 +40,7 @@ namespace SpreadBot
             Task.Run(() => ChangeToken.OnChange(() => configuration.GetReloadToken(), () =>
             {
                 appSettings.Reload(configuration.Get<AppSettings>());
-                Logger.LogMessage("App Settings reloaded");
+                Logger.Instance.LogMessage("App Settings reloaded");
             }));
 
 

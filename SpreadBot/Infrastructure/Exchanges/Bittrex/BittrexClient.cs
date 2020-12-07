@@ -116,42 +116,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
         {
-            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            var body = JsonConvert.SerializeObject(new
-            {
-                marketSymbol,
-                quantity,
-                limit,
-                direction = OrderDirection.BUY.ToString(),
-                type = OrderType.LIMIT.ToString(),
-                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString(),
-                useAwards = UseBittrexCredits
-            });
-            request.AddParameter("application/json", body, ParameterType.RequestBody);
-
-            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
-
-            return new OrderData(apiOrderData.Data);
+            return await ExecuteLimitOrder(OrderDirection.BUY, marketSymbol, quantity, limit);
         }
 
         public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
         {
-            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
-            var body = JsonConvert.SerializeObject(new
-            {
-                marketSymbol,
-                quantity,
-                limit,
-                direction = OrderDirection.SELL.ToString(),
-                type = OrderType.LIMIT.ToString(),
-                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString(),
-                useAwards = UseBittrexCredits
-            });
-            request.AddParameter("application/json", body, ParameterType.RequestBody);
-
-            var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
-
-            return new OrderData(apiOrderData.Data);
+            return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit);
         }
 
         public async Task<OrderData> CancelOrder(string orderId)
@@ -182,6 +152,34 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             socketClient.On("heartbeat", HeartbeatStopwatch.Restart);
         }
 
+        public async Task<OrderData> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true)
+        {
+            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
+            var body = JsonConvert.SerializeObject(new
+            {
+                marketSymbol,
+                quantity,
+                limit,
+                direction = direction.ToString(),
+                type = OrderType.LIMIT.ToString(),
+                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString(),
+                useAwards = useCredits && UseBittrexCredits
+            });
+            request.AddParameter("application/json", body, ParameterType.RequestBody);
+
+            try
+            {
+                var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
+
+                return new OrderData(apiOrderData.Data);
+            }
+            catch (ApiException e) when (e.ApiErrorType == ApiErrorType.CannotEstimateCommission && useCredits)
+            {
+                Logger.Instance.LogMessage("Handling CANNOT_ESTIMATE_COMMISSION for " + marketSymbol);
+                return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false);
+            }
+        }
+
         private async Task<ApiRestResponse<T>> ExecuteRequest<T>(RestRequest request)
         {
             var response = await ApiClient.ExecuteAsync(request);
@@ -202,9 +200,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 ApiErrorType errorType = GetErrorType(response);
 
                 if (errorType == ApiErrorType.UnknownError)
-                    Logger.LogUnexpectedError($"Unexpected API error: {response.Content}");
+                    Logger.Instance.LogUnexpectedError($"Unexpected API error: {response.Content}");
                 else
-                    Logger.LogError($"API error: {response.Content}");
+                    Logger.Instance.LogError($"API error: {response.Content}");
 
                 throw new ApiException(errorType, response.Content);
             }
@@ -291,6 +289,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     "MAX_ORDERS_ALLOWED" => ApiErrorType.RetryLater,
                     "ORDER_NOT_OPEN" => ApiErrorType.OrderNotOpen,
                     "THROTTLED" => ApiErrorType.Throttled,
+                    "CANNOT_ESTIMATE_COMMISSION" => ApiErrorType.CannotEstimateCommission,
                     _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
                     _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,
                     _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline,
@@ -301,7 +300,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             }
             catch (Exception e)
             {
-                Logger.LogUnexpectedError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
+                Logger.Instance.LogUnexpectedError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
 
                 return ApiErrorType.UnknownError;
             }

@@ -5,7 +5,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using Threading = System.Threading;
 using System.Threading.Tasks;
 using System.Timers;
 
@@ -22,7 +21,9 @@ namespace SpreadBot.Infrastructure
         private int? lastSummarySequence;
         private int? lastTickerSequence;
         private int? lastOrderSequence;
-        private Threading.CancellationTokenSource cancellationToken;
+
+        //I know it's not a Semaphore, but it works like one
+        private readonly System.Threading.ManualResetEvent consumeDataSemaphore = new System.Threading.ManualResetEvent(true);
 
         private string mostRecentClosedOrderId;
 
@@ -156,6 +157,8 @@ namespace SpreadBot.Infrastructure
 
         public void StartConsumingData()
         {
+            Logger.Instance.LogMessage("Start consuming WS data");
+
             Exchange.OnBalance(pendingBalanceMessages.Add);
             Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
             Exchange.OnTickers(pendingTickersMessages.Add);
@@ -165,38 +168,36 @@ namespace SpreadBot.Infrastructure
 
             resyncTimer.Start();
 
-            ResumeConsumingData();
-        }
-
-        private void ResumeConsumingData()
-        {
-            if (cancellationToken != null)
-                cancellationToken.Dispose();
-
-            cancellationToken = new Threading.CancellationTokenSource();
-
             Task.Run(ConsumeBalanceData);
             Task.Run(ConsumeOrderData);
             Task.Run(ConsumeMarketSummaryData);
             Task.Run(ConsumeTickersData);
         }
 
+        private void ResumeConsumingData()
+        {
+            Logger.Instance.LogMessage("Resume consuming WS data");
+
+            //Resumes all threads that called WaitOne()
+            consumeDataSemaphore.Set();
+        }
+
         private void StopConsumingData()
         {
-            if (cancellationToken != null)
-                cancellationToken.Cancel();
+            Logger.Instance.LogMessage("Stop consuming WS data");
+
+            //Pauses all threads that call WaitOne()
+            consumeDataSemaphore.Reset();
         }
 
         private void ConsumeBalanceData()
         {
-            foreach (var balanceData in pendingBalanceMessages.GetConsumingEnumerable())
+            ConsumeData(pendingBalanceMessages, balanceData =>
             {
-                if (lastBalanceSequence.HasValue && balanceData.Sequence != lastBalanceSequence.Value + 1)
+                if (lastBalanceSequence.HasValue && balanceData.Sequence <= lastBalanceSequence.Value)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
-                    continue;
+                    Logger.Instance.LogMessage("Balance WS data skipped");
+                    return;
                 }
 
                 var balance = new BalanceData(balanceData.Delta);
@@ -206,22 +207,17 @@ namespace SpreadBot.Infrastructure
                 InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
 
                 lastBalanceSequence = balanceData.Sequence;
-
-                if (cancellationToken.IsCancellationRequested)
-                    break;
-            }
+            });
         }
 
         private void ConsumeOrderData()
         {
-            foreach (var orderData in pendingOrderMessages.GetConsumingEnumerable())
+            ConsumeData(pendingOrderMessages, orderData =>
             {
                 if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
-                    continue;
+                    Logger.Instance.LogMessage("Order WS data skipped");
+                    return;
                 }
 
                 var data = new OrderData(orderData);
@@ -229,22 +225,17 @@ namespace SpreadBot.Infrastructure
                 InvokeHandlers(this.OrderHandlers, data.Id, data);
 
                 lastOrderSequence = orderData.Sequence;
-
-                if (cancellationToken.IsCancellationRequested)
-                    break;
-            }
+            });
         }
 
         private void ConsumeMarketSummaryData()
         {
-            foreach (var summaryData in pendingMarketSummaryMessages.GetConsumingEnumerable())
+            ConsumeData(pendingMarketSummaryMessages, summaryData =>
             {
-                if (lastSummarySequence.HasValue && summaryData.Sequence != lastSummarySequence.Value + 1)
+                if (lastSummarySequence.HasValue && summaryData.Sequence <= lastSummarySequence.Value)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
-                    continue;
+                    Logger.Instance.LogMessage("MarketSummary WS data skipped");
+                    return;
                 }
 
                 var marketData = summaryData.Deltas.Select(delta => new MarketData(delta));
@@ -252,22 +243,17 @@ namespace SpreadBot.Infrastructure
                 UpdateMarketData(marketData);
 
                 lastSummarySequence = summaryData.Sequence;
-
-                if (cancellationToken.IsCancellationRequested)
-                    break;
-            }
+            });
         }
 
         private void ConsumeTickersData()
         {
-            foreach (var tickersData in pendingTickersMessages.GetConsumingEnumerable())
+            ConsumeData(pendingTickersMessages, tickersData =>
             {
-                if (lastTickerSequence.HasValue && tickersData.Sequence != lastTickerSequence.Value + 1)
+                if (lastTickerSequence.HasValue && tickersData.Sequence <= lastTickerSequence.Value)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
-                    continue;
+                    Logger.Instance.LogMessage("Ticker WS data skipped");
+                    return;
                 }
 
                 var marketData = tickersData.Deltas.Select(delta => new MarketData(delta));
@@ -275,10 +261,29 @@ namespace SpreadBot.Infrastructure
                 UpdateMarketData(marketData);
 
                 lastTickerSequence = tickersData.Sequence;
+            });
+        }
 
-                if (cancellationToken.IsCancellationRequested)
-                    break;
+        private void ConsumeData<T>(BlockingCollection<T> queue, Action<T> consumeAction)
+        {
+            var typeName = typeof(T).Name;
+            Logger.Instance.LogMessage($"Start {typeName} WS consumption");
+
+            foreach (var data in queue.GetConsumingEnumerable())
+            {
+                try
+                {
+                    consumeDataSemaphore.WaitOne();
+
+                    consumeAction(data);
+                }
+                catch (Exception e)
+                {
+                    Logger.Instance.LogUnexpectedError($"Error consuming {typeName} WS data: {e}");
+                }
             }
+
+            Logger.Instance.LogUnexpectedError($"Stopped {typeName} WS data consumption");
         }
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
@@ -294,14 +299,15 @@ namespace SpreadBot.Infrastructure
                                                         (key, existingData) => this.MergeMarketData(existingData, data));
             InvokeHandlers(this.SpecificMarketHandlers, data.Symbol, newData);
 
-            InvokeHandlers(AllMarketHandlers, new List<MarketData>() { newData });
+            InvokeHandlers(AllMarketHandlers, new MarketData[] { newData });
         }
 
         private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
         {
-            var handlers = handlersDict.GetOrAdd(key, new ConcurrentDictionary<Guid, Action<T>>());
-
-            InvokeHandlers(handlers, data);
+            if (handlersDict.TryGetValue(key, out var handlers))
+            {
+                InvokeHandlers(handlers, data);
+            }
         }
 
         private static void InvokeHandlers<T>(ConcurrentDictionary<Guid, Action<T>> handlers, T data)
@@ -431,11 +437,24 @@ namespace SpreadBot.Infrastructure
 
         private void ResyncTimer_Elapsed(object sender, ElapsedEventArgs e)
         {
-            StopConsumingData();
+            try
+            {
+                Logger.Instance.LogMessage("Resyncing data");
 
-            FetchAllData();
+                StopConsumingData();
 
-            ResumeConsumingData();
+                FetchAllData();
+
+                Logger.Instance.LogMessage("Resync completed");
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.LogUnexpectedError($"Error while resyncing: {ex}");
+            }
+            finally
+            {
+                ResumeConsumingData();
+            }
         }
     }
 }

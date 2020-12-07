@@ -13,6 +13,7 @@ namespace SpreadBot.Logic
 {
     public class Coordinator : IDisposable
     {
+        private readonly IComparer<(decimal, decimal)> marketComparer = GetMarketComparer();
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
         private readonly Guid guid;
@@ -53,12 +54,15 @@ namespace SpreadBot.Logic
             {
                 var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, new HashSet<string>());
 
-                var marketsToAllocate = marketDeltas.Where(m => !allocatedMarketsForConfiguration.Contains(m.Symbol) && EvaluateMarketBasedOnConfiguration(m, configuration));
+                var marketsToAllocate = marketDeltas.OrderBy(GetMarketOrderKey, marketComparer)
+                    .Where(m => !allocatedMarketsForConfiguration.Contains(m.Symbol) && EvaluateMarketBasedOnConfiguration(m, configuration));
 
                 foreach (var market in marketsToAllocate)
                 {
                     if (!CanAllocateBotForConfiguration(configuration))
                         break;
+
+                    Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
                     var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
                     AllocatedBotsByGuid[bot.Guid] = bot;
@@ -76,11 +80,23 @@ namespace SpreadBot.Logic
             }
         }
 
+        private (decimal, decimal) GetMarketOrderKey(MarketData marketData)
+        {
+            return (marketData.QuoteVolume.GetValueOrDefault(0), marketData.SpreadPercentage);
+        }
+
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
-            return marketData.PercentChange <= spreadConfiguration.MaxPercentChangeFromPreviousDay
-                && marketData.QuoteVolume >= spreadConfiguration.MinimumQuoteVolume
-                && marketData.SpreadPercentage >= spreadConfiguration.MinimumSpreadPercentage;
+            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
+                return false;
+            
+            if (marketData.PercentChange > spreadConfiguration.MaxPercentChangeFromPreviousDay)
+            {
+                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is pumping {marketData.PercentChange}%");
+                return false;
+            }
+
+            return true;
         }
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
@@ -97,6 +113,18 @@ namespace SpreadBot.Logic
             balanceSemaphore.Wait();
             availableBalanceForBaseMarket += bot.Balance;
             balanceSemaphore.Release();
+        }
+
+        private static IComparer<(decimal, decimal)> GetMarketComparer()
+        {
+            return Comparer<(decimal, decimal)>.Create((key1, key2) =>
+            {
+                // Descending order
+                var result = key2.Item1.CompareTo(key1.Item1);
+                if (result == 0)
+                    return key2.Item2.CompareTo(key1.Item2);
+                return result;
+            });
         }
 
         public void Dispose()
