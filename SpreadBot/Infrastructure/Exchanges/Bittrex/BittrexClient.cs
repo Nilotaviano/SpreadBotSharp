@@ -173,15 +173,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
                 return new OrderData(apiOrderData.Data);
             }
-            catch (ApiException e)
+            catch (ApiException e) when (e.ApiErrorType == ApiErrorType.CannotEstimateCommission && useCredits)
             {
-                if (e.ApiErrorType == ApiErrorType.CannotEstimateCommission && useCredits)
-                {
-                    Logger.LogMessage("Handling CANNOT_ESTIMATE_COMMISSION for " + marketSymbol);
-                    return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false);
-                }
-                else
-                    throw e;
+                Logger.LogMessage("Handling CANNOT_ESTIMATE_COMMISSION for " + marketSymbol);
+                return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false);
             }
         }
 
