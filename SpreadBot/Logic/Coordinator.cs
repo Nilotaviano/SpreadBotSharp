@@ -35,7 +35,7 @@ namespace SpreadBot.Logic
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
         }
 
-        public ConcurrentDictionary<Guid, HashSet<string>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, HashSet<string>>();
+        public ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>>();
         public ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
 
         /// <summary>
@@ -52,21 +52,20 @@ namespace SpreadBot.Logic
 
             foreach (var configuration in appSettings.SpreadConfigurations)
             {
-                var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, new HashSet<string>());
+                var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, byte>());
 
                 var marketsToAllocate = marketDeltas.OrderBy(GetMarketOrderKey, marketComparer)
-                    .Where(m => !allocatedMarketsForConfiguration.Contains(m.Symbol) && EvaluateMarketBasedOnConfiguration(m, configuration));
+                    .Where(m => EvaluateMarketBasedOnConfiguration(m, configuration));
 
                 foreach (var market in marketsToAllocate)
                 {
-                    if (!CanAllocateBotForConfiguration(configuration))
+                    if (!CanAllocateBotForConfiguration(configuration) || !allocatedMarketsForConfiguration.TryAdd(market.Symbol, 0))
                         break;
 
                     Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
                     var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
                     AllocatedBotsByGuid[bot.Guid] = bot;
-                    allocatedMarketsForConfiguration.Add(market.Symbol);
 
                     balanceSemaphore.Wait();
                     availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
@@ -108,7 +107,8 @@ namespace SpreadBot.Logic
         private void UnallocateBot(Bot bot)
         {
             Debug.Assert(AllocatedBotsByGuid.TryRemove(bot.Guid, out _), "Bot should have been removed successfully");
-            Debug.Assert(AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].Remove(bot.MarketSymbol));
+            Debug.Assert(AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].TryRemove(bot.MarketSymbol, out _), 
+                $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.SpreadConfigurationGuid}");
 
             balanceSemaphore.Wait();
             availableBalanceForBaseMarket += bot.Balance;
