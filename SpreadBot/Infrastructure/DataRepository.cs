@@ -129,10 +129,10 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void UnsubscribeToCurrencyBalance(string currencyName, Guid handlerGuid)
         {
-            if (!BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
-                BalanceHandlers[currencyName] = handlers = new ConcurrentDictionary<Guid, Action<BalanceData>>();
-
-            handlers.Remove(handlerGuid, out _);
+            if (BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
+            {
+                handlers.Remove(handlerGuid, out _);
+            }
         }
 
         /// <summary>
@@ -140,10 +140,10 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void UnsubscribeToMarketData(string marketName, Guid handlerGuid)
         {
-            if (!SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
-                SpecificMarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
-
-            handlers.Remove(handlerGuid, out _);
+            if (SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
+            {
+                handlers.Remove(handlerGuid, out _);
+            }
         }
 
         /// <summary>
