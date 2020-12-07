@@ -23,6 +23,7 @@ namespace SpreadBot.Infrastructure
             pendingData = new BlockingCollection<NetProfit>();
 
             netProfitPerSpreadConfiguration = new Dictionary<SpreadConfiguration, decimal>();
+            netProfitPerMarket = new Dictionary<string, decimal>();
 
             Task.Run(ConsumePendingData);
         }
