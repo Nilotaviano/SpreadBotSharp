@@ -157,7 +157,7 @@ namespace SpreadBot.Infrastructure
 
         public void StartConsumingData()
         {
-            Logger.LogMessage("Start consuming WS data");
+            Logger.Instance.LogMessage("Start consuming WS data");
 
             Exchange.OnBalance(pendingBalanceMessages.Add);
             Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
@@ -176,7 +176,7 @@ namespace SpreadBot.Infrastructure
 
         private void ResumeConsumingData()
         {
-            Logger.LogMessage("Resume consuming WS data");
+            Logger.Instance.LogMessage("Resume consuming WS data");
 
             //Resumes all threads that called WaitOne()
             consumeDataSemaphore.Set();
@@ -184,7 +184,7 @@ namespace SpreadBot.Infrastructure
 
         private void StopConsumingData()
         {
-            Logger.LogMessage("Stop consuming WS data");
+            Logger.Instance.LogMessage("Stop consuming WS data");
 
             //Pauses all threads that call WaitOne()
             consumeDataSemaphore.Reset();
@@ -196,7 +196,7 @@ namespace SpreadBot.Infrastructure
             {
                 if (lastBalanceSequence.HasValue && balanceData.Sequence <= lastBalanceSequence.Value)
                 {
-                    Logger.LogMessage("Balance WS data skipped");
+                    Logger.Instance.LogMessage("Balance WS data skipped");
                     return;
                 }
 
@@ -216,7 +216,7 @@ namespace SpreadBot.Infrastructure
             {
                 if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
                 {
-                    Logger.LogMessage("Order WS data skipped");
+                    Logger.Instance.LogMessage("Order WS data skipped");
                     return;
                 }
 
@@ -234,7 +234,7 @@ namespace SpreadBot.Infrastructure
             {
                 if (lastSummarySequence.HasValue && summaryData.Sequence <= lastSummarySequence.Value)
                 {
-                    Logger.LogMessage("MarketSummary WS data skipped");
+                    Logger.Instance.LogMessage("MarketSummary WS data skipped");
                     return;
                 }
 
@@ -252,7 +252,7 @@ namespace SpreadBot.Infrastructure
             {
                 if (lastTickerSequence.HasValue && tickersData.Sequence <= lastTickerSequence.Value)
                 {
-                    Logger.LogMessage("Ticker WS data skipped");
+                    Logger.Instance.LogMessage("Ticker WS data skipped");
                     return;
                 }
 
@@ -267,7 +267,7 @@ namespace SpreadBot.Infrastructure
         private void ConsumeData<T>(BlockingCollection<T> queue, Action<T> consumeAction)
         {
             var typeName = typeof(T).Name;
-            Logger.LogMessage($"Start {typeName} WS consumption");
+            Logger.Instance.LogMessage($"Start {typeName} WS consumption");
 
             foreach (var data in queue.GetConsumingEnumerable())
             {
@@ -279,11 +279,11 @@ namespace SpreadBot.Infrastructure
                 }
                 catch (Exception e)
                 {
-                    Logger.LogUnexpectedError($"Error consuming {typeName} WS data: {e}");
+                    Logger.Instance.LogUnexpectedError($"Error consuming {typeName} WS data: {e}");
                 }
             }
 
-            Logger.LogUnexpectedError($"Stopped {typeName} WS data consumption");
+            Logger.Instance.LogUnexpectedError($"Stopped {typeName} WS data consumption");
         }
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
@@ -439,17 +439,17 @@ namespace SpreadBot.Infrastructure
         {
             try
             {
-                Logger.LogMessage("Resyncing data");
+                Logger.Instance.LogMessage("Resyncing data");
 
                 StopConsumingData();
 
                 FetchAllData();
 
-                Logger.LogMessage("Resync completed");
+                Logger.Instance.LogMessage("Resync completed");
             }
             catch (Exception ex)
             {
-                Logger.LogUnexpectedError($"Error while resyncing: {ex}");
+                Logger.Instance.LogUnexpectedError($"Error while resyncing: {ex}");
             }
             finally
             {
