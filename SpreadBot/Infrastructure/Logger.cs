@@ -8,7 +8,7 @@ namespace SpreadBot.Infrastructure
 {
     public class Logger
     {
-        private static BlockingCollection<Log> pendingLogs;
+        private BlockingCollection<Log> pendingLogs;
 
         private static Logger instance;
 
@@ -66,13 +66,13 @@ namespace SpreadBot.Infrastructure
             }
         }
 
-        public class Log
+        private class Log
         {
             public LogLevel LogLevel { get; set; }
             public string Content { get; set; }
         }
 
-        public enum LogLevel
+        private enum LogLevel
         {
             Message,
             Error,
