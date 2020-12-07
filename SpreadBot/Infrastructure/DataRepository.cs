@@ -157,7 +157,7 @@ namespace SpreadBot.Infrastructure
 
         public void StartConsumingData()
         {
-            Logger.Instance.LogMessage("Start consuming WS data");
+            Logger.LogMessage("Start consuming WS data");
 
             Exchange.OnBalance(pendingBalanceMessages.Add);
             Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
@@ -176,7 +176,7 @@ namespace SpreadBot.Infrastructure
 
         private void ResumeConsumingData()
         {
-            Logger.Instance.LogMessage("Resume consuming WS data");
+            Logger.LogMessage("Resume consuming WS data");
 
             //Resumes all threads that called WaitOne()
             consumeDataSemaphore.Set();
@@ -184,7 +184,7 @@ namespace SpreadBot.Infrastructure
 
         private void StopConsumingData()
         {
-            Logger.Instance.LogMessage("Stop consuming WS data");
+            Logger.LogMessage("Stop consuming WS data");
 
             //Pauses all threads that call WaitOne()
             consumeDataSemaphore.Reset();
@@ -192,119 +192,98 @@ namespace SpreadBot.Infrastructure
 
         private void ConsumeBalanceData()
         {
-            foreach (var balanceData in pendingBalanceMessages.GetConsumingEnumerable())
+            ConsumeData(pendingBalanceMessages, balanceData =>
             {
-                try
+                if (lastBalanceSequence.HasValue && balanceData.Sequence <= lastBalanceSequence.Value)
                 {
-                    consumeDataSemaphore.WaitOne();
-
-                    if (lastBalanceSequence.HasValue && balanceData.Sequence <= lastBalanceSequence.Value)
-                    {
-                        Logger.Instance.LogMessage("Balance WS data skipped");
-                        continue;
-                    }
-
-                    var balance = new BalanceData(balanceData.Delta);
-
-                    this.BalancesData[balance.CurrencyAbbreviation] = balance;
-
-                    InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
-
-                    lastBalanceSequence = balanceData.Sequence;
+                    Logger.LogMessage("Balance WS data skipped");
+                    return;
                 }
-                catch (Exception e)
-                {
-                    Logger.Instance.LogUnexpectedError($"Error consuming WS Balance data: {e}");
-                }
-            }
 
-            Logger.Instance.LogUnexpectedError("Stopped Balance WS data consumption");
+                var balance = new BalanceData(balanceData.Delta);
+
+                this.BalancesData[balance.CurrencyAbbreviation] = balance;
+
+                InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
+
+                lastBalanceSequence = balanceData.Sequence;
+            });
         }
 
         private void ConsumeOrderData()
         {
-            foreach (var orderData in pendingOrderMessages.GetConsumingEnumerable())
+            ConsumeData(pendingOrderMessages, orderData =>
             {
-                try
+                if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
                 {
-                    consumeDataSemaphore.WaitOne();
-
-                    if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
-                    {
-                        Logger.Instance.LogMessage("Order WS data skipped");
-                        continue;
-                    }
-
-                    var data = new OrderData(orderData);
-
-                    InvokeHandlers(this.OrderHandlers, data.Id, data);
-
-                    lastOrderSequence = orderData.Sequence;
+                    Logger.LogMessage("Order WS data skipped");
+                    return;
                 }
-                catch (Exception e)
-                {
-                    Logger.Instance.LogUnexpectedError($"Error consuming WS Order data: {e}");
-                }
-            }
 
-            Logger.Instance.LogUnexpectedError("Stopped Order WS data consumption");
+                var data = new OrderData(orderData);
+
+                InvokeHandlers(this.OrderHandlers, data.Id, data);
+
+                lastOrderSequence = orderData.Sequence;
+            });
         }
 
         private void ConsumeMarketSummaryData()
         {
-            foreach (var summaryData in pendingMarketSummaryMessages.GetConsumingEnumerable())
+            ConsumeData(pendingMarketSummaryMessages, summaryData =>
+            {
+                if (lastSummarySequence.HasValue && summaryData.Sequence <= lastSummarySequence.Value)
+                {
+                    Logger.LogMessage("MarketSummary WS data skipped");
+                    return;
+                }
+
+                var marketData = summaryData.Deltas.Select(delta => new MarketData(delta));
+
+                UpdateMarketData(marketData);
+
+                lastSummarySequence = summaryData.Sequence;
+            });
+        }
+
+        private void ConsumeTickersData()
+        {
+            ConsumeData(pendingTickersMessages, tickersData =>
+            {
+                if (lastTickerSequence.HasValue && tickersData.Sequence <= lastTickerSequence.Value)
+                {
+                    Logger.LogMessage("Ticker WS data skipped");
+                    return;
+                }
+
+                var marketData = tickersData.Deltas.Select(delta => new MarketData(delta));
+
+                UpdateMarketData(marketData);
+
+                lastTickerSequence = tickersData.Sequence;
+            });
+        }
+
+        private void ConsumeData<T>(BlockingCollection<T> queue, Action<T> consumeAction)
+        {
+            var typeName = typeof(T).Name;
+            Logger.LogMessage($"Start {typeName} WS consumption");
+
+            foreach (var data in queue.GetConsumingEnumerable())
             {
                 try
                 {
                     consumeDataSemaphore.WaitOne();
 
-                    if (lastSummarySequence.HasValue && summaryData.Sequence <= lastSummarySequence.Value)
-                    {
-                        Logger.Instance.LogMessage("MarketSummary WS data skipped");
-                        continue;
-                    }
-
-                    var marketData = summaryData.Deltas.Select(delta => new MarketData(delta)).ToList();
-
-                    UpdateMarketData(marketData);
-
-                    lastSummarySequence = summaryData.Sequence;
+                    consumeAction(data);
                 }
                 catch (Exception e)
                 {
-                    Logger.Instance.LogUnexpectedError($"Error consuming WS MarketSummary data: {e}");
+                    Logger.LogUnexpectedError($"Error consuming {typeName} WS data: {e}");
                 }
             }
 
-            Logger.Instance.LogUnexpectedError("Stopped MarketSummary WS data consumption");
-        }
-
-        private void ConsumeTickersData()
-        {
-            foreach (var tickersData in pendingTickersMessages.GetConsumingEnumerable())
-            {
-                try { 
-                consumeDataSemaphore.WaitOne();
-
-                if (lastTickerSequence.HasValue && tickersData.Sequence <= lastTickerSequence.Value)
-                {
-                    Logger.Instance.LogMessage("Ticker WS data skipped");
-                    continue;
-                }
-
-                var marketData = tickersData.Deltas.Select(delta => new MarketData(delta)).ToList();
-
-                UpdateMarketData(marketData);
-
-                lastTickerSequence = tickersData.Sequence;
-                }
-                catch (Exception e)
-                {
-                    Logger.Instance.LogUnexpectedError($"Error consuming WS Ticker data: {e}");
-                }
-            }
-
-            Logger.Instance.LogUnexpectedError("Stopped Tickers WS data consumption");
+            Logger.LogUnexpectedError($"Stopped {typeName} WS data consumption");
         }
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
@@ -460,17 +439,17 @@ namespace SpreadBot.Infrastructure
         {
             try
             {
-                Logger.Instance.LogMessage("Resyncing data");
+                Logger.LogMessage("Resyncing data");
 
                 StopConsumingData();
 
                 FetchAllData();
 
-                Logger.Instance.LogMessage("Resync completed");
+                Logger.LogMessage("Resync completed");
             }
             catch (Exception ex)
             {
-                Logger.Instance.LogUnexpectedError($"Error while resyncing: {ex}");
+                Logger.LogUnexpectedError($"Error while resyncing: {ex}");
             }
             finally
             {
