@@ -28,3 +28,4 @@ msbuild.wrn
 # Visual Studio 2015
 .vs/
 /SpreadBot/Properties/launchSettings.json
+SpreadBot/appsettings.json
