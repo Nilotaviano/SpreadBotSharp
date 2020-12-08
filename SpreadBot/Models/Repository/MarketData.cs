@@ -63,6 +63,6 @@ namespace SpreadBot.Models.Repository
         public string Notice { get; set; }
 
         public string BaseMarket => Symbol.Split('-')[1];
-        public decimal SpreadPercentage => AskRate.HasValue && BidRate.HasValue ? (AskRate.GetValueOrDefault(0) - BidRate.GetValueOrDefault(0)) / AskRate.GetValueOrDefault(1) * 100 : 0; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php
+        public decimal SpreadPercentage => AskRate > 0 && BidRate > 0 ? (AskRate.Value - BidRate.Value) / AskRate.Value * 100 : 0; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php
     }
 }
