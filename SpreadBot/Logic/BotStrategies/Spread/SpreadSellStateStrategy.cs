@@ -20,7 +20,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
             bool canSellAtLoss = buyStopwatch.Elapsed.TotalMinutes > spreadConfiguration.MinutesForLoss;
             if (!canSellAtLoss)
-                askPrice = Math.Max(boughtPrice * (1 + spreadConfiguration.MinimumSpreadPercentage / 100), askPrice);
+                askPrice = Math.Max(boughtPrice * (1 + spreadConfiguration.MinimumProfitPercentage / 100), askPrice);
 
             await executeOrderFunctionCallback(async () => await exchange.SellLimit(marketData.Symbol, heldAmount, askPrice.RoundOrderLimitPrice(marketData.Precision)));
         }
