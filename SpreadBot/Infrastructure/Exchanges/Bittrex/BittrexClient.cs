@@ -272,6 +272,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         {
             try
             {
+                if (string.Empty.Equals(restResponse.Content))
+                {
+                    Logger.Instance.LogUnexpectedError($"Unknown API error data: {restResponse.ErrorMessage}. {JsonConvert.SerializeObject(restResponse.ErrorException)}");
+                    return ApiErrorType.UnknownError;
+                }
+
                 var errorData = JsonConvert.DeserializeObject<BittrexApiErrorData>(restResponse.Content);
 
                 if (errorData.Code.Equals("INSUFFICIENT_AWARDS", StringComparison.OrdinalIgnoreCase))
