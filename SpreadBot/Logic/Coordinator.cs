@@ -45,10 +45,7 @@ namespace SpreadBot.Logic
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
             if (AllocatedBotsByGuid.Count >= appSettings.MaxNumberOfBots)
-            {
-                Logger.Instance.LogMessage($"Max number of bots reached");
                 return;
-            }
 
             //Filter only relevant markets
             marketDeltas = marketDeltas.Where(m => m.BaseMarket == appSettings.BaseMarket && m.LastTradeRate >= appSettings.MinimumPrice);
@@ -62,13 +59,14 @@ namespace SpreadBot.Logic
 
                 foreach (var market in marketsToAllocate)
                 {
-                    bool alreadyAllocatedBot = !allocatedMarketsForConfiguration.TryAdd(market.Symbol, true);
-
-                    if (alreadyAllocatedBot)
-                        Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
-
-                    if (!CanAllocateBotForConfiguration(configuration) || alreadyAllocatedBot)
+                    if (!CanAllocateBotForConfiguration(configuration))
                         break;
+
+                    if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
+                    {
+                        Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
+                        break;
+                    }
 
                     Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
