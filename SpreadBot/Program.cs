@@ -14,26 +14,8 @@ namespace SpreadBot
     {
         static async Task Main()
         {
-            var appSettings = GetAppSettings();
-
-            BalanceReporter.Initialize();
-            NetProfitRecorder.Initialize();
-
-            var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
-            await bittrex.Setup();
-
-            var dataRepository = new DataRepository(bittrex, appSettings);
-            dataRepository.StartConsumingData();
-
-            var coordinator = new Coordinator(appSettings, dataRepository);
-            coordinator.Start();
-
-            Console.ReadLine();
-        }
-
-        private static AppSettings GetAppSettings()
-        {
             string appSettingsPath = "appsettings.json".ToLocalFilePath();
+            Console.WriteLine(appSettingsPath);
             var appSettings = new ConfigurationBuilder()
                 .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
                 .Build()
@@ -62,9 +44,21 @@ namespace SpreadBot
                 }
             }
 
-            watcher.Changed += reloadAppSettings;
+            Task.Run(() => watcher.Changed += reloadAppSettings);
 
-            return appSettings;
+            BalanceReporter.Initialize();
+            NetProfitRecorder.Initialize();
+
+            var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
+            await bittrex.Setup();
+
+            var dataRepository = new DataRepository(bittrex, appSettings);
+            dataRepository.StartConsumingData();
+
+            var coordinator = new Coordinator(appSettings, dataRepository);
+            coordinator.Start();
+
+            Console.ReadLine();
         }
     }
 }
