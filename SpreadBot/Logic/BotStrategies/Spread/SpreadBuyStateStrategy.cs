@@ -11,18 +11,18 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadBuyStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(IExchange exchange, SpreadConfiguration spreadConfiguration, Stopwatch buyStopwatch, decimal balance, decimal heldAmount, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack, OrderData currentOrderData, MarketData marketData, decimal boughtPrice)
+        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack)
         {
-            if (!marketData.BidRate.HasValue)
+            if (!botContext.latestMarketData.BidRate.HasValue)
                 return;
 
-            if (marketData.SpreadPercentage >= spreadConfiguration.MinimumSpreadPercentage)
+            if (botContext.latestMarketData.SpreadPercentage >= botContext.spreadConfiguration.MinimumSpreadPercentage)
             {
 
-                decimal bidPrice = marketData.BidRate.Value + 1.Satoshi();
-                decimal amount = (balance * (1 - exchange.FeeRate) / bidPrice).RoundOrderLimitPrice(marketData.Precision);
+                decimal bidPrice = botContext.latestMarketData.BidRate.Value + 1.Satoshi();
+                decimal amount = (botContext.Balance * (1 - botContext.exchange.FeeRate) / bidPrice).RoundOrderLimitPrice(botContext.latestMarketData.Precision);
 
-                await executeOrderFunctionCallback(async () => await exchange.BuyLimit(marketData.Symbol, amount, bidPrice));
+                await executeOrderFunctionCallback(async () => await botContext.exchange.BuyLimit(botContext.latestMarketData.Symbol, amount, bidPrice));
             }
             else
                 finishWorkCallBack();

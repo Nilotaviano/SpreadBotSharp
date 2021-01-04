@@ -11,18 +11,18 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadSellStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(IExchange exchange, SpreadConfiguration spreadConfiguration, Stopwatch buyStopwatch, decimal balance, decimal heldAmount, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack, OrderData currentOrderData, MarketData marketData, decimal boughtPrice)
+        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack)
         {
-            if (!marketData.AskRate.HasValue)
+            if (!botContext.latestMarketData.AskRate.HasValue)
                 return;
 
-            decimal askPrice = marketData.AskRate.Value - 1.Satoshi();
+            decimal askPrice = botContext.latestMarketData.AskRate.Value - 1.Satoshi();
 
-            bool canSellAtLoss = buyStopwatch.Elapsed.TotalMinutes > spreadConfiguration.MinutesForLoss;
+            bool canSellAtLoss = botContext.buyStopwatch.Elapsed.TotalMinutes > botContext.spreadConfiguration.MinutesForLoss;
             if (!canSellAtLoss)
-                askPrice = Math.Max(boughtPrice * (1 + spreadConfiguration.MinimumProfitPercentage / 100), askPrice);
+                askPrice = Math.Max(botContext.boughtPrice * (1 + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice);
 
-            await executeOrderFunctionCallback(async () => await exchange.SellLimit(marketData.Symbol, heldAmount, askPrice.RoundOrderLimitPrice(marketData.Precision)));
+            await executeOrderFunctionCallback(async () => await botContext.exchange.SellLimit(botContext.latestMarketData.Symbol, botContext.HeldAmount, askPrice.RoundOrderLimitPrice(botContext.latestMarketData.Precision)));
         }
     }
 }
