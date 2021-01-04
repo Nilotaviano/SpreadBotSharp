@@ -33,19 +33,36 @@ namespace SpreadBot
 
         private static AppSettings GetAppSettings()
         {
-            var configuration = new ConfigurationBuilder()
-                .AddJsonFile("appsettings.json".ToLocalFilePath(), optional: false, reloadOnChange: true)
-                .Build();
+            string appSettingsPath = "appsettings.json".ToLocalFilePath();
+            var appSettings = new ConfigurationBuilder()
+                .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
+                .Build()
+                .Get<AppSettings>();
 
-            var appSettings = configuration.Get<AppSettings>();
+            var watcher = new FileSystemWatcher(Path.GetDirectoryName(appSettingsPath));
+            watcher.NotifyFilter = NotifyFilters.LastWrite;
+            watcher.Filter = Path.GetFileName(appSettingsPath);
+            watcher.EnableRaisingEvents = true;
 
-            //TODO: This is NOT working on linux for some reason
-            ChangeToken.OnChange(() => configuration.GetReloadToken(), () =>
+            void reloadAppSettings(object sender, FileSystemEventArgs e)
             {
-                appSettings.Reload(configuration.Get<AppSettings>());
-                Logger.Instance.LogMessage("App Settings reloaded");
-            });
+                try
+                {
+                    var updatedAppSettings = new ConfigurationBuilder()
+                    .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
+                    .Build()
+                    .Get<AppSettings>();
 
+                    appSettings.Reload(updatedAppSettings);
+                    Logger.Instance.LogMessage("App Settings reloaded");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Instance.LogUnexpectedError($"Error reloading app settings: {ex}");
+                }
+            }
+
+            watcher.Changed += reloadAppSettings;
 
             return appSettings;
         }

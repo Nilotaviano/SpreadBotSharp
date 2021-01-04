@@ -55,7 +55,7 @@ namespace SpreadBot.Infrastructure
 
         public static string ToLocalFilePath(this string value)
         {
-            return Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", value);
+            return Path.Combine(Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName), value);
         }
     }
 }
