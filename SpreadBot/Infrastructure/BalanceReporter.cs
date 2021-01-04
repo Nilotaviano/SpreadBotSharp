@@ -40,12 +40,17 @@ namespace SpreadBot.Infrastructure
             }
         }
 
+        public static void Initialize()
+        {
+            instance = new BalanceReporter();
+        }
+
         public static BalanceReporter Instance
         {
             get
             {
                 if (instance == null)
-                    instance = new BalanceReporter();
+                    throw new Exception("Must be initialized");
 
                 return instance;
             }

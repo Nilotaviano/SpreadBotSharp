@@ -28,12 +28,17 @@ namespace SpreadBot.Infrastructure
             Task.Run(ConsumePendingData);
         }
 
+        public static void Initialize()
+        {
+            instance = new NetProfitRecorder();
+        }
+
         public static NetProfitRecorder Instance
         {
             get
             {
                 if (instance == null)
-                    instance = new NetProfitRecorder();
+                    throw new Exception("Must be initialized");
 
                 return instance;
             }

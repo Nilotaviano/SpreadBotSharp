@@ -16,6 +16,9 @@ namespace SpreadBot
         {
             var appSettings = GetAppSettings();
 
+            BalanceReporter.Initialize();
+            NetProfitRecorder.Initialize();
+
             var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
             await bittrex.Setup();
 
@@ -37,11 +40,11 @@ namespace SpreadBot
             var appSettings = configuration.Get<AppSettings>();
 
             //TODO: This is NOT working on linux for some reason
-            Task.Run(() => ChangeToken.OnChange(() => configuration.GetReloadToken(), () =>
+            ChangeToken.OnChange(() => configuration.GetReloadToken(), () =>
             {
                 appSettings.Reload(configuration.Get<AppSettings>());
                 Logger.Instance.LogMessage("App Settings reloaded");
-            }));
+            });
 
 
             return appSettings;
