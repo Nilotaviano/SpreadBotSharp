@@ -31,7 +31,7 @@ namespace SpreadBot
         private static AppSettings GetAppSettings()
         {
             var configuration = new ConfigurationBuilder()
-                .AddJsonFile(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "appsettings.json"), optional: false, reloadOnChange: true)
+                .AddJsonFile("appsettings.json".ToLocalFilePath(), optional: false, reloadOnChange: true)
                 .Build();
 
             var appSettings = configuration.Get<AppSettings>();

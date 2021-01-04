@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -50,6 +51,11 @@ namespace SpreadBot.Infrastructure
         public static decimal RoundOrderLimitPrice(this decimal limit, int? precision)
         {
             return precision.HasValue ? Math.Round(limit, precision.Value) : limit;
+        }
+
+        public static string ToLocalFilePath(this string value)
+        {
+            return Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", value);
         }
     }
 }

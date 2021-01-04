@@ -84,6 +84,8 @@ namespace SpreadBot.Logic
                 if (!CanAllocateBotForConfiguration(configuration))
                     break;
             }
+
+            BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket, AllocatedBotsByGuid.Values, appSettings.BaseMarket);
         }
 
         private (decimal, decimal) GetMarketOrderKey(MarketData marketData)

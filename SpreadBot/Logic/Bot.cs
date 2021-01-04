@@ -16,34 +16,39 @@ namespace SpreadBot.Logic
     {
         private readonly Action<Bot> unallocateBotCallback;
         private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
-        private readonly Dictionary<BotState, IBotStateStrategy> botStateStrategyDictionary;
 
         private readonly BotContext botContext;
+        private readonly DataRepository dataRepository;
+
+        private readonly IBotStrategy botStrategy;
 
         public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
-            botContext = new BotContext(appSettings, dataRepository, dataRepository.Exchange, spreadConfiguration, marketData, BotState.Buying);
+            this.dataRepository = dataRepository;
+            botContext = new BotContext(appSettings, dataRepository.Exchange, spreadConfiguration, marketData, BotState.Buying);
             this.unallocateBotCallback = unallocateBotCallback;
-            botStateStrategyDictionary = botStrategiesFactory.GetStrategiesDictionary();
+            botStrategy = botStrategiesFactory.GetStrategy();
         }
 
         public Guid Guid => botContext.Guid;
         public Guid SpreadConfigurationGuid => botContext.spreadConfiguration.Guid;
         public string MarketSymbol => botContext.latestMarketData.Symbol;
         public decimal Balance => botContext.Balance;
+        public decimal HeldAmount => botContext.HeldAmount;
+        public decimal LastTradeRate => botContext.latestMarketData.LastTradeRate.GetValueOrDefault();
 
         private void SetCurrentOrderData(OrderData value)
         {
             if (botContext.currentOrderData?.Id != value?.Id)
             {
                 if (botContext.currentOrderData != null)
-                    botContext.dataRepository.UnsubscribeToOrderData(botContext.currentOrderData.Id, Guid);
+                    dataRepository.UnsubscribeToOrderData(botContext.currentOrderData.Id, Guid);
 
                 if (value?.Status == OrderStatus.OPEN)
-                    botContext.dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
+                    dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
             }
             if (value?.Status == OrderStatus.CLOSED)
-                botContext.dataRepository.UnsubscribeToOrderData(value.Id, Guid);
+                dataRepository.UnsubscribeToOrderData(value.Id, Guid);
 
 
             botContext.currentOrderData = value;
@@ -53,7 +58,7 @@ namespace SpreadBot.Logic
         {
             LogMessage($"started on {MarketSymbol}");
             //This will trigger a call to ProcessMessage
-            botContext.dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
+            dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
         }
 
         //Doesn't return Task because this shouldn't be awaited
@@ -65,7 +70,7 @@ namespace SpreadBot.Logic
 
             if (botContext.botState == BotState.FinishedWork)
             {
-                Logger.Instance.LogError("Bot is still running after FinishWork was called");
+                LogError("Bot is still running after FinishWork was called");
             }
             else
             {
@@ -107,17 +112,17 @@ namespace SpreadBot.Logic
                         case ApiErrorType.MarketOffline:
                         case ApiErrorType.Throttled:
                             //Do nothing, try again on the next cycle
-                            Logger.Instance.LogError($"{e.ApiErrorType}: {e}");
+                            LogError($"{e.ApiErrorType}: {e}");
                             break;
                         default:
                             //TODO: Log all of the bot's state/properties/fields
-                            Logger.Instance.LogUnexpectedError($"{e.ApiErrorType}: {e}");
+                            LogUnexpectedError($"{e.ApiErrorType}: {e}");
                             break;
                     };
                 }
                 catch (Exception e)
                 {
-                    Logger.Instance.LogUnexpectedError($"Bot {Guid}: Unexpected exception: {e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext)}");
+                    LogUnexpectedError($"Bot {Guid}: Unexpected exception: {e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext)}");
                 }
                 finally
                 {
@@ -130,7 +135,7 @@ namespace SpreadBot.Logic
         {
             botContext.latestMarketData = marketData;
 
-            await botStateStrategyDictionary[botContext.botState].ProcessMarketData(botContext, ExecuteOrderFunction, FinishWork);
+            await botStrategy.ProcessMarketData(botContext, ExecuteOrderFunction, FinishWork);
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
@@ -194,7 +199,7 @@ namespace SpreadBot.Logic
         private void FinishWork()
         {
             botContext.botState = BotState.FinishedWork;
-            botContext.dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
+            dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
             semaphore.Clear();
             unallocateBotCallback(this);
@@ -206,35 +211,17 @@ namespace SpreadBot.Logic
         {
             Logger.Instance.LogMessage($"Bot {Guid}: {message}");
         }
-    }
 
-    public class BotContext
-    {
-        public Guid Guid { get; private set; }
-        
-        public readonly AppSettings appSettings;
-        public readonly DataRepository dataRepository;
-        public readonly IExchange exchange;
-        public readonly SpreadConfiguration spreadConfiguration;
-        public MarketData latestMarketData;
-        public BotState botState;
-        public readonly Stopwatch buyStopwatch = new Stopwatch();
-        public OrderData currentOrderData = null;
-        public decimal Balance { get; set; } //Initial balance + profit/loss
-        public decimal boughtPrice = 0;
-        public decimal HeldAmount { get; set; } = 0; //Amount held of the market currency
-
-        public BotContext(AppSettings appSettings, DataRepository dataRepository, IExchange exchange, SpreadConfiguration spreadConfiguration, MarketData marketData, BotState buy)
+        private void LogError(string message)
         {
-            Guid = Guid.NewGuid();
-            this.appSettings = appSettings;
-            this.dataRepository = dataRepository;
-            this.exchange = exchange;
-            this.spreadConfiguration = spreadConfiguration;
-            this.latestMarketData = marketData;
-            this.botState = buy;
-            this.Balance = spreadConfiguration.AllocatedAmountOfBaseCurrency;
+            Logger.Instance.LogError($"Bot {Guid}: {message}");
         }
+
+        private void LogUnexpectedError(string message)
+        {
+            Logger.Instance.LogUnexpectedError($"Bot {Guid}: {message}");
+        }
+
     }
 
     public enum BotState

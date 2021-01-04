@@ -58,10 +58,10 @@ namespace SpreadBot.Infrastructure
                     netProfitPerMarket.TryGetValue(log.Market, out decimal marketProfit);
                     netProfitPerMarket[log.Market] = marketProfit + (log.Profit);
 
-                    File.WriteAllText(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "profitPerSpreadConfiguration.json"),
+                    File.WriteAllText("profitPerSpreadConfiguration.json".ToLocalFilePath(),
                         JsonConvert.SerializeObject(netProfitPerSpreadConfiguration, Formatting.Indented));
 
-                    File.WriteAllText(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "profitPerMarket.json"),
+                    File.WriteAllText("profitPerMarket.json".ToLocalFilePath(),
                         JsonConvert.SerializeObject(netProfitPerMarket, Formatting.Indented));
                 }
                 catch (Exception e)
