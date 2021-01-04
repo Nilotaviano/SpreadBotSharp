@@ -11,17 +11,17 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadSellOrderActiveStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(IExchange exchange, SpreadConfiguration spreadConfiguration, Stopwatch buyStopwatch, decimal balance, decimal heldAmount, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack, OrderData currentOrderData, MarketData marketData, decimal boughtPrice)
+        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack)
         {
-            if (currentOrderData.Limit - marketData.AskRate >= spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)
+            if (botContext.currentOrderData.Limit - botContext.latestMarketData.AskRate >= botContext.spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)
             {
                 //cancel order and switch to BotState.Sell
                 //TODO: I think we should rate limit how often we cancel orders here
-                bool canSellAtLoss = buyStopwatch.Elapsed.TotalMinutes > spreadConfiguration.MinutesForLoss;
-                bool currentAskAboveMinimumProfitTarget = marketData.AskRate > boughtPrice * (1 + spreadConfiguration.MinimumProfitPercentage / 100);
+                bool canSellAtLoss = botContext.buyStopwatch.Elapsed.TotalMinutes > botContext.spreadConfiguration.MinutesForLoss;
+                bool currentAskAboveMinimumProfitTarget = botContext.latestMarketData.AskRate > botContext.boughtPrice * (1 + botContext.spreadConfiguration.MinimumProfitPercentage / 100);
 
                 if (canSellAtLoss || currentAskAboveMinimumProfitTarget)
-                    await executeOrderFunctionCallback(async () => await exchange.CancelOrder(currentOrderData.Id));
+                    await executeOrderFunctionCallback(async () => await botContext.exchange.CancelOrder(botContext.currentOrderData.Id));
             }
         }
     }

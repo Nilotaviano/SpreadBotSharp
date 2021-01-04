@@ -14,65 +14,46 @@ namespace SpreadBot.Logic
 {
     public class Bot
     {
-        private readonly AppSettings appSettings;
-        private readonly DataRepository dataRepository;
-        private readonly IExchange exchange;
-        private readonly SpreadConfiguration spreadConfiguration;
-        private MarketData latestMarketData;
         private readonly Action<Bot> unallocateBotCallback;
-        private readonly Stopwatch buyStopwatch = new Stopwatch();
-
         private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
-
-        private OrderData currentOrderData = null;
-        private decimal boughtPrice = 0;
-
-        private BotState botState;
-
         private readonly Dictionary<BotState, IBotStateStrategy> botStateStrategyDictionary;
+
+        private readonly BotContext botContext;
 
         public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
-            this.appSettings = appSettings;
-            this.dataRepository = dataRepository;
-            this.exchange = dataRepository.Exchange;
-            this.spreadConfiguration = spreadConfiguration;
-            this.latestMarketData = marketData;
+            botContext = new BotContext(appSettings, dataRepository, dataRepository.Exchange, spreadConfiguration, marketData, BotState.Buying);
             this.unallocateBotCallback = unallocateBotCallback;
-            Balance = spreadConfiguration.AllocatedAmountOfBaseCurrency;
-            Guid = Guid.NewGuid();
-            botState = BotState.Buy;
             botStateStrategyDictionary = botStrategiesFactory.GetStrategiesDictionary();
         }
 
-        public Guid Guid { get; private set; }
-        public Guid SpreadConfigurationGuid => spreadConfiguration.Guid;
-        public string MarketSymbol => latestMarketData.Symbol;
-        public decimal Balance { get; private set; } //Initial balance + profit/loss
-        public decimal HeldAmount { get; private set; } //Amount held of the market currency
+        public Guid Guid => botContext.Guid;
+        public Guid SpreadConfigurationGuid => botContext.spreadConfiguration.Guid;
+        public string MarketSymbol => botContext.latestMarketData.Symbol;
+        public decimal Balance => botContext.Balance;
 
         private void SetCurrentOrderData(OrderData value)
         {
-            if (currentOrderData?.Id != value?.Id)
+            if (botContext.currentOrderData?.Id != value?.Id)
             {
-                if (currentOrderData != null)
-                    dataRepository.UnsubscribeToOrderData(currentOrderData.Id, Guid);
+                if (botContext.currentOrderData != null)
+                    botContext.dataRepository.UnsubscribeToOrderData(botContext.currentOrderData.Id, Guid);
 
                 if (value?.Status == OrderStatus.OPEN)
-                    dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
+                    botContext.dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
             }
             if (value?.Status == OrderStatus.CLOSED)
-                dataRepository.UnsubscribeToOrderData(value.Id, Guid);
+                botContext.dataRepository.UnsubscribeToOrderData(value.Id, Guid);
 
 
-            currentOrderData = value;
+            botContext.currentOrderData = value;
         }
 
         public void Start()
         {
             LogMessage($"started on {MarketSymbol}");
             //This will trigger a call to ProcessMessage
-            dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
+            botContext.dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
         }
 
         //Doesn't return Task because this shouldn't be awaited
@@ -82,9 +63,9 @@ namespace SpreadBot.Logic
 
             LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
 
-            if (botState == BotState.FinishedWork)
+            if (botContext.botState == BotState.FinishedWork)
             {
-                Logger.Instance.LogUnexpectedError("Bot is still running after FinishWork was called");
+                Logger.Instance.LogError("Bot is still running after FinishWork was called");
             }
             else
             {
@@ -109,15 +90,15 @@ namespace SpreadBot.Logic
                     //TODO: Clean up/refactor
                     switch (e.ApiErrorType)
                     {
-                        case ApiErrorType.DustTrade when botState == BotState.Sell:
+                        case ApiErrorType.DustTrade when botContext.botState == BotState.Bought:
                             //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
-                            botState = BotState.Buy;
+                            botContext.botState = BotState.Buying;
                             break;
                         case ApiErrorType.InsufficientFunds:
                             //Too many bots running?
                             FinishWork();
                             break;
-                        case ApiErrorType.MarketOffline when botState == BotState.Buy:
+                        case ApiErrorType.MarketOffline when botContext.botState == BotState.Buying:
                             FinishWork();
                             break;
                         case ApiErrorType.OrderNotOpen:
@@ -136,7 +117,7 @@ namespace SpreadBot.Logic
                 }
                 catch (Exception e)
                 {
-                    Logger.Instance.LogUnexpectedError($"Unexpected exception: {e}");
+                    Logger.Instance.LogUnexpectedError($"Bot {Guid}: Unexpected exception: {e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext)}");
                 }
                 finally
                 {
@@ -147,9 +128,9 @@ namespace SpreadBot.Logic
 
         private async Task ProcessMarketData(MarketData marketData)
         {
-            latestMarketData = marketData;
+            botContext.latestMarketData = marketData;
 
-            await botStateStrategyDictionary[botState].ProcessMarketData(exchange, spreadConfiguration, buyStopwatch, Balance, HeldAmount, ExecuteOrderFunction, FinishWork, currentOrderData, latestMarketData, boughtPrice);
+            await botStateStrategyDictionary[botContext.botState].ProcessMarketData(botContext, ExecuteOrderFunction, FinishWork);
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
@@ -162,13 +143,13 @@ namespace SpreadBot.Logic
         //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
-            if (orderData.Id != currentOrderData?.Id)
+            if (orderData.Id != botContext.currentOrderData?.Id)
                 return;
 
             switch (orderData?.Status)
             {
                 case OrderStatus.OPEN:
-                    botState = (orderData?.Direction) switch
+                    botContext.botState = (orderData?.Direction) switch
                     {
                         OrderDirection.BUY => BotState.BuyOrderActive,
                         OrderDirection.SELL => BotState.SellOrderActive,
@@ -181,26 +162,26 @@ namespace SpreadBot.Logic
                     switch (orderData?.Direction)
                     {
                         case OrderDirection.BUY:
-                            HeldAmount += orderData.FillQuantity;
-                            Balance -= orderData.Proceeds + orderData.Commission;
-                            boughtPrice = orderData.Limit;
-                            buyStopwatch.Restart();
+                            botContext.HeldAmount += orderData.FillQuantity;
+                            botContext.Balance -= orderData.Proceeds + orderData.Commission;
+                            botContext.boughtPrice = orderData.Limit;
+                            botContext.buyStopwatch.Restart();
                             break;
                         case OrderDirection.SELL:
-                            HeldAmount -= orderData.FillQuantity;
-                            Balance += orderData.Proceeds - orderData.Commission;
+                            botContext.HeldAmount -= orderData.FillQuantity;
+                            botContext.Balance += orderData.Proceeds - orderData.Commission;
                             break;
                         default:
                             throw new ArgumentException();
                     }
 
-                    if (HeldAmount * latestMarketData.AskRate > appSettings.MinimumNegotiatedAmount)
+                    if (botContext.HeldAmount * botContext.latestMarketData.AskRate > botContext.appSettings.MinimumNegotiatedAmount)
                     {
-                        botState = BotState.Sell;
-                        await ProcessMarketData(latestMarketData); //So that we immediatelly set a sell order
+                        botContext.botState = BotState.Bought;
+                        await ProcessMarketData(botContext.latestMarketData); //So that we immediatelly set a sell order
                     }
-                    else if (Balance > appSettings.MinimumNegotiatedAmount)
-                        botState = BotState.Buy;
+                    else if (botContext.Balance > botContext.appSettings.MinimumNegotiatedAmount)
+                        botContext.botState = BotState.Buying;
                     else
                         FinishWork(); //Can't buy or sell, so stop
 
@@ -212,12 +193,12 @@ namespace SpreadBot.Logic
 
         private void FinishWork()
         {
-            botState = BotState.FinishedWork;
-            dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
+            botContext.botState = BotState.FinishedWork;
+            botContext.dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
             semaphore.Clear();
             unallocateBotCallback(this);
-            NetProfitRecorder.Instance.RecordProfit(spreadConfiguration, this);
+            NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
             LogMessage($"finished on {MarketSymbol}");
         }
 
@@ -227,13 +208,41 @@ namespace SpreadBot.Logic
         }
     }
 
+    public class BotContext
+    {
+        public Guid Guid { get; private set; }
+        
+        public readonly AppSettings appSettings;
+        public readonly DataRepository dataRepository;
+        public readonly IExchange exchange;
+        public readonly SpreadConfiguration spreadConfiguration;
+        public MarketData latestMarketData;
+        public BotState botState;
+        public readonly Stopwatch buyStopwatch = new Stopwatch();
+        public OrderData currentOrderData = null;
+        public decimal Balance { get; set; } //Initial balance + profit/loss
+        public decimal boughtPrice = 0;
+        public decimal HeldAmount { get; set; } = 0; //Amount held of the market currency
+
+        public BotContext(AppSettings appSettings, DataRepository dataRepository, IExchange exchange, SpreadConfiguration spreadConfiguration, MarketData marketData, BotState buy)
+        {
+            Guid = Guid.NewGuid();
+            this.appSettings = appSettings;
+            this.dataRepository = dataRepository;
+            this.exchange = exchange;
+            this.spreadConfiguration = spreadConfiguration;
+            this.latestMarketData = marketData;
+            this.botState = buy;
+            this.Balance = spreadConfiguration.AllocatedAmountOfBaseCurrency;
+        }
+    }
+
     public enum BotState
     {
-        Buy,
+        Buying,
         BuyOrderActive,
-        Sell,
+        Bought,
         SellOrderActive,
         FinishedWork
     }
-
 }
