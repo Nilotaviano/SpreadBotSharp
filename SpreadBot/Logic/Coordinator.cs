@@ -69,15 +69,13 @@ namespace SpreadBot.Logic
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
+                        balanceSemaphore.Wait();
                         var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
                         AllocatedBotsByGuid[bot.Guid] = bot;
-
-                        balanceSemaphore.Wait();
                         availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
                         Logger.Instance.LogMessage($"Granted {configuration.AllocatedAmountOfBaseCurrency}{appSettings.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{appSettings.BaseMarket}");
-                        balanceSemaphore.Release();
-
                         bot.Start();
+                        balanceSemaphore.Release();
                     }
 
                     if (!CanAllocateBotForConfiguration(configuration))
@@ -85,7 +83,9 @@ namespace SpreadBot.Logic
                 }
             }
 
+            balanceSemaphore.Wait();
             BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket, AllocatedBotsByGuid.Values, appSettings.BaseMarket);
+            balanceSemaphore.Release();
         }
 
         private (decimal, decimal) GetMarketOrderKey(MarketData marketData)
@@ -115,6 +115,7 @@ namespace SpreadBot.Logic
 
         private void UnallocateBot(Bot bot)
         {
+            balanceSemaphore.Wait();
             bool removeAllocatedBot = AllocatedBotsByGuid.TryRemove(bot.Guid, out _);
             bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].TryRemove(bot.MarketSymbol, out _);
 
@@ -128,7 +129,6 @@ namespace SpreadBot.Logic
             Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
             Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.SpreadConfigurationGuid}");
 
-            balanceSemaphore.Wait();
             availableBalanceForBaseMarket += bot.Balance;
             Logger.Instance.LogMessage($"Recovered {bot.Balance}{appSettings.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{appSettings.BaseMarket}");
             balanceSemaphore.Release();
