@@ -296,6 +296,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     "ORDER_NOT_OPEN" => ApiErrorType.OrderNotOpen,
                     "THROTTLED" => ApiErrorType.Throttled,
                     "CANNOT_ESTIMATE_COMMISSION" => ApiErrorType.CannotEstimateCommission,
+                    "RATE_PRECISION_NOT_ALLOWED" => ApiErrorType.PrecisionNotAllowed,
                     _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
                     _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,
                     _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline,
