@@ -16,8 +16,6 @@ namespace SpreadBot.Infrastructure
         private Dictionary<SpreadConfiguration, decimal> netProfitPerSpreadConfiguration;
         private Dictionary<string, decimal> netProfitPerMarket;
 
-        private static NetProfitRecorder instance;
-
         private NetProfitRecorder()
         {
             pendingData = new BlockingCollection<NetProfit>();
@@ -28,21 +26,7 @@ namespace SpreadBot.Infrastructure
             Task.Run(ConsumePendingData);
         }
 
-        public static void Initialize()
-        {
-            instance = new NetProfitRecorder();
-        }
-
-        public static NetProfitRecorder Instance
-        {
-            get
-            {
-                if (instance == null)
-                    throw new Exception("Must be initialized");
-
-                return instance;
-            }
-        }
+        public static NetProfitRecorder Instance { get; } = new NetProfitRecorder();
 
         public void RecordProfit(SpreadConfiguration spreadConfiguration, Bot bot)
         {

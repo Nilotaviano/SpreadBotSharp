@@ -46,9 +46,6 @@ namespace SpreadBot
 
             Task.Run(() => watcher.Changed += reloadAppSettings);
 
-            BalanceReporter.Initialize();
-            NetProfitRecorder.Initialize();
-
             var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
             await bittrex.Setup();
 

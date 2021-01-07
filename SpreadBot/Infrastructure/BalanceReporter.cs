@@ -23,8 +23,6 @@ namespace SpreadBot.Infrastructure
         private TelegramBotClient telegramBotClient;
         private Telegram.Bot.Types.ChatId chatId;
 
-        private static BalanceReporter instance;
-
         private BalanceReporter()
         {
             string telegramSettingsPath = "telegramSettings.json".ToLocalFilePath();
@@ -40,21 +38,7 @@ namespace SpreadBot.Infrastructure
             }
         }
 
-        public static void Initialize()
-        {
-            instance = new BalanceReporter();
-        }
-
-        public static BalanceReporter Instance
-        {
-            get
-            {
-                if (instance == null)
-                    throw new Exception("Must be initialized");
-
-                return instance;
-            }
-        }
+        public static BalanceReporter Instance { get; } = new BalanceReporter();
 
         public void ReportBalance(decimal availableBalanceForBaseMarket, IEnumerable<Bot> activeBots, string baseMarket)
         {

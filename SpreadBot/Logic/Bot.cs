@@ -239,7 +239,7 @@ namespace SpreadBot.Logic
                 }
                 catch (Exception ex)
                 {
-                    LogUnexpectedError($"Unexpected error on CleanDust:{e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
+                    LogUnexpectedError($"Unexpected error on CleanDust:{ex}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
                 }
             }
             catch (Exception e)

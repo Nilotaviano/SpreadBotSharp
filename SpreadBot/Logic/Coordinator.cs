@@ -33,6 +33,7 @@ namespace SpreadBot.Logic
         public void Start()
         {
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
+            this.dataRepository.SubscribeToCurrencyBalance(appSettings.BaseMarket, guid, (bd) => ReportBalance());
         }
 
         public ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>>();
@@ -44,45 +45,47 @@ namespace SpreadBot.Logic
         /// <param name="marketDeltas">Markets that were updated</param>
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
-            if (AllocatedBotsByGuid.Count < appSettings.MaxNumberOfBots)
+            if (AllocatedBotsByGuid.Count >= appSettings.MaxNumberOfBots)
+                return;
+            //Filter only relevant markets
+            marketDeltas = marketDeltas.Where(m => m.BaseMarket == appSettings.BaseMarket && m.LastTradeRate >= appSettings.MinimumPrice);
+
+            foreach (var configuration in appSettings.SpreadConfigurations)
             {
-                //Filter only relevant markets
-                marketDeltas = marketDeltas.Where(m => m.BaseMarket == appSettings.BaseMarket && m.LastTradeRate >= appSettings.MinimumPrice);
+                var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
 
-                foreach (var configuration in appSettings.SpreadConfigurations)
+                var marketsToAllocate = marketDeltas.OrderBy(GetMarketOrderKey, marketComparer)
+                    .Where(m => EvaluateMarketBasedOnConfiguration(m, configuration));
+
+                foreach (var market in marketsToAllocate)
                 {
-                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
-
-                    var marketsToAllocate = marketDeltas.OrderBy(GetMarketOrderKey, marketComparer)
-                        .Where(m => EvaluateMarketBasedOnConfiguration(m, configuration));
-
-                    foreach (var market in marketsToAllocate)
-                    {
-                        if (!CanAllocateBotForConfiguration(configuration))
-                            break;
-
-                        if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
-                        {
-                            Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
-                            break;
-                        }
-
-                        Logger.Instance.LogMessage($"Found market: {market.Symbol}");
-
-                        balanceSemaphore.Wait();
-                        var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
-                        AllocatedBotsByGuid[bot.Guid] = bot;
-                        availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
-                        Logger.Instance.LogMessage($"Granted {configuration.AllocatedAmountOfBaseCurrency}{appSettings.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{appSettings.BaseMarket}");
-                        bot.Start();
-                        balanceSemaphore.Release();
-                    }
-
                     if (!CanAllocateBotForConfiguration(configuration))
                         break;
-                }
-            }
 
+                    if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
+                    {
+                        Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
+                        break;
+                    }
+
+                    Logger.Instance.LogMessage($"Found market: {market.Symbol}");
+
+                    balanceSemaphore.Wait();
+                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
+                    AllocatedBotsByGuid[bot.Guid] = bot;
+                    availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
+                    Logger.Instance.LogMessage($"Granted {configuration.AllocatedAmountOfBaseCurrency}{appSettings.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{appSettings.BaseMarket}");
+                    bot.Start();
+                    balanceSemaphore.Release();
+                }
+
+                if (!CanAllocateBotForConfiguration(configuration))
+                    break;
+            }
+        }
+
+        private void ReportBalance()
+        {
             balanceSemaphore.Wait();
             BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket, AllocatedBotsByGuid.Values, appSettings.BaseMarket);
             balanceSemaphore.Release();
