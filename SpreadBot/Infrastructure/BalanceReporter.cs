@@ -57,6 +57,10 @@ namespace SpreadBot.Infrastructure
                     if (Math.Abs(currentBalance - lastReportedBalance) >= telegramSettings.ChangeThreshold)
                     {
                         var emoji = currentBalance > lastReportedBalance ? "🚀" : "📉";
+
+                        if (lastReportedBalance == 0)
+                            emoji = string.Empty;
+
                         telegramBotClient.SendTextMessageAsync(chatId, $"{currentBalance} {data.BaseMarket} {emoji}");
                         lastReportedBalance = currentBalance;
                     }
