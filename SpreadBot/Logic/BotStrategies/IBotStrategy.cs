@@ -11,6 +11,6 @@ namespace SpreadBot.Logic.BotStrategies
 {
     public interface IBotStrategy
     {
-        Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack);
+        Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack);
     }
 }

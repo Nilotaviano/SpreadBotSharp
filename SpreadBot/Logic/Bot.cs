@@ -92,6 +92,8 @@ namespace SpreadBot.Logic
                 }
                 catch (ApiException e)
                 {
+                    LogError($"ApiException {e.ApiErrorType} context:{Environment.NewLine}{e}{Environment.NewLine}BotContext:{JsonConvert.SerializeObject(botContext, Formatting.Indented)}Message:{JsonConvert.SerializeObject(message, Formatting.Indented)}");
+
                     //TODO: Clean up/refactor
                     switch (e.ApiErrorType)
                     {
@@ -101,14 +103,14 @@ namespace SpreadBot.Logic
                             break;
                         case ApiErrorType.InsufficientFunds:
                             //Too many bots running?
-                            FinishWork();
+                            await FinishWork();
                             break;
                         case ApiErrorType.MarketOffline when botContext.botState == BotState.Buying:
-                            FinishWork();
+                            await FinishWork();
                             break;
                         case ApiErrorType.OrderNotOpen:
-                            //Bot tried to cancel an order that has just been executed (I'm assuming)
-                            //Closed order data will be received soon, so no need to do anything here
+                        //Bot tried to cancel an order that has just been executed (I'm assuming)
+                        //Closed order data will be received soon, so no need to do anything here
                         case ApiErrorType.MarketOffline:
                         case ApiErrorType.Throttled:
                             //Do nothing, try again on the next cycle
@@ -188,7 +190,7 @@ namespace SpreadBot.Logic
                     else if (botContext.Balance > botContext.appSettings.MinimumNegotiatedAmount)
                         botContext.botState = BotState.Buying;
                     else
-                        FinishWork(); //Can't buy or sell, so stop
+                        await FinishWork(); //Can't buy or sell, so stop
 
                     break;
                 default:
@@ -196,8 +198,11 @@ namespace SpreadBot.Logic
             }
         }
 
-        private void FinishWork()
+        private async Task FinishWork()
         {
+            if (HeldAmount > 0)
+                await CleanDust();
+
             botContext.botState = BotState.FinishedWork;
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
@@ -205,6 +210,48 @@ namespace SpreadBot.Logic
             unallocateBotCallback(this);
             NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
             LogMessage($"finished on {MarketSymbol}");
+        }
+
+        private async Task CleanDust(bool retry = true)
+        {
+            OrderData sellOrder = null;
+            try
+            {
+                sellOrder = await botContext.exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+            }
+            catch (ApiException e) when (e.ApiErrorType == ApiErrorType.RetryLater && retry) //Try just once more. TODO: Investigate if any more ApiErrorTypes should go here
+            {
+                await CleanDust(false);
+            }
+            catch (ApiException e) when (e.ApiErrorType == ApiErrorType.DustTrade)
+            {
+                try
+                {
+                    OrderData buyOrder = null;
+
+                    decimal buyAmount = (botContext.appSettings.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.latestMarketData.Precision);
+                    buyOrder = await botContext.exchange.BuyMarket(MarketSymbol, buyAmount);
+
+                    if (buyOrder != null && buyOrder.Status == OrderStatus.CLOSED)
+                        botContext.HeldAmount += buyOrder.FillQuantity;
+
+                    sellOrder = await botContext.exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+                }
+                catch (Exception ex)
+                {
+                    LogUnexpectedError($"Unexpected error on CleanDust:{e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
+                }
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedError($"Unexpected error on CleanDust:{e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
+            }
+
+            if(sellOrder != null && sellOrder.Status == OrderStatus.CLOSED)
+            {
+                botContext.HeldAmount -= sellOrder.FillQuantity;
+                botContext.Balance += sellOrder.Proceeds - sellOrder.Commission;
+            }
         }
 
         private void LogMessage(string message)
