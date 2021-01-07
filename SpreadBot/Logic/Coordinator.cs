@@ -38,6 +38,7 @@ namespace SpreadBot.Logic
 
         public ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>>();
         public ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
+        public ConcurrentDictionary<string, decimal> DustPerMarket { get; } = new ConcurrentDictionary<string, decimal>();
 
         /// <summary>
         /// Evaluates updated markets for new bot-allocation opportunities
@@ -71,7 +72,8 @@ namespace SpreadBot.Logic
                     Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
                     balanceSemaphore.Wait();
-                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory());
+                    DustPerMarket.TryRemove(market.Symbol, out var existingDust);
+                    var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory(), existingDust);
                     AllocatedBotsByGuid[bot.Guid] = bot;
                     availableBalanceForBaseMarket -= configuration.AllocatedAmountOfBaseCurrency;
                     Logger.Instance.LogMessage($"Granted {configuration.AllocatedAmountOfBaseCurrency}{appSettings.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{appSettings.BaseMarket}");
@@ -128,13 +130,15 @@ namespace SpreadBot.Logic
             if (!removedAllocatedMarket)
                 Logger.Instance.LogUnexpectedError($"Couldn't remove allocated market {bot.MarketSymbol}");
 
-
             Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
             Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.SpreadConfigurationGuid}");
 
             availableBalanceForBaseMarket += bot.Balance;
             Logger.Instance.LogMessage($"Recovered {bot.Balance}{appSettings.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{appSettings.BaseMarket}");
             balanceSemaphore.Release();
+
+            if (bot.HeldAmount > 0)
+                DustPerMarket.AddOrUpdate(bot.MarketSymbol, bot.HeldAmount, (key, existingData) => existingData + bot.HeldAmount);
         }
 
         private static IComparer<(decimal, decimal)> GetMarketComparer()

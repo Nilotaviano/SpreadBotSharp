@@ -16,12 +16,12 @@ namespace SpreadBot.Infrastructure
         public MarketData latestMarketData;
         public BotState botState;
         public readonly Stopwatch buyStopwatch = new Stopwatch();
-        public OrderData currentOrderData = null;
+        public OrderData currentOrderData;
         public decimal Balance { get; set; } //Initial balance + profit/loss
-        public decimal boughtPrice = 0;
-        public decimal HeldAmount { get; set; } = 0; //Amount held of the market currency
+        public decimal boughtPrice;
+        public decimal HeldAmount { get; set; } //Amount held of the market currency
 
-        public BotContext(AppSettings appSettings, IExchange exchange, SpreadConfiguration spreadConfiguration, MarketData marketData, BotState buy)
+        public BotContext(AppSettings appSettings, IExchange exchange, SpreadConfiguration spreadConfiguration, MarketData marketData, BotState buy, decimal existingDust)
         {
             Guid = Guid.NewGuid();
             this.appSettings = appSettings;
@@ -30,6 +30,7 @@ namespace SpreadBot.Infrastructure
             this.latestMarketData = marketData;
             this.botState = buy;
             this.Balance = spreadConfiguration.AllocatedAmountOfBaseCurrency;
+            this.HeldAmount = existingDust;
         }
     }
 }

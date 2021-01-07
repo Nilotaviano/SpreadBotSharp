@@ -22,10 +22,10 @@ namespace SpreadBot.Logic
 
         private readonly IBotStrategy botStrategy;
 
-        public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
+        public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, decimal existingDust)
         {
             this.dataRepository = dataRepository;
-            botContext = new BotContext(appSettings, dataRepository.Exchange, spreadConfiguration, marketData, BotState.Buying);
+            botContext = new BotContext(appSettings, dataRepository.Exchange, spreadConfiguration, marketData, BotState.Buying, existingDust);
             this.unallocateBotCallback = unallocateBotCallback;
             botStrategy = botStrategiesFactory.GetStrategy();
         }
