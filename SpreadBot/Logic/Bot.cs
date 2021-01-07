@@ -214,6 +214,12 @@ namespace SpreadBot.Logic
 
         private async Task CleanDust(bool retry = true)
         {
+            //Check if dust is worth at least the fee it would cost to clean
+            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * botContext.exchange.FeeRate * botContext.appSettings.MinimumNegotiatedAmount;
+
+            if (!dustIsWorthCleaning)
+                return;
+
             OrderData sellOrder = null;
             try
             {
@@ -247,7 +253,7 @@ namespace SpreadBot.Logic
                 LogUnexpectedError($"Unexpected error on CleanDust:{e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
             }
 
-            if(sellOrder != null && sellOrder.Status == OrderStatus.CLOSED)
+            if (sellOrder != null && sellOrder.Status == OrderStatus.CLOSED)
             {
                 botContext.HeldAmount -= sellOrder.FillQuantity;
                 botContext.Balance += sellOrder.Proceeds - sellOrder.Commission;
