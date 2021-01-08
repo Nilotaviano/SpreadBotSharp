@@ -15,6 +15,8 @@ namespace SpreadBot.Infrastructure
         public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
         public int ResyncIntervalMs { get; set; }
 
+        public string CoinMarketCapApiKey { get; set; }
+
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 
         public void Reload(AppSettings newSettings)
