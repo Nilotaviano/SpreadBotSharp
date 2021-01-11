@@ -7,6 +7,8 @@ namespace SpreadBot.Infrastructure
 {
     public class AppSettings
     {
+        public event EventHandler Reloaded;
+
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
@@ -26,6 +28,8 @@ namespace SpreadBot.Infrastructure
             MinimumPrice = newSettings.MinimumPrice;
             MinimumNegotiatedAmount = newSettings.MinimumNegotiatedAmount;
             SpreadConfigurations = newSettings.SpreadConfigurations;
+
+            Reloaded?.Invoke(this, EventArgs.Empty);
         }
     }
 

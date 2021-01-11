@@ -18,22 +18,9 @@ namespace SpreadBot.Logic
         private readonly DataRepository dataRepository;
         private readonly Guid guid;
         private ConcurrentDictionary<string, decimal> availableBalanceForBaseMarket;
+        private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
         private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
-
-        /// <summary>
-        /// The baseMarkets cannot be cached because the appSettings can change on runtime
-        /// </summary>
-        /// <returns></returns>
-        private IEnumerable<string> GetBaseMarkets()
-        {
-            return GetConfigurationsByBaseMarket().Keys;
-        }
-
-        private Dictionary<string, IGrouping<string, SpreadConfiguration>> GetConfigurationsByBaseMarket()
-        {
-            return appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
-        }
 
         public Coordinator(AppSettings appSettings, DataRepository dataRepository)
         {
@@ -41,17 +28,34 @@ namespace SpreadBot.Logic
             this.dataRepository = dataRepository;
             this.guid = new Guid();
 
-            var baseMarkets = GetBaseMarkets();
+            availableBalanceForBaseMarket = new ConcurrentDictionary<string, decimal>();
 
-            availableBalanceForBaseMarket = new ConcurrentDictionary<string, decimal>(
-                baseMarkets.ToDictionary(baseMarket => baseMarket, baseMarket => this.dataRepository.BalancesData[baseMarket].Amount)
-            );
+            this.appSettings.Reloaded += AppSettings_Reloaded;
+
+            UpdateAppSettings();
+        }
+
+        private void AppSettings_Reloaded(object sender, EventArgs e)
+        {
+            UpdateAppSettings();
+        }
+
+        private void UpdateAppSettings()
+        {
+            configurationsByBaseMarket?.Clear();
+
+            configurationsByBaseMarket = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
+
+            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
+            {
+                availableBalanceForBaseMarket.TryAdd(baseMarket, this.dataRepository.BalancesData[baseMarket].Amount);
+            }
         }
 
         public void Start()
         {
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
-            foreach (var baseMarket in GetBaseMarkets())
+            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 this.dataRepository.SubscribeToCurrencyBalance(baseMarket, guid, (bd) => ReportBalance());
         }
 
@@ -68,15 +72,13 @@ namespace SpreadBot.Logic
             if (AllocatedBotsByGuid.Count >= appSettings.MaxNumberOfBots)
                 return;
 
-            var configurationByBaseMarket = GetConfigurationsByBaseMarket();
-
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
 
             foreach (var marketDeltaGroup in marketDeltasByBaseMarket)
             {
                 var baseMarket = marketDeltaGroup.Key;
 
-                if (!configurationByBaseMarket.TryGetValue(baseMarket, out var marketConfigurations))
+                if (!configurationsByBaseMarket.TryGetValue(baseMarket, out var marketConfigurations))
                     continue;
 
                 //Filter only relevant markets
@@ -128,7 +130,7 @@ namespace SpreadBot.Logic
         {
             balanceSemaphore.Wait();
             
-            foreach (var baseMarket in GetBaseMarkets())
+            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], AllocatedBotsByGuid.Values, baseMarket);
 
             balanceSemaphore.Release();
