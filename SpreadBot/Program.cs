@@ -12,9 +12,18 @@ namespace SpreadBot
 {
     class Program
     {
-        static async Task Main()
+        static async Task Main(string[] args)
         {
-            string appSettingsPath = "appsettings.json".ToLocalFilePath();
+            string settingsFileName = "appsettings.json";
+
+            if (args != null && args.Length > 0)
+            {
+                settingsFileName = args[0];
+            }
+
+            Console.WriteLine($"Using config file {settingsFileName}");
+
+            string appSettingsPath = settingsFileName.ToLocalFilePath();
             Console.WriteLine(appSettingsPath);
             var appSettings = new ConfigurationBuilder()
                 .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
