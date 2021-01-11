@@ -187,7 +187,7 @@ namespace SpreadBot.Infrastructure
             UpdateMarketDataFromAggregator().Wait();
 
             resyncTimer.Start();
-            priceAggregatorRefreshTimer.Start();
+            priceAggregatorRefreshTimer?.Start();
 
             Task.Run(ConsumeBalanceData);
             Task.Run(ConsumeOrderData);
