@@ -35,7 +35,8 @@ namespace SpreadBot.Infrastructure.PriceAggregators
             var request = new RestRequest("/cryptocurrency/quotes/latest", Method.GET, DataFormat.Json);
             var currencies = string.Join(",", symbols.Except(invalidSymbolsForCoinMarketCap));
             request.AddQueryParameter("symbol", currencies);
-            request.AddQueryParameter("convert", appSettings.BaseMarket);
+            // TODO
+            // request.AddQueryParameter("convert", appSettings.BaseMarket);
 
             request.AddHeader("X-CMC_PRO_API_KEY", appSettings.CoinMarketCapApiKey);
             request.AddHeader("Accepts", "application/json");
@@ -51,8 +52,9 @@ namespace SpreadBot.Infrastructure.PriceAggregators
                         result = jObject["data"].Values().Select(q =>
                             new MarketData()
                             {
-                                Symbol = $"{q["symbol"].Value<string>()}-{appSettings.BaseMarket}",
-                                AggregatorQuote = q["quote"][appSettings.BaseMarket].ToObject<AggregatorQuote>(snakeCaseJsonSerializer)
+                                // TODO
+                                // Symbol = $"{q["symbol"].Value<string>()}-{appSettings.BaseMarket}",
+                                // AggregatorQuote = q["quote"][appSettings.BaseMarket].ToObject<AggregatorQuote>(snakeCaseJsonSerializer)
                             }
                         );
                         break;
