@@ -11,7 +11,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadBuyOrderActiveStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Action finishWorkCallBack)
+        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
             if (botContext.latestMarketData.SpreadPercentage < botContext.spreadConfiguration.MinimumSpreadPercentage)
             {

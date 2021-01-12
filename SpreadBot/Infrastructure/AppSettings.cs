@@ -7,13 +7,16 @@ namespace SpreadBot.Infrastructure
 {
     public class AppSettings
     {
+        public event EventHandler Reloaded;
+
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
-        public string BaseMarket { get; set; }
         public decimal MinimumPrice { get; set; }
         public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
         public int ResyncIntervalMs { get; set; }
+
+        public string CoinMarketCapApiKey { get; set; }
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 
@@ -22,15 +25,17 @@ namespace SpreadBot.Infrastructure
             //No reason to reload ApiKey and ApiSecret atm
 
             MaxNumberOfBots = newSettings.MaxNumberOfBots;
-            BaseMarket = newSettings.BaseMarket;
             MinimumPrice = newSettings.MinimumPrice;
             MinimumNegotiatedAmount = newSettings.MinimumNegotiatedAmount;
             SpreadConfigurations = newSettings.SpreadConfigurations;
+
+            Reloaded?.Invoke(this, EventArgs.Empty);
         }
     }
 
     public class SpreadConfiguration
     {
+        public string BaseMarket { get; set; }
         public Guid Guid { get; } = Guid.NewGuid();
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
         public decimal MinimumSpreadPercentage { get; set; }

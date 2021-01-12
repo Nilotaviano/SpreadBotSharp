@@ -7,6 +7,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
+using RestSharp;
+using SpreadBot.Infrastructure.PriceAggregators;
 
 namespace SpreadBot.Infrastructure
 {
@@ -24,8 +26,11 @@ namespace SpreadBot.Infrastructure
 
         //I know it's not a Semaphore, but it works like one
         private readonly System.Threading.ManualResetEvent consumeDataSemaphore = new System.Threading.ManualResetEvent(true);
-
+        private readonly AppSettings appSettings;
         private string mostRecentClosedOrderId;
+
+        private Timer priceAggregatorRefreshTimer;
+        private CoinMarketCap priceAggregator;
 
         public DataRepository(IExchange exchange, AppSettings appSettings)
         {
@@ -38,11 +43,19 @@ namespace SpreadBot.Infrastructure
             pendingTickersMessages = new BlockingCollection<BittrexApiTickersData>();
 
             Exchange = exchange;
-
+            this.appSettings = appSettings;
             mostRecentClosedOrderId = null;
             resyncTimer = new Timer(appSettings.ResyncIntervalMs);
             resyncTimer.Elapsed += ResyncTimer_Elapsed;
             resyncTimer.AutoReset = true;
+
+            if (appSettings.CoinMarketCapApiKey != null)
+            {
+                priceAggregator = new CoinMarketCap(appSettings);
+                priceAggregatorRefreshTimer = new Timer(TimeSpan.FromMinutes(30).TotalMilliseconds);
+                priceAggregatorRefreshTimer.Elapsed += async (sender, e) => await UpdateMarketDataFromAggregator();
+                priceAggregatorRefreshTimer.AutoReset = true;
+            }
         }
 
         public IExchange Exchange { get; }
@@ -51,6 +64,7 @@ namespace SpreadBot.Infrastructure
         /// BalanceData dictionary indexed by CurrencyAbbreviation
         /// </summary>
         public ConcurrentDictionary<string, BalanceData> BalancesData { get; private set; } = new ConcurrentDictionary<string, BalanceData>();
+
         /// <summary>
         /// MarketData dictionary indexed by Symbol
         /// </summary>
@@ -170,8 +184,10 @@ namespace SpreadBot.Infrastructure
             Exchange.OnOrder(pendingOrderMessages.Add);
 
             FetchAllData();
+            UpdateMarketDataFromAggregator().Wait();
 
             resyncTimer.Start();
+            priceAggregatorRefreshTimer?.Start();
 
             Task.Run(ConsumeBalanceData);
             Task.Run(ConsumeOrderData);
@@ -437,6 +453,7 @@ namespace SpreadBot.Infrastructure
                 MinTradeSize = data.MinTradeSize ?? existingData.MinTradeSize,
                 Notice = data.Notice ?? existingData.Notice,
                 CreatedAt = data.CreatedAt ?? existingData.CreatedAt,
+                AggregatorQuote = data.AggregatorQuote ?? existingData.AggregatorQuote
             };
         }
 
@@ -459,6 +476,19 @@ namespace SpreadBot.Infrastructure
             finally
             {
                 ResumeConsumingData();
+            }
+        }
+
+        private async Task UpdateMarketDataFromAggregator()
+        {
+            try
+            {
+                var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.BaseMarket))).Select(v => v.Target));
+                UpdateMarketData(latestQuotes);
+            }
+            catch (Exception e)
+            {
+                Logger.Instance.LogUnexpectedError($"Unexpected exception on UpdateMarketDataFromAggregator: {e}");
             }
         }
     }

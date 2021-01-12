@@ -12,9 +12,48 @@ namespace SpreadBot
 {
     class Program
     {
-        static async Task Main()
+        static async Task Main(string[] args)
         {
-            var appSettings = GetAppSettings();
+            string settingsFileName = "appsettings.json";
+
+            if (args != null && args.Length > 0)
+            {
+                settingsFileName = args[0];
+            }
+
+            Console.WriteLine($"Using config file {settingsFileName}");
+
+            string appSettingsPath = settingsFileName.ToLocalFilePath();
+            Console.WriteLine(appSettingsPath);
+            var appSettings = new ConfigurationBuilder()
+                .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
+                .Build()
+                .Get<AppSettings>();
+
+            var watcher = new FileSystemWatcher(Path.GetDirectoryName(appSettingsPath));
+            watcher.NotifyFilter = NotifyFilters.LastWrite;
+            watcher.Filter = Path.GetFileName(appSettingsPath);
+            watcher.EnableRaisingEvents = true;
+
+            void reloadAppSettings(object sender, FileSystemEventArgs e)
+            {
+                try
+                {
+                    var updatedAppSettings = new ConfigurationBuilder()
+                    .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
+                    .Build()
+                    .Get<AppSettings>();
+
+                    appSettings.Reload(updatedAppSettings);
+                    Logger.Instance.LogMessage("App Settings reloaded");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Instance.LogUnexpectedError($"Error reloading app settings: {ex}");
+                }
+            }
+
+            Task.Run(() => watcher.Changed += reloadAppSettings);
 
             var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
             await bittrex.Setup();
@@ -23,28 +62,9 @@ namespace SpreadBot
             dataRepository.StartConsumingData();
 
             var coordinator = new Coordinator(appSettings, dataRepository);
-            coordinator.Start();
+            //coordinator.Start();
 
             Console.ReadLine();
-        }
-
-        private static AppSettings GetAppSettings()
-        {
-            var configuration = new ConfigurationBuilder()
-                .AddJsonFile(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "appsettings.json"), optional: false, reloadOnChange: true)
-                .Build();
-
-            var appSettings = configuration.Get<AppSettings>();
-
-            //TODO: This is NOT working on linux for some reason
-            Task.Run(() => ChangeToken.OnChange(() => configuration.GetReloadToken(), () =>
-            {
-                appSettings.Reload(configuration.Get<AppSettings>());
-                Logger.Instance.LogMessage("App Settings reloaded");
-            }));
-
-
-            return appSettings;
         }
     }
 }

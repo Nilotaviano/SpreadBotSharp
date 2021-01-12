@@ -7,14 +7,9 @@ namespace SpreadBot.Logic.BotStrategies
 {
     public class BotStrategiesFactory
     {
-        public Dictionary<BotState, IBotStateStrategy> GetStrategiesDictionary(/*For future reference: this should receive a strategy id to generate the correct strategies*/)
+        public IBotStrategy GetStrategy(/*For future reference: this should receive a strategy id to generate the correct strategy*/)
         {
-            return new Dictionary<BotState, IBotStateStrategy>() {
-                { BotState.Buying, new SpreadBuyStateStrategy() },
-                { BotState.Bought, new SpreadSellStateStrategy() },
-                { BotState.BuyOrderActive, new SpreadBuyOrderActiveStateStrategy() },
-                { BotState.SellOrderActive, new SpreadSellOrderActiveStateStrategy() },
-            };
+            return new SpreadStrategy();
         }
     }
 }

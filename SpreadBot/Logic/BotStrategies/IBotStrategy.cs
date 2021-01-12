@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace SpreadBot.Logic.BotStrategies
 {
-    public interface IBotStateStrategy
+    public interface IBotStrategy
     {
         Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack);
     }

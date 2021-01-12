@@ -31,6 +31,7 @@ namespace SpreadBot.Tests
 
             SpreadConfiguration spreadConfiguration = new SpreadConfiguration()
             {
+                BaseMarket = "BTC",
                 AllocatedAmountOfBaseCurrency = 100000.Satoshi(),
                 SpreadThresholdBeforeCancelingCurrentOrder = 10.Satoshi(),
                 MaxPercentChangeFromPreviousDay = 10,
@@ -43,7 +44,6 @@ namespace SpreadBot.Tests
             {
                 ApiKey = "ApiKey",
                 ApiSecret = "ApiSecret",
-                BaseMarket = "BTC",
                 MaxNumberOfBots = 1,
                 MinimumNegotiatedAmount = 50000.Satoshi(),
                 MinimumPrice = 1000.Satoshi(),
@@ -204,7 +204,7 @@ namespace SpreadBot.Tests
                 }
             });
 
-            var bot = new Bot(appSettings, datarepository, spreadConfiguration, openingMarketData, (bot) => { }, new BotStrategiesFactory());
+            var bot = new Bot(appSettings, datarepository, spreadConfiguration, openingMarketData, (bot) => { }, new BotStrategiesFactory(), 0);
             bot.Start();
 
             summariesEvent.WaitOne(100);
