@@ -187,7 +187,7 @@ namespace SpreadBot.Infrastructure
             UpdateMarketDataFromAggregator().Wait();
 
             resyncTimer.Start();
-            priceAggregatorRefreshTimer.Start();
+            priceAggregatorRefreshTimer?.Start();
 
             Task.Run(ConsumeBalanceData);
             Task.Run(ConsumeOrderData);
@@ -483,7 +483,7 @@ namespace SpreadBot.Infrastructure
         {
             try
             {
-                var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => m.BaseMarket == appSettings.BaseMarket).Select(v => v.Target));
+                var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.BaseMarket))).Select(v => v.Target));
                 UpdateMarketData(latestQuotes);
             }
             catch (Exception e)
