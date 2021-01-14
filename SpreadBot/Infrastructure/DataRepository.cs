@@ -481,6 +481,9 @@ namespace SpreadBot.Infrastructure
 
         private async Task UpdateMarketDataFromAggregator()
         {
+            if (priceAggregator == null)
+                return;
+
             try
             {
                 var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.BaseMarket))).Select(v => v.Target));
