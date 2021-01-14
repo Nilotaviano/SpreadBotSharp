@@ -16,8 +16,6 @@ namespace SpreadBot.Infrastructure
         private Dictionary<SpreadConfiguration, decimal> netProfitPerSpreadConfiguration;
         private Dictionary<string, decimal> netProfitPerMarket;
 
-        private static NetProfitRecorder instance;
-
         private NetProfitRecorder()
         {
             pendingData = new BlockingCollection<NetProfit>();
@@ -28,16 +26,7 @@ namespace SpreadBot.Infrastructure
             Task.Run(ConsumePendingData);
         }
 
-        public static NetProfitRecorder Instance
-        {
-            get
-            {
-                if (instance == null)
-                    instance = new NetProfitRecorder();
-
-                return instance;
-            }
-        }
+        public static NetProfitRecorder Instance { get; } = new NetProfitRecorder();
 
         public void RecordProfit(SpreadConfiguration spreadConfiguration, Bot bot)
         {
@@ -58,10 +47,10 @@ namespace SpreadBot.Infrastructure
                     netProfitPerMarket.TryGetValue(log.Market, out decimal marketProfit);
                     netProfitPerMarket[log.Market] = marketProfit + (log.Profit);
 
-                    File.WriteAllText(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "profitPerSpreadConfiguration.json"),
+                    File.WriteAllText("profitPerSpreadConfiguration.json".ToLocalFilePath(),
                         JsonConvert.SerializeObject(netProfitPerSpreadConfiguration, Formatting.Indented));
 
-                    File.WriteAllText(Path.Combine(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, "..", "profitPerMarket.json"),
+                    File.WriteAllText("profitPerMarket.json".ToLocalFilePath(),
                         JsonConvert.SerializeObject(netProfitPerMarket, Formatting.Indented));
                 }
                 catch (Exception e)

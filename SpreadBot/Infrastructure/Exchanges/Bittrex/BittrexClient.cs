@@ -124,6 +124,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit);
         }
 
+        public async Task<OrderData> BuyMarket(string marketSymbol, decimal quantity)
+        {
+            return await ExecuteMarketOrder(OrderDirection.BUY, marketSymbol, quantity);
+        }
+
+        public async Task<OrderData> SellMarket(string marketSymbol, decimal quantity)
+        {
+            return await ExecuteMarketOrder(OrderDirection.SELL, marketSymbol, quantity);
+        }
+
         public async Task<OrderData> CancelOrder(string orderId)
         {
             var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
@@ -173,12 +183,40 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
                 return new OrderData(apiOrderData.Data);
             }
-            catch (ApiException e) when (e.ApiErrorType == ApiErrorType.CannotEstimateCommission && useCredits)
+            catch (ApiException e) when ((e.ApiErrorType == ApiErrorType.CannotEstimateCommission || e.ApiErrorType == ApiErrorType.RetryLater) && useCredits)
             {
-                Logger.Instance.LogMessage("Handling CANNOT_ESTIMATE_COMMISSION for " + marketSymbol);
+                Logger.Instance.LogMessage("Handling INSUFFICIENT_AWARDS for " + marketSymbol);
                 return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false);
             }
         }
+
+        private async Task<OrderData> ExecuteMarketOrder(OrderDirection direction, string marketSymbol, decimal quantity, bool useCredits = true)
+        {
+            var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
+            var body = JsonConvert.SerializeObject(new
+            {
+                marketSymbol,
+                quantity,
+                direction = direction.ToString(),
+                type = OrderType.MARKET.ToString(),
+                timeInForce = OrderTimeInForce.FILL_OR_KILL.ToString(),
+                useAwards = UseBittrexCredits
+            });
+            request.AddParameter("application/json", body, ParameterType.RequestBody);
+
+            try
+            {
+                var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
+
+                return new OrderData(apiOrderData.Data);
+            }
+            catch (ApiException e) when ((e.ApiErrorType == ApiErrorType.CannotEstimateCommission || e.ApiErrorType == ApiErrorType.RetryLater) && useCredits)
+            {
+                Logger.Instance.LogMessage("Handling INSUFFICIENT_AWARDS for " + marketSymbol);
+                return await ExecuteMarketOrder(direction, marketSymbol, quantity, false);
+            }
+        }
+
 
         private async Task<ApiRestResponse<T>> ExecuteRequest<T>(RestRequest request)
         {
@@ -296,6 +334,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     "ORDER_NOT_OPEN" => ApiErrorType.OrderNotOpen,
                     "THROTTLED" => ApiErrorType.Throttled,
                     "CANNOT_ESTIMATE_COMMISSION" => ApiErrorType.CannotEstimateCommission,
+                    "RATE_PRECISION_NOT_ALLOWED" => ApiErrorType.PrecisionNotAllowed,
                     "MIN_TRADE_REQUIREMENT_NOT_MET" => ApiErrorType.DustTrade,
                     _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
                     _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,

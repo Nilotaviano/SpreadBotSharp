@@ -11,6 +11,7 @@
         Unauthorized,
         RetryLater,
         OrderNotOpen,
-        CannotEstimateCommission
+        CannotEstimateCommission,
+        PrecisionNotAllowed
     }
 }

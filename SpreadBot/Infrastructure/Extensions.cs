@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -44,12 +45,20 @@ namespace SpreadBot.Infrastructure
             return hash;
         }
 
-        //TODO: Create test case to validate this behavior
-        //TODO: figure out if we should use Ceil/Floor instead of Round, 
-        //because if we do end up truncating a Satoshi unit, the price won't be incremented/decremented from the current bid/ask when creating an order
-        public static decimal RoundOrderLimitPrice(this decimal limit, int? precision)
+        public static decimal CeilToPrecision(this decimal limit, int? precision)
         {
-            return precision.HasValue ? Math.Round(limit, precision.Value) : limit;
+            if (precision.HasValue)
+            {
+                decimal multiplier = Convert.ToDecimal(Math.Pow(10, Convert.ToDouble(precision)));
+                return Math.Ceiling(limit * multiplier) / multiplier;
+            }
+            else
+                return limit;
+        }
+
+        public static string ToLocalFilePath(this string value)
+        {
+            return Path.Combine(Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName), value);
         }
     }
 }

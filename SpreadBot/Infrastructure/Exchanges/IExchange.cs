@@ -24,6 +24,8 @@ namespace SpreadBot.Infrastructure.Exchanges
         //Rest API methods
         Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
+        Task<OrderData> BuyMarket(string marketSymbol, decimal quantity);
+        Task<OrderData> SellMarket(string marketSymbol, decimal quantity);
         Task<OrderData> CancelOrder(string orderId);
 
         Task<CompleteBalanceData> GetBalanceData();
