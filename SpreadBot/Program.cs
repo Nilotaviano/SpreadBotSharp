@@ -62,7 +62,7 @@ namespace SpreadBot
             dataRepository.StartConsumingData();
 
             var coordinator = new Coordinator(appSettings, dataRepository);
-            //coordinator.Start();
+            coordinator.Start();
 
             Console.ReadLine();
         }
