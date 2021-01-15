@@ -11,6 +11,9 @@ namespace SpreadBot.Infrastructure
 {
     public class NetProfitRecorder
     {
+        private readonly string PROFIT_PER_MARKET_FILE_PATH = "profitPerMarket.json".ToLocalFilePath();
+        private readonly string PROFIT_PER_CONFIGURATION_FILE_PATH = "profitPerSpreadConfiguration.json".ToLocalFilePath();
+
         private BlockingCollection<NetProfit> pendingData;
 
         private Dictionary<SpreadConfiguration, decimal> netProfitPerSpreadConfiguration;
@@ -19,9 +22,7 @@ namespace SpreadBot.Infrastructure
         private NetProfitRecorder()
         {
             pendingData = new BlockingCollection<NetProfit>();
-
-            netProfitPerSpreadConfiguration = new Dictionary<SpreadConfiguration, decimal>();
-            netProfitPerMarket = new Dictionary<string, decimal>();
+            InitializeProfitCache();
 
             Task.Run(ConsumePendingData);
         }
@@ -33,6 +34,30 @@ namespace SpreadBot.Infrastructure
             decimal profit = bot.Balance - spreadConfiguration.AllocatedAmountOfBaseCurrency;
 
             pendingData.Add(new NetProfit() { SpreadConfiguration = spreadConfiguration, Profit = profit, Market = bot.MarketSymbol });
+        }
+
+        private void InitializeProfitCache()
+        {
+            if (!File.Exists(PROFIT_PER_MARKET_FILE_PATH))
+                netProfitPerMarket = new Dictionary<string, decimal>();
+            else
+            {
+                netProfitPerMarket = JsonConvert.DeserializeObject<Dictionary<string, decimal>>(File.ReadAllText(PROFIT_PER_MARKET_FILE_PATH));
+            }
+
+            if (!File.Exists(PROFIT_PER_CONFIGURATION_FILE_PATH))
+            {
+                netProfitPerSpreadConfiguration = new Dictionary<SpreadConfiguration, decimal>();
+            }
+            else
+            {
+                var tempDic = JsonConvert.DeserializeObject<Dictionary<string, decimal>>(File.ReadAllText(PROFIT_PER_CONFIGURATION_FILE_PATH));
+                netProfitPerSpreadConfiguration = new Dictionary<SpreadConfiguration, decimal>(tempDic.Count);
+                foreach (var entry in tempDic)
+                {
+                    netProfitPerSpreadConfiguration.Add(JsonConvert.DeserializeObject<SpreadConfiguration>(entry.Key), entry.Value);
+                }
+            }
         }
 
         private void ConsumePendingData()
@@ -47,10 +72,10 @@ namespace SpreadBot.Infrastructure
                     netProfitPerMarket.TryGetValue(log.Market, out decimal marketProfit);
                     netProfitPerMarket[log.Market] = marketProfit + (log.Profit);
 
-                    File.WriteAllText("profitPerSpreadConfiguration.json".ToLocalFilePath(),
+                    File.WriteAllText(PROFIT_PER_CONFIGURATION_FILE_PATH,
                         JsonConvert.SerializeObject(netProfitPerSpreadConfiguration, Formatting.Indented));
 
-                    File.WriteAllText("profitPerMarket.json".ToLocalFilePath(),
+                    File.WriteAllText(PROFIT_PER_MARKET_FILE_PATH,
                         JsonConvert.SerializeObject(netProfitPerMarket, Formatting.Indented));
                 }
                 catch (Exception e)
