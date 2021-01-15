@@ -47,7 +47,7 @@ namespace SpreadBot.Infrastructure
 
         public override int GetHashCode()
         {
-            return BaseMarket.GetHashCode();
+            return (BaseMarket ?? string.Empty).GetHashCode();
         }
         public override bool Equals(object obj)
         {
