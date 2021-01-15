@@ -47,7 +47,7 @@ namespace SpreadBot.Infrastructure
 
         public override int GetHashCode()
         {
-            return Guid.GetHashCode();
+            return BaseMarket.GetHashCode();
         }
         public override bool Equals(object obj)
         {
@@ -56,7 +56,15 @@ namespace SpreadBot.Infrastructure
 
         public bool Equals(SpreadConfiguration obj)
         {
-            return obj != null && obj.Guid == this.Guid;
+            return obj != null
+                && obj.BaseMarket == this.BaseMarket
+                && obj.MaxPercentChangeFromPreviousDay == this.MaxPercentChangeFromPreviousDay
+                && obj.MinimumSpreadPercentage == this.MinimumSpreadPercentage
+                && obj.MinimumQuoteVolume == this.MinimumQuoteVolume
+                && obj.AllocatedAmountOfBaseCurrency == this.AllocatedAmountOfBaseCurrency
+                && obj.SpreadThresholdBeforeCancelingCurrentOrder == this.SpreadThresholdBeforeCancelingCurrentOrder
+                && obj.MinutesForLoss == this.MinutesForLoss
+                && obj.MinimumProfitPercentage == this.MinimumProfitPercentage;
         }
 
         public override string ToString()
