@@ -82,18 +82,21 @@ namespace SpreadBot.Logic
                 //Filter only relevant markets
                 // TODO MinimumPrice should be a spreadConfiguration
                 var filteredMarkets = marketDeltaGroup.Where(m => m.LastTradeRate >= appSettings.MinimumPrice);
+                var orderedMarkets = filteredMarkets.OrderBy(GetMarketOrderKey, marketComparer);
 
                 foreach (var configuration in marketConfigurations)
                 {
                     var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
 
-                    var marketsToAllocate = filteredMarkets.OrderBy(GetMarketOrderKey, marketComparer)
-                        .Where(m => EvaluateMarketBasedOnConfiguration(m, configuration));
+                    var marketsToAllocate = orderedMarkets.Where(m => EvaluateMarketBasedOnConfiguration(m, configuration));
 
                     foreach (var market in marketsToAllocate)
                     {
                         if (!CanAllocateBotForConfiguration(configuration))
+                        {
+                            Console.WriteLine($"Not enough balance/bots for market {market.Symbol}");
                             break;
+                        }
 
                         if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
                         {
@@ -142,7 +145,10 @@ namespace SpreadBot.Logic
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
             if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
+            {
+                Console.WriteLine($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
                 return false;
+            }
 
             if (marketData.PercentChange > spreadConfiguration.MaxPercentChangeFromPreviousDay)
             {
@@ -186,11 +192,12 @@ namespace SpreadBot.Logic
         {
             return Comparer<(decimal, decimal)>.Create((key1, key2) =>
             {
-                // Descending order
-                var result = key2.Item1.CompareTo(key1.Item1);
-                if (result == 0)
-                    return key2.Item2.CompareTo(key1.Item2);
-                return result;
+                return (key2.Item1 * key2.Item2).CompareTo(key1.Item1 * key2.Item2);
+                //// Descending order
+                //var result = key2.Item1.CompareTo(key1.Item1);
+                //if (result == 0)
+                //    return key2.Item2.CompareTo(key1.Item2);
+                //return result;
             });
         }
 
