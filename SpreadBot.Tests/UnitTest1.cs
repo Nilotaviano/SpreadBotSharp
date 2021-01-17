@@ -38,15 +38,15 @@ namespace SpreadBot.Tests
                 MinimumQuoteVolume = 10,
                 MinimumSpreadPercentage = 1,
                 MinutesForLoss = 0,
-                MinimumProfitPercentage = 0
+                MinimumProfitPercentage = 0,
+                MinimumNegotiatedAmount = 50000.Satoshi(),
+                MinimumPrice = 1000.Satoshi()
             };
             var appSettings = new AppSettings()
             {
                 ApiKey = "ApiKey",
                 ApiSecret = "ApiSecret",
                 MaxNumberOfBots = 1,
-                MinimumNegotiatedAmount = 50000.Satoshi(),
-                MinimumPrice = 1000.Satoshi(),
                 ResyncIntervalMs = 30000,
                 SpreadConfigurations = new[] { spreadConfiguration }
             };

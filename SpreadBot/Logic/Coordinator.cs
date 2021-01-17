@@ -81,8 +81,7 @@ namespace SpreadBot.Logic
 
                 //Filter only relevant markets
                 // TODO MinimumPrice should be a spreadConfiguration
-                var filteredMarkets = marketDeltaGroup.Where(m => m.LastTradeRate >= appSettings.MinimumPrice);
-                var orderedMarkets = filteredMarkets.OrderBy(GetMarketOrderKey, marketComparer);
+                var orderedMarkets = marketDeltaGroup.OrderBy(GetMarketOrderKey, marketComparer);
 
                 foreach (var configuration in marketConfigurations)
                 {
@@ -92,6 +91,9 @@ namespace SpreadBot.Logic
 
                     foreach (var market in marketsToAllocate)
                     {
+                        if (market.LastTradeRate < configuration.MinimumPrice)
+                            continue;
+
                         if (!CanAllocateBotForConfiguration(configuration))
                         {
                             Console.WriteLine($"Not enough balance/bots for market {market.Symbol}");
