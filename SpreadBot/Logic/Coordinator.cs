@@ -80,30 +80,33 @@ namespace SpreadBot.Logic
                     continue;
 
                 //Filter only relevant markets
-                // TODO MinimumPrice should be a spreadConfiguration
                 var orderedMarkets = marketDeltaGroup.OrderBy(GetMarketOrderKey, marketComparer);
+                var anyConfigurationAvailable = false;
 
-                foreach (var configuration in marketConfigurations)
+                foreach (var market in orderedMarkets)
                 {
-                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
+                    // Optimization for stop looking for markets if is not possible to allocate any configuration
+                    anyConfigurationAvailable = false;
 
-                    var marketsToAllocate = orderedMarkets.Where(m => EvaluateMarketBasedOnConfiguration(m, configuration));
-
-                    foreach (var market in marketsToAllocate)
+                    foreach (var configuration in marketConfigurations)
                     {
-                        if (market.LastTradeRate < configuration.MinimumPrice)
-                            continue;
-
                         if (!CanAllocateBotForConfiguration(configuration))
                         {
                             Console.WriteLine($"Not enough balance/bots for market {market.Symbol}");
-                            break;
+                            continue;
                         }
+
+                        anyConfigurationAvailable = true;
+
+                        if (!EvaluateMarketBasedOnConfiguration(market, configuration))
+                            continue;
+
+                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
 
                         if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
                         {
                             Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
-                            break;
+                            continue;
                         }
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
@@ -113,8 +116,8 @@ namespace SpreadBot.Logic
                         var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory(), existingDust);
                         AllocatedBotsByGuid[bot.Guid] = bot;
                         availableBalanceForBaseMarket.AddOrUpdate(
-                            baseMarket, 
-                            configuration.AllocatedAmountOfBaseCurrency * -1, 
+                            baseMarket,
+                            configuration.AllocatedAmountOfBaseCurrency * -1,
                             (b, oldValue) => oldValue - configuration.AllocatedAmountOfBaseCurrency
                         );
 
@@ -123,7 +126,7 @@ namespace SpreadBot.Logic
                         balanceSemaphore.Release();
                     }
 
-                    if (!CanAllocateBotForConfiguration(configuration))
+                    if (!anyConfigurationAvailable)
                         break;
                 }
             }
@@ -146,6 +149,9 @@ namespace SpreadBot.Logic
 
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
+            if (marketData.LastTradeRate < spreadConfiguration.MinimumPrice)
+                return false;
+
             if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
             {
                 Console.WriteLine($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
