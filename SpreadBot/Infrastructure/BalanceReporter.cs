@@ -55,7 +55,7 @@ namespace SpreadBot.Infrastructure
                     decimal currentBalance = data.AvailableBaseCurrency + botsBalance;
                     var lastReportedBalance = lastReportedBalances.GetOrAdd(data.BaseMarket, 0);
 
-                    if (Math.Abs(currentBalance - lastReportedBalance) >= telegramSettings.ChangeThreshold)
+                    if (Math.Abs(currentBalance - lastReportedBalance) >= telegramSettings.ChangeThresholdPerMarket[data.BaseMarket])
                     {
                         var emoji = currentBalance > lastReportedBalance ? "🚀" : "📉";
 
@@ -84,7 +84,7 @@ namespace SpreadBot.Infrastructure
         {
             public int ChatId { get; set; }
             public string BotToken { get; set; }
-            public decimal ChangeThreshold { get; set; }
+            public Dictionary<string, decimal> ChangeThresholdPerMarket { get; set; }
         }
     }
 }
