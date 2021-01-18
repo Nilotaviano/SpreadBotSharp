@@ -137,7 +137,7 @@ namespace SpreadBot.Logic
             balanceSemaphore.Wait();
             
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], AllocatedBotsByGuid.Values, baseMarket);
+                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], AllocatedBotsByGuid.Values.Where(b => b.BaseMarket == baseMarket), baseMarket);
 
             balanceSemaphore.Release();
         }
