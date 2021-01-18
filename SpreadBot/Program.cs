@@ -94,13 +94,14 @@ namespace SpreadBot
                 differentConfiguration.MinimumProfitPercentage = 2;
                 dict[differentConfiguration] = 1;
 
-                Console.WriteLine(dict.Count);
-                Console.WriteLine(dict[spreadConfiguration]);
-                Console.WriteLine(dict[differentConfiguration]);
+                Console.WriteLine($"Dict count: Should be 2, it's: {dict.Count}");
+                Console.WriteLine($"Value for existing configuration: Should be 2, it's: {dict[spreadConfiguration]}");
+                Console.WriteLine($"Value for different configuration: Should be 1, it's: {dict[differentConfiguration]}");
             } else
             {
                 File.WriteAllText("test.json", JsonConvert.SerializeObject(spreadConfiguration));
             }
+            Console.ReadLine();
         }
     }
 }

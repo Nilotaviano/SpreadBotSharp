@@ -45,7 +45,18 @@ namespace SpreadBot.Infrastructure
 
         public override int GetHashCode()
         {
-            return (BaseMarket ?? string.Empty).GetHashCode();
+            return (
+                BaseMarket,
+                MaxPercentChangeFromPreviousDay,
+                MinimumSpreadPercentage,
+                MinimumQuoteVolume,
+                AllocatedAmountOfBaseCurrency,
+                SpreadThresholdBeforeCancelingCurrentOrder,
+                MinutesForLoss,
+                MinimumProfitPercentage,
+                MinimumPrice,
+                MinimumNegotiatedAmount
+            ).GetHashCode();
         }
         public override bool Equals(object obj)
         {
