@@ -12,8 +12,6 @@ namespace SpreadBot.Infrastructure
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
-        public decimal MinimumPrice { get; set; }
-        public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
         public int ResyncIntervalMs { get; set; }
 
         public string CoinMarketCapApiKey { get; set; }
@@ -25,8 +23,6 @@ namespace SpreadBot.Infrastructure
             //No reason to reload ApiKey and ApiSecret atm
 
             MaxNumberOfBots = newSettings.MaxNumberOfBots;
-            MinimumPrice = newSettings.MinimumPrice;
-            MinimumNegotiatedAmount = newSettings.MinimumNegotiatedAmount;
             SpreadConfigurations = newSettings.SpreadConfigurations;
 
             Reloaded?.Invoke(this, EventArgs.Empty);
@@ -40,6 +36,8 @@ namespace SpreadBot.Infrastructure
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
         public decimal MinimumSpreadPercentage { get; set; }
         public decimal MinimumQuoteVolume { get; set; }
+        public decimal MinimumPrice { get; set; }
+        public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
         public decimal AllocatedAmountOfBaseCurrency { get; set; }
         public decimal SpreadThresholdBeforeCancelingCurrentOrder { get; set; } = 1.Satoshi(); //default 1 satoshi, but should be set higher, I think
         public int MinutesForLoss { get; set; }
@@ -47,7 +45,18 @@ namespace SpreadBot.Infrastructure
 
         public override int GetHashCode()
         {
-            return Guid.GetHashCode();
+            return (
+                BaseMarket,
+                MaxPercentChangeFromPreviousDay,
+                MinimumSpreadPercentage,
+                MinimumQuoteVolume,
+                AllocatedAmountOfBaseCurrency,
+                SpreadThresholdBeforeCancelingCurrentOrder,
+                MinutesForLoss,
+                MinimumProfitPercentage,
+                MinimumPrice,
+                MinimumNegotiatedAmount
+            ).GetHashCode();
         }
         public override bool Equals(object obj)
         {
@@ -56,7 +65,17 @@ namespace SpreadBot.Infrastructure
 
         public bool Equals(SpreadConfiguration obj)
         {
-            return obj != null && obj.Guid == this.Guid;
+            return obj != null
+                && obj.BaseMarket == this.BaseMarket
+                && obj.MaxPercentChangeFromPreviousDay == this.MaxPercentChangeFromPreviousDay
+                && obj.MinimumSpreadPercentage == this.MinimumSpreadPercentage
+                && obj.MinimumQuoteVolume == this.MinimumQuoteVolume
+                && obj.AllocatedAmountOfBaseCurrency == this.AllocatedAmountOfBaseCurrency
+                && obj.SpreadThresholdBeforeCancelingCurrentOrder == this.SpreadThresholdBeforeCancelingCurrentOrder
+                && obj.MinutesForLoss == this.MinutesForLoss
+                && obj.MinimumProfitPercentage == this.MinimumProfitPercentage
+                && obj.MinimumPrice == this.MinimumPrice
+                && obj.MinimumNegotiatedAmount == this.MinimumNegotiatedAmount;
         }
 
         public override string ToString()

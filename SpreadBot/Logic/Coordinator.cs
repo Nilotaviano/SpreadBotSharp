@@ -6,8 +6,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading;
 
 namespace SpreadBot.Logic
 {
@@ -82,25 +80,33 @@ namespace SpreadBot.Logic
                     continue;
 
                 //Filter only relevant markets
-                // TODO MinimumPrice should be a spreadConfiguration
-                var filteredMarkets = marketDeltaGroup.Where(m => m.LastTradeRate >= appSettings.MinimumPrice);
+                var orderedMarkets = marketDeltaGroup.OrderBy(GetMarketOrderKey, marketComparer);
+                var anyConfigurationAvailable = false;
 
-                foreach (var configuration in marketConfigurations)
+                foreach (var market in orderedMarkets)
                 {
-                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
+                    // Optimization for stop looking for markets if is not possible to allocate any configuration
+                    anyConfigurationAvailable = false;
 
-                    var marketsToAllocate = filteredMarkets.OrderBy(GetMarketOrderKey, marketComparer)
-                        .Where(m => EvaluateMarketBasedOnConfiguration(m, configuration));
-
-                    foreach (var market in marketsToAllocate)
+                    foreach (var configuration in marketConfigurations)
                     {
                         if (!CanAllocateBotForConfiguration(configuration))
-                            break;
+                        {
+                            Console.WriteLine($"Not enough balance/bots for market {market.Symbol}");
+                            continue;
+                        }
+
+                        anyConfigurationAvailable = true;
+
+                        if (!EvaluateMarketBasedOnConfiguration(market, configuration))
+                            continue;
+
+                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
 
                         if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
                         {
                             Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
-                            break;
+                            continue;
                         }
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
@@ -110,8 +116,8 @@ namespace SpreadBot.Logic
                         var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory(), existingDust);
                         AllocatedBotsByGuid[bot.Guid] = bot;
                         availableBalanceForBaseMarket.AddOrUpdate(
-                            baseMarket, 
-                            configuration.AllocatedAmountOfBaseCurrency * -1, 
+                            baseMarket,
+                            configuration.AllocatedAmountOfBaseCurrency * -1,
                             (b, oldValue) => oldValue - configuration.AllocatedAmountOfBaseCurrency
                         );
 
@@ -120,7 +126,7 @@ namespace SpreadBot.Logic
                         balanceSemaphore.Release();
                     }
 
-                    if (!CanAllocateBotForConfiguration(configuration))
+                    if (!anyConfigurationAvailable)
                         break;
                 }
             }
@@ -131,7 +137,7 @@ namespace SpreadBot.Logic
             balanceSemaphore.Wait();
             
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], AllocatedBotsByGuid.Values, baseMarket);
+                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], AllocatedBotsByGuid.Values.Where(b => b.BaseMarket == baseMarket), baseMarket);
 
             balanceSemaphore.Release();
         }
@@ -143,8 +149,14 @@ namespace SpreadBot.Logic
 
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
-            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
+            if (marketData.LastTradeRate < spreadConfiguration.MinimumPrice)
                 return false;
+
+            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
+            {
+                Console.WriteLine($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
+                return false;
+            }
 
             if (marketData.PercentChange > spreadConfiguration.MaxPercentChangeFromPreviousDay)
             {
@@ -188,11 +200,12 @@ namespace SpreadBot.Logic
         {
             return Comparer<(decimal, decimal)>.Create((key1, key2) =>
             {
-                // Descending order
-                var result = key2.Item1.CompareTo(key1.Item1);
-                if (result == 0)
-                    return key2.Item2.CompareTo(key1.Item2);
-                return result;
+                return (key2.Item1 * key2.Item2).CompareTo(key1.Item1 * key2.Item2);
+                //// Descending order
+                //var result = key2.Item1.CompareTo(key1.Item1);
+                //if (result == 0)
+                //    return key2.Item2.CompareTo(key1.Item2);
+                //return result;
             });
         }
 

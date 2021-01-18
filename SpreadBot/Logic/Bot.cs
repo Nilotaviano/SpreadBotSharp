@@ -183,12 +183,12 @@ namespace SpreadBot.Logic
                             throw new ArgumentException();
                     }
 
-                    if (botContext.HeldAmount * botContext.latestMarketData.AskRate > botContext.appSettings.MinimumNegotiatedAmount)
+                    if (botContext.HeldAmount * botContext.latestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {
                         botContext.botState = BotState.Bought;
                         await ProcessMarketData(botContext.latestMarketData); //So that we immediatelly set a sell order
                     }
-                    else if (botContext.Balance > botContext.appSettings.MinimumNegotiatedAmount)
+                    else if (botContext.Balance > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                         botContext.botState = BotState.Buying;
                     else
                         await FinishWork(); //Can't buy or sell, so stop
@@ -216,7 +216,7 @@ namespace SpreadBot.Logic
         private async Task CleanDust(bool retry = true)
         {
             //Check if dust is worth at least the fee it would cost to clean
-            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * botContext.exchange.FeeRate * botContext.appSettings.MinimumNegotiatedAmount;
+            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * botContext.exchange.FeeRate * botContext.spreadConfiguration.MinimumNegotiatedAmount;
 
             if (!dustIsWorthCleaning)
                 return;
@@ -236,7 +236,7 @@ namespace SpreadBot.Logic
                 {
                     OrderData buyOrder = null;
 
-                    decimal buyAmount = (botContext.appSettings.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.latestMarketData.Precision);
+                    decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.latestMarketData.Precision);
                     buyOrder = await botContext.exchange.BuyMarket(MarketSymbol, buyAmount);
 
                     if (buyOrder != null && buyOrder.Status == OrderStatus.CLOSED)

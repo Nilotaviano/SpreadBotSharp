@@ -16,7 +16,7 @@ namespace SpreadBot.Infrastructure
     {
         private BlockingCollection<BalanceReportData> pendingBalanceReportData;
 
-        private decimal lastReportedBalance = 0;
+        private ConcurrentDictionary<string, decimal> lastReportedBalances = new ConcurrentDictionary<string, decimal>();
 
         private TelegramSettings telegramSettings;
 
@@ -53,6 +53,7 @@ namespace SpreadBot.Infrastructure
                 {
                     decimal botsBalance = data.ActiveBots.Aggregate(0m, (value, bot) => value + bot.Balance + (bot.HeldAmount * bot.LastTradeRate));
                     decimal currentBalance = data.AvailableBaseCurrency + botsBalance;
+                    var lastReportedBalance = lastReportedBalances.GetOrAdd(data.BaseMarket, 0);
 
                     if (Math.Abs(currentBalance - lastReportedBalance) >= telegramSettings.ChangeThreshold)
                     {
@@ -62,7 +63,7 @@ namespace SpreadBot.Infrastructure
                             emoji = string.Empty;
 
                         telegramBotClient.SendTextMessageAsync(chatId, $"{currentBalance} {data.BaseMarket} {emoji}");
-                        lastReportedBalance = currentBalance;
+                        lastReportedBalances.AddOrUpdate(data.BaseMarket, currentBalance, (key, bal) => currentBalance);
                     }
                 }
                 catch (Exception e)
