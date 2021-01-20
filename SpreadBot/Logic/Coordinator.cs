@@ -85,6 +85,9 @@ namespace SpreadBot.Logic
 
                 foreach (var market in orderedMarkets)
                 {
+                    if (!IsViableMarket(market))
+                        continue;
+
                     // Optimization for stop looking for markets if is not possible to allocate any configuration
                     anyConfigurationAvailable = false;
 
@@ -121,7 +124,7 @@ namespace SpreadBot.Logic
                             (b, oldValue) => oldValue - configuration.AllocatedAmountOfBaseCurrency
                         );
 
-                        Logger.Instance.LogMessage($"Granted {configuration.AllocatedAmountOfBaseCurrency}{baseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{baseMarket}");
+                        Logger.Instance.LogMessage($"Granted {configuration.AllocatedAmountOfBaseCurrency}{baseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[baseMarket]}{baseMarket}");
                         bot.Start();
                         balanceSemaphore.Release();
                     }
@@ -130,6 +133,11 @@ namespace SpreadBot.Logic
                         break;
                 }
             }
+        }
+
+        private bool IsViableMarket(MarketData market)
+        {
+            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online;
         }
 
         private void ReportBalance()
@@ -189,7 +197,7 @@ namespace SpreadBot.Logic
             Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.SpreadConfigurationGuid}");
 
             availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
-            Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket}{bot.BaseMarket}");
+            Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
             balanceSemaphore.Release();
 
             if (bot.HeldAmount > 0)

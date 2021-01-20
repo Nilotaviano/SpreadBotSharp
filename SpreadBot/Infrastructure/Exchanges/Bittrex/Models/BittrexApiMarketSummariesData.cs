@@ -1,4 +1,5 @@
-﻿using System;
+﻿using SpreadBot.Models.Repository;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -19,6 +20,20 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
             public decimal QuoteVolume { get; set; }
             public decimal PercentChange { get; set; }
             public DateTime UpdatedAt { get; set; }
+
+            public MarketData ToMarketData()
+            {
+                return new MarketData()
+                {
+                    High = this.High,
+                    Low = this.Low,
+                    PercentChange = this.PercentChange,
+                    Volume = this.Volume,
+                    QuoteVolume = this.QuoteVolume,
+                    UpdatedAt = this.UpdatedAt,
+                    Symbol = this.Symbol
+                };
+            }
         }
     }
 }

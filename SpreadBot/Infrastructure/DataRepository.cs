@@ -259,7 +259,7 @@ namespace SpreadBot.Infrastructure
                     return;
                 }
 
-                var marketData = summaryData.Deltas.Select(delta => new MarketData(delta));
+                var marketData = summaryData.Deltas.Select(delta => delta.ToMarketData());
 
                 UpdateMarketData(marketData);
 
@@ -277,7 +277,7 @@ namespace SpreadBot.Infrastructure
                     return;
                 }
 
-                var marketData = tickersData.Deltas.Select(delta => new MarketData(delta));
+                var marketData = tickersData.Deltas.Select(delta => delta.ToMarketData());
 
                 UpdateMarketData(marketData);
 
@@ -374,7 +374,7 @@ namespace SpreadBot.Infrastructure
             {
                 foreach (var summary in summaries.Deltas)
                 {
-                    var marketData = new MarketData(summary);
+                    var marketData = summary.ToMarketData();
                     UpdateMarketData(marketData);
                 }
             }
@@ -391,7 +391,7 @@ namespace SpreadBot.Infrastructure
             {
                 foreach (var ticker in tickers.Deltas)
                 {
-                    var marketData = new MarketData(ticker);
+                    var marketData = ticker.ToMarketData();
                     UpdateMarketData(marketData);
                 }
             }
@@ -409,7 +409,7 @@ namespace SpreadBot.Infrastructure
             {
                 foreach (var market in markets)
                 {
-                    var marketData = new MarketData(market);
+                    var marketData = market.ToMarketData();
                     UpdateMarketData(marketData);
                 }
             }
@@ -453,7 +453,8 @@ namespace SpreadBot.Infrastructure
                 MinTradeSize = data.MinTradeSize ?? existingData.MinTradeSize,
                 Notice = data.Notice ?? existingData.Notice,
                 CreatedAt = data.CreatedAt ?? existingData.CreatedAt,
-                AggregatorQuote = data.AggregatorQuote ?? existingData.AggregatorQuote
+                AggregatorQuote = data.AggregatorQuote ?? existingData.AggregatorQuote,
+                Status = data.Status ?? existingData.Status
             };
         }
 
