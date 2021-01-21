@@ -1,4 +1,6 @@
-﻿namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
+﻿using SpreadBot.Models.Repository;
+
+namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
     public class BittrexApiTickersData
     {
@@ -13,6 +15,17 @@
             public decimal LastTradeRate { get; set; }
             public decimal BidRate { get; set; }
             public decimal AskRate { get; set; }
+
+            public MarketData ToMarketData()
+            {
+                return new MarketData()
+                {
+                    LastTradeRate = this.LastTradeRate,
+                    AskRate = this.AskRate,
+                    BidRate = this.BidRate,
+                    Symbol = this.Symbol
+                };
+            }
         }
     }
 }

@@ -10,40 +10,6 @@ namespace SpreadBot.Models.Repository
     {
         public MarketData() { }
 
-        public MarketData(BittrexApiTickersData.Ticker ticker)
-        {
-            ticker.ThrowIfArgumentIsNull(nameof(ticker));
-
-            LastTradeRate = ticker.LastTradeRate;
-            AskRate = ticker.AskRate;
-            BidRate = ticker.BidRate;
-            Symbol = ticker.Symbol;
-        }
-
-        public MarketData(BittrexApiMarketSummariesData.MarketSummary marketSummary)
-        {
-            marketSummary.ThrowIfArgumentIsNull(nameof(marketSummary));
-
-            High = marketSummary.High;
-            Low = marketSummary.Low;
-            PercentChange = marketSummary.PercentChange;
-            Volume = marketSummary.Volume;
-            QuoteVolume = marketSummary.QuoteVolume;
-            UpdatedAt = marketSummary.UpdatedAt;
-            Symbol = marketSummary.Symbol;
-        }
-
-        public MarketData(BittrexApiMarketData marketData)
-        {
-            marketData.ThrowIfArgumentIsNull(nameof(marketData));
-
-            Symbol = marketData.Symbol;
-            MinTradeSize = marketData.MinTradeSize;
-            Precision = marketData.Precision;
-            CreatedAt = marketData.CreatedAt;
-            Notice = marketData.Notice;
-        }
-
         public MessageType MessageType => MessageType.MarketData;
 
         public string Symbol { get; set; } //Must be in LTC-BTC format
@@ -67,5 +33,7 @@ namespace SpreadBot.Models.Repository
         public decimal SpreadPercentage => AskRate > 0 && BidRate > 0 ? (AskRate.Value - BidRate.Value) / AskRate.Value * 100 : 0; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php
 
         public AggregatorQuote AggregatorQuote { get; set; }
+
+        public EMarketStatus? Status { get; set; }
     }
 }
