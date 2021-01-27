@@ -24,8 +24,6 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         private SocketClient SocketClient { get; set; }
         private RestClient ApiClient { get; set; }
 
-        private Stopwatch HeartbeatStopwatch { get; set; } //To check if the websocket is still working
-
         private bool UseBittrexCredits { get; set; } = true; //Initially true, set to false if we get an INSUFFICIENT_AWARDS error
 
         public bool IsSetup { get; private set; }
@@ -33,17 +31,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         public decimal FeeRate => 0.002m;
 
         private readonly Timer reconnectWebsocketTimer = new Timer(TimeSpan.FromMinutes(1).TotalMilliseconds);
-        private readonly BlockingCollection<Action<BittrexApiBalanceData>> onBalanceCallBacks = new BlockingCollection<Action<BittrexApiBalanceData>>();
-        private readonly BlockingCollection<Action<BittrexApiMarketSummariesData>> onSummariesCallBacks = new BlockingCollection<Action<BittrexApiMarketSummariesData>>();
-        private readonly BlockingCollection<Action<BittrexApiTickersData>> onTickersCallBacks = new BlockingCollection<Action<BittrexApiTickersData>>();
-        private readonly BlockingCollection<Action<BittrexApiOrderData>> onOrderCallBacks = new BlockingCollection<Action<BittrexApiOrderData>>();
+        private readonly ConcurrentBag<Action<BittrexApiBalanceData>> onBalanceCallBacks = new ConcurrentBag<Action<BittrexApiBalanceData>>();
+        private readonly ConcurrentBag<Action<BittrexApiMarketSummariesData>> onSummariesCallBacks = new ConcurrentBag<Action<BittrexApiMarketSummariesData>>();
+        private readonly ConcurrentBag<Action<BittrexApiTickersData>> onTickersCallBacks = new ConcurrentBag<Action<BittrexApiTickersData>>();
+        private readonly ConcurrentBag<Action<BittrexApiOrderData>> onOrderCallBacks = new ConcurrentBag<Action<BittrexApiOrderData>>();
 
         public BittrexClient(string apiKey, string apiSecret)
         {
             ApiKey = apiKey;
             ApiSecret = apiSecret;
             ApiClient = new RestClient(apiUrl);
-            HeartbeatStopwatch = new Stopwatch();
 
             reconnectWebsocketTimer = new Timer(TimeSpan.FromSeconds(30).TotalMilliseconds);
             reconnectWebsocketTimer.Elapsed += async (sender, e) => await ConnectWebsocket();
@@ -166,29 +163,37 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     Logger.Instance.LogUnexpectedError("Error connecting to websocket");
                 }
 
-                var authResponse = await SocketClient.Authenticate(ApiKey, ApiSecret);
-
-                if (!authResponse.Success)
+                if (success)
                 {
-                    success = false;
-                    Logger.Instance.LogUnexpectedError($"Error authenticating to websocket. Code: {authResponse.ErrorCode}");
+                    var authResponse = await SocketClient.Authenticate(ApiKey, ApiSecret);
+
+                    if (!authResponse.Success)
+                    {
+                        success = false;
+                        Logger.Instance.LogUnexpectedError($"Error authenticating to websocket. Code: {authResponse.ErrorCode}");
+                    }
                 }
 
-                var subscribeResponse = await SocketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
-
-                if (subscribeResponse.Any(r => !r.Success))
+                if (success)
                 {
-                    success = false;
-                    Logger.Instance.LogUnexpectedError($"Error subscribing to data streams. Code: {JsonConvert.SerializeObject(subscribeResponse)}");
+
+                    var subscribeResponse = await SocketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
+
+                    if (subscribeResponse.Any(r => !r.Success))
+                    {
+                        success = false;
+                        Logger.Instance.LogUnexpectedError($"Error subscribing to data streams. Code: {JsonConvert.SerializeObject(subscribeResponse)}");
+                    }
                 }
 
-                SocketClient.On<BittrexApiBalanceData>("balance", (balance) => { foreach (var callback in onBalanceCallBacks) { callback(balance); } });
-                SocketClient.On<BittrexApiMarketSummariesData>("marketsummaries", (balance) => { foreach (var callback in onSummariesCallBacks) { callback(balance); } });
-                SocketClient.On<BittrexApiTickersData>("tickers", (balance) => { foreach (var callback in onTickersCallBacks) { callback(balance); } });
-                SocketClient.On<BittrexApiOrderData>("order", (balance) => { foreach (var callback in onOrderCallBacks) { callback(balance); } });
+                if (success)
+                {
 
-                HeartbeatStopwatch.Restart();
-                SocketClient.On("heartbeat", HeartbeatStopwatch.Restart);
+                    SocketClient.On<BittrexApiBalanceData>("balance", (balance) => { foreach (var callback in onBalanceCallBacks) { callback(balance); } });
+                    SocketClient.On<BittrexApiMarketSummariesData>("marketsummaries", (balance) => { foreach (var callback in onSummariesCallBacks) { callback(balance); } });
+                    SocketClient.On<BittrexApiTickersData>("tickers", (balance) => { foreach (var callback in onTickersCallBacks) { callback(balance); } });
+                    SocketClient.On<BittrexApiOrderData>("order", (balance) => { foreach (var callback in onOrderCallBacks) { callback(balance); } });
+                }
             }
             catch (Exception e)
             {
