@@ -5,9 +5,6 @@ using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic
@@ -19,16 +16,21 @@ namespace SpreadBot.Logic
 
         private readonly BotContext botContext;
         private readonly DataRepository dataRepository;
+        private IExchange exchange => dataRepository.Exchange;
 
         private readonly IBotStrategy botStrategy;
 
-        public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, decimal existingDust)
+        public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
             this.dataRepository = dataRepository;
-            botContext = new BotContext(appSettings, dataRepository.Exchange, spreadConfiguration, marketData, BotState.Buying, existingDust);
+            this.botContext = context;
             this.unallocateBotCallback = unallocateBotCallback;
             botStrategy = botStrategiesFactory.GetStrategy();
         }
+
+        public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
+            : this(dataRepository, new BotContext(spreadConfiguration, marketData, BotState.Buying, existingDust), unallocateBotCallback, botStrategiesFactory)
+        { }
 
         public Guid Guid => botContext.Guid;
         public Guid SpreadConfigurationGuid => botContext.spreadConfiguration.Guid;
@@ -138,7 +140,7 @@ namespace SpreadBot.Logic
         {
             botContext.latestMarketData = marketData;
 
-            await botStrategy.ProcessMarketData(botContext, ExecuteOrderFunction, FinishWork);
+            await botStrategy.ProcessMarketData(dataRepository, botContext, ExecuteOrderFunction, FinishWork);
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
@@ -216,7 +218,7 @@ namespace SpreadBot.Logic
         private async Task CleanDust(bool retry = true)
         {
             //Check if dust is worth at least the fee it would cost to clean
-            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * botContext.exchange.FeeRate * botContext.spreadConfiguration.MinimumNegotiatedAmount;
+            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * exchange.FeeRate * botContext.spreadConfiguration.MinimumNegotiatedAmount;
 
             if (!dustIsWorthCleaning)
                 return;
@@ -224,7 +226,7 @@ namespace SpreadBot.Logic
             OrderData sellOrder = null;
             try
             {
-                sellOrder = await botContext.exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+                sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.RetryLater && retry) //Try just once more. TODO: Investigate if any more ApiErrorTypes should go here
             {
@@ -237,12 +239,12 @@ namespace SpreadBot.Logic
                     OrderData buyOrder = null;
 
                     decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.latestMarketData.Precision);
-                    buyOrder = await botContext.exchange.BuyMarket(MarketSymbol, buyAmount);
+                    buyOrder = await exchange.BuyMarket(MarketSymbol, buyAmount);
 
                     if (buyOrder != null && buyOrder.Status == OrderStatus.CLOSED)
                         botContext.HeldAmount += buyOrder.FillQuantity;
 
-                    sellOrder = await botContext.exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+                    sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
                 }
                 catch (Exception ex)
                 {

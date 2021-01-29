@@ -2,7 +2,6 @@
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic.BotStrategies.Spread
@@ -21,9 +20,9 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             };
         }
 
-        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
+        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
-            await botStateStrategyDictionary[botContext.botState].ProcessMarketData(botContext, executeOrderFunctionCallback, finishWorkCallBack);
+            await botStateStrategyDictionary[botContext.botState].ProcessMarketData(dataRepository, botContext, executeOrderFunctionCallback, finishWorkCallBack);
         }
     }
 }

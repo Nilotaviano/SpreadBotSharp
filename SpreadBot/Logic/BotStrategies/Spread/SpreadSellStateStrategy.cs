@@ -1,17 +1,13 @@
 ﻿using SpreadBot.Infrastructure;
-using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadSellStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
+        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
             if (!botContext.latestMarketData.AskRate.HasValue)
                 return;
@@ -22,7 +18,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             if (!canSellAtLoss)
                 askPrice = Math.Max(botContext.boughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToPrecision(botContext.latestMarketData.Precision);
 
-            await executeOrderFunctionCallback(async () => await botContext.exchange.SellLimit(botContext.latestMarketData.Symbol, botContext.HeldAmount, askPrice));
+            await executeOrderFunctionCallback(async () => await dataRepository.Exchange.SellLimit(botContext.latestMarketData.Symbol, botContext.HeldAmount, askPrice));
         }
     }
 }

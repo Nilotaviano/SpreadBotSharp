@@ -1,17 +1,13 @@
 ﻿using SpreadBot.Infrastructure;
-using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadSellOrderActiveStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
+        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
             if (botContext.currentOrderData.Limit - botContext.latestMarketData.AskRate >= botContext.spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)
             {
@@ -21,7 +17,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
                 bool currentAskAboveMinimumProfitTarget = botContext.latestMarketData.AskRate > botContext.boughtPrice * (1 + botContext.spreadConfiguration.MinimumProfitPercentage / 100);
 
                 if (canSellAtLoss || currentAskAboveMinimumProfitTarget)
-                    await executeOrderFunctionCallback(async () => await botContext.exchange.CancelOrder(botContext.currentOrderData.Id));
+                    await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.currentOrderData.Id));
             }
         }
     }
