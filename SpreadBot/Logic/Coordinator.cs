@@ -11,6 +11,7 @@ namespace SpreadBot.Logic
 {
     public class Coordinator : IDisposable
     {
+        private readonly BotStrategiesFactory botStrategiesFactory = new BotStrategiesFactory();
         private readonly IComparer<(decimal, decimal)> marketComparer = GetMarketComparer();
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
@@ -56,15 +57,15 @@ namespace SpreadBot.Logic
 
         public void Start()
         {
-            StartCurrentBots();
+            // StartCurrentBots();
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 this.dataRepository.SubscribeToCurrencyBalance(baseMarket, guid, (bd) => ReportBalance());
         }
 
-        private void StartCurrentBots()
+        private async void StartCurrentBots()
         {
-            foreach (var bot in context.GetBots())
+            foreach (var bot in await context.Initialize(dataRepository, UnallocateBot, botStrategiesFactory))
             {
                 var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(bot.SpreadConfigurationGuid, key => new ConcurrentDictionary<string, bool>());
 
@@ -130,8 +131,8 @@ namespace SpreadBot.Logic
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
                         // TODO keep dust values between executions
-                        var existingDust = context.RemoveDustForMarket(market.Symbol);
-                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, new BotStrategiesFactory());
+                        var existingDust = await context.RemoveDustForMarket(market.Symbol);
+                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
                         await context.AddBot(bot);
 
                         AllocateBot(bot);
@@ -194,7 +195,7 @@ namespace SpreadBot.Logic
                 return false;
             }
 
-            if(!spreadConfiguration.AvoidTokenizedSecurities || !marketData.IsTokenizedSecurity.GetValueOrDefault())
+            if(spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
             {
                 Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
                 return false;
@@ -206,7 +207,8 @@ namespace SpreadBot.Logic
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
             return context.GetBotCount() < appSettings.MaxNumberOfBots
-                && availableBalanceForBaseMarket[spreadConfiguration.BaseMarket] > spreadConfiguration.AllocatedAmountOfBaseCurrency;
+                && availableBalanceForBaseMarket.TryGetValue(spreadConfiguration.BaseMarket, out var balance) 
+                && balance > spreadConfiguration.AllocatedAmountOfBaseCurrency;
         }
 
         private async void UnallocateBot(Bot bot)
@@ -229,7 +231,7 @@ namespace SpreadBot.Logic
             balanceSemaphore.Release();
 
             if (bot.HeldAmount > 0)
-                context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
+                await context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
         }
 
         private static IComparer<(decimal, decimal)> GetMarketComparer()

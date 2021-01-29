@@ -11,10 +11,11 @@ namespace SpreadBot.Logic
 {
     public class Bot
     {
+        public readonly BotContext botContext;
+
         private readonly Action<Bot> unallocateBotCallback;
         private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
 
-        private readonly BotContext botContext;
         private readonly DataRepository dataRepository;
         private IExchange exchange => dataRepository.Exchange;
 

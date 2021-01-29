@@ -101,7 +101,7 @@ namespace SpreadBot.Tests
             var sellOrderId = "sellOrder1";
 
             mockExchange
-                .Setup(e => e.BuyLimit(openingMarketData.Symbol, quantity, bidPrice))
+                .Setup(e => e.BuyLimit(openingMarketData.Symbol, quantity, bidPrice, null))
                 .ReturnsAsync(new OrderData() { Id = buyOrderId, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN })
                 .Callback(() =>
                 {
@@ -126,7 +126,7 @@ namespace SpreadBot.Tests
                 });
 
             mockExchange
-                .Setup(e => e.SellLimit(openingMarketData.Symbol, quantity, askPrice))
+                .Setup(e => e.SellLimit(openingMarketData.Symbol, quantity, askPrice, null))
                 .ReturnsAsync(new OrderData() { Id = sellOrderId, Direction = OrderDirection.SELL, Status = OrderStatus.OPEN })
                 .Callback(() =>
                 {
@@ -222,8 +222,8 @@ namespace SpreadBot.Tests
             mockExchange.Verify(e => e.OnTickers(It.IsAny<Action<BittrexApiTickersData>>()), Times.Once);
             mockExchange.Verify(e => e.OnOrder(It.IsAny<Action<BittrexApiOrderData>>()), Times.Once);
             mockExchange.Verify(e => e.GetBalanceData(), Times.Once);
-            mockExchange.Verify(e => e.BuyLimit(openingMarketData.Symbol, quantity, bidPrice), Times.Once);
-            mockExchange.Verify(e => e.SellLimit(openingMarketData.Symbol, quantity, askPrice), Times.Once);
+            mockExchange.Verify(e => e.BuyLimit(openingMarketData.Symbol, quantity, bidPrice, null), Times.Once);
+            mockExchange.Verify(e => e.SellLimit(openingMarketData.Symbol, quantity, askPrice, null), Times.Once);
         }
     }
 }

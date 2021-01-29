@@ -1,4 +1,5 @@
 ﻿using SpreadBot.Logic;
+using SpreadBot.Logic.BotStrategies;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -12,18 +13,27 @@ namespace SpreadBot.Infrastructure
     public interface ICoordinatorContext
     {
         /// <summary>
+        /// Initialize stored bots with correct parameters. This function MUST be called between program executions.
+        /// </summary>
+        /// <param name="dataRepository"></param>
+        /// <param name="unallocateBotCallback"></param>
+        /// <param name="botStrategiesFactory"></param>
+        /// <returns></returns>
+        Task<IEnumerable<Bot>> Initialize(DataRepository dataRepository, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory);
+
+        /// <summary>
         /// Associates an amount of dust to some currency
         /// </summary>
         /// <param name="marketSymbol">The currency of the accumulated dust</param>
         /// <param name="dust">The dust value</param>
-        void AddDustForMarket(string marketSymbol, decimal dust);
+        Task AddDustForMarket(string marketSymbol, decimal dust);
 
         /// <summary>
         /// Removes the dust from the associated symbol
         /// </summary>
         /// <param name="marketSymbol">The currency of the accumulated dust</param>
         /// <returns>The accumulated dust value for the currency</returns>
-        decimal RemoveDustForMarket(string marketSymbol);
+        Task<decimal> RemoveDustForMarket(string marketSymbol);
 
         /// <summary>
         /// Gets the number of bots stored
