@@ -35,5 +35,7 @@ namespace SpreadBot.Models.Repository
         public AggregatorQuote AggregatorQuote { get; set; }
 
         public EMarketStatus? Status { get; set; }
+
+        public bool? IsTokenizedSecurity { get; set; }
     }
 }

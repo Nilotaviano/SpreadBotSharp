@@ -42,6 +42,7 @@ namespace SpreadBot.Infrastructure
         public decimal SpreadThresholdBeforeCancelingCurrentOrder { get; set; } = 1.Satoshi(); //default 1 satoshi, but should be set higher, I think
         public int MinutesForLoss { get; set; }
         public decimal MinimumProfitPercentage { get; set; } //Bot will try to sell with at least this amount of profit, until past the MinutesForLoss threshold
+        public bool AvoidTokenizedSecurities { get; set; }
 
         public override int GetHashCode()
         {
