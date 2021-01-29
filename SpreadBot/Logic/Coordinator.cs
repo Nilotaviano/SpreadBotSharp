@@ -14,16 +14,18 @@ namespace SpreadBot.Logic
         private readonly IComparer<(decimal, decimal)> marketComparer = GetMarketComparer();
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
+        private readonly IBotRepository botRepository;
         private readonly Guid guid;
         private ConcurrentDictionary<string, decimal> availableBalanceForBaseMarket;
         private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
         private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
 
-        public Coordinator(AppSettings appSettings, DataRepository dataRepository)
+        public Coordinator(AppSettings appSettings, DataRepository dataRepository, IBotRepository botRepository)
         {
             this.appSettings = appSettings;
             this.dataRepository = dataRepository;
+            this.botRepository = botRepository;
             this.guid = new Guid();
 
             availableBalanceForBaseMarket = new ConcurrentDictionary<string, decimal>();
@@ -58,16 +60,15 @@ namespace SpreadBot.Logic
         }
 
         public ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>>();
-        public ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
         public ConcurrentDictionary<string, decimal> DustPerMarket { get; } = new ConcurrentDictionary<string, decimal>();
 
         /// <summary>
         /// Evaluates updated markets for new bot-allocation opportunities
         /// </summary>
         /// <param name="marketDeltas">Markets that were updated</param>
-        private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
+        private async void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
-            if (AllocatedBotsByGuid.Count >= appSettings.MaxNumberOfBots)
+            if (botRepository.GetBotCount() >= appSettings.MaxNumberOfBots)
                 return;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
@@ -116,8 +117,8 @@ namespace SpreadBot.Logic
 
                         balanceSemaphore.Wait();
                         DustPerMarket.TryRemove(market.Symbol, out var existingDust);
-                        var bot = new Bot(appSettings, dataRepository, configuration, market, UnallocateBot, new BotStrategiesFactory(), existingDust);
-                        AllocatedBotsByGuid[bot.Guid] = bot;
+                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, new BotStrategiesFactory());
+                        await botRepository.AddBot(bot);
                         availableBalanceForBaseMarket.AddOrUpdate(
                             baseMarket,
                             configuration.AllocatedAmountOfBaseCurrency * -1,
@@ -145,7 +146,7 @@ namespace SpreadBot.Logic
             balanceSemaphore.Wait();
             
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], AllocatedBotsByGuid.Values.Where(b => b.BaseMarket == baseMarket), baseMarket);
+                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], botRepository.GetBots().Where(b => b.BaseMarket == baseMarket), baseMarket);
 
             balanceSemaphore.Release();
         }
@@ -183,14 +184,14 @@ namespace SpreadBot.Logic
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
-            return AllocatedBotsByGuid.Count < appSettings.MaxNumberOfBots
+            return botRepository.GetBotCount() < appSettings.MaxNumberOfBots
                 && availableBalanceForBaseMarket[spreadConfiguration.BaseMarket] > spreadConfiguration.AllocatedAmountOfBaseCurrency;
         }
 
-        private void UnallocateBot(Bot bot)
+        private async void UnallocateBot(Bot bot)
         {
             balanceSemaphore.Wait();
-            bool removeAllocatedBot = AllocatedBotsByGuid.TryRemove(bot.Guid, out _);
+            bool removeAllocatedBot = await botRepository.RemoveBot(bot.Guid);
             bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].TryRemove(bot.MarketSymbol, out _);
 
             if (!removeAllocatedBot)
