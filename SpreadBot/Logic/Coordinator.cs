@@ -137,7 +137,7 @@ namespace SpreadBot.Logic
 
         private bool IsViableMarket(MarketData market)
         {
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && !market.IsTokenizedSecurity.GetValueOrDefault();
+            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online;
         }
 
         private void ReportBalance()
@@ -172,13 +172,20 @@ namespace SpreadBot.Logic
                 return false;
             }
 
+            if(!spreadConfiguration.AvoidTokenizedSecurities || !marketData.IsTokenizedSecurity.GetValueOrDefault())
+            {
+                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
+                return false;
+            }
+
             return true;
         }
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
             return AllocatedBotsByGuid.Count < appSettings.MaxNumberOfBots
-                && availableBalanceForBaseMarket[spreadConfiguration.BaseMarket] > spreadConfiguration.AllocatedAmountOfBaseCurrency;
+                && availableBalanceForBaseMarket[spreadConfiguration.BaseMarket] > spreadConfiguration.AllocatedAmountOfBaseCurrency
+                &&;
         }
 
         private void UnallocateBot(Bot bot)
