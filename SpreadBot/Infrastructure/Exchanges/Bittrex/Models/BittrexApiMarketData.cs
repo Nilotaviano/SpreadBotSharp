@@ -28,7 +28,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
                 CreatedAt = this.CreatedAt,
                 Notice = this.Notice,
                 Status = this.Status == "ONLINE" ? EMarketStatus.Online : EMarketStatus.Offline,
-                IsTokenizedSecurity = Tags?.Contains("TOKENIZED_SECURITY") ?? false
+                IsTokenizedSecurity = Tags?.Contains("TOKENIZED_SECURITY")
             };
         }
     }

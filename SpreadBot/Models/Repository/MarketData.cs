@@ -36,6 +36,6 @@ namespace SpreadBot.Models.Repository
 
         public EMarketStatus? Status { get; set; }
 
-        public bool IsTokenizedSecurity { get; set; }
+        public bool? IsTokenizedSecurity { get; set; }
     }
 }

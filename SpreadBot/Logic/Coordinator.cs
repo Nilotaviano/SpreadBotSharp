@@ -137,7 +137,7 @@ namespace SpreadBot.Logic
 
         private bool IsViableMarket(MarketData market)
         {
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && !market.IsTokenizedSecurity;
+            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && !market.IsTokenizedSecurity.GetValueOrDefault();
         }
 
         private void ReportBalance()
