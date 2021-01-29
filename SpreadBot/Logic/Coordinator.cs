@@ -14,18 +14,20 @@ namespace SpreadBot.Logic
         private readonly IComparer<(decimal, decimal)> marketComparer = GetMarketComparer();
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
-        private readonly IBotRepository botRepository;
+        private readonly ICoordinatorContext context;
         private readonly Guid guid;
         private ConcurrentDictionary<string, decimal> availableBalanceForBaseMarket;
         private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
         private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
 
-        public Coordinator(AppSettings appSettings, DataRepository dataRepository, IBotRepository botRepository)
+        public ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>>();
+
+        public Coordinator(AppSettings appSettings, DataRepository dataRepository, ICoordinatorContext context)
         {
             this.appSettings = appSettings;
             this.dataRepository = dataRepository;
-            this.botRepository = botRepository;
+            this.context = context;
             this.guid = new Guid();
 
             availableBalanceForBaseMarket = new ConcurrentDictionary<string, decimal>();
@@ -54,13 +56,25 @@ namespace SpreadBot.Logic
 
         public void Start()
         {
+            StartCurrentBots();
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 this.dataRepository.SubscribeToCurrencyBalance(baseMarket, guid, (bd) => ReportBalance());
         }
 
-        public ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>>();
-        public ConcurrentDictionary<string, decimal> DustPerMarket { get; } = new ConcurrentDictionary<string, decimal>();
+        private void StartCurrentBots()
+        {
+            foreach (var bot in context.GetBots())
+            {
+                var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(bot.SpreadConfigurationGuid, key => new ConcurrentDictionary<string, bool>());
+
+                allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
+
+                AllocateBot(bot);
+
+                Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
+            }
+        }
 
         /// <summary>
         /// Evaluates updated markets for new bot-allocation opportunities
@@ -68,7 +82,7 @@ namespace SpreadBot.Logic
         /// <param name="marketDeltas">Markets that were updated</param>
         private async void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
-            if (botRepository.GetBotCount() >= appSettings.MaxNumberOfBots)
+            if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
                 return;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
@@ -115,25 +129,32 @@ namespace SpreadBot.Logic
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
-                        balanceSemaphore.Wait();
-                        DustPerMarket.TryRemove(market.Symbol, out var existingDust);
+                        // TODO keep dust values between executions
+                        var existingDust = context.RemoveDustForMarket(market.Symbol);
                         var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, new BotStrategiesFactory());
-                        await botRepository.AddBot(bot);
-                        availableBalanceForBaseMarket.AddOrUpdate(
-                            baseMarket,
-                            configuration.AllocatedAmountOfBaseCurrency * -1,
-                            (b, oldValue) => oldValue - configuration.AllocatedAmountOfBaseCurrency
-                        );
+                        await context.AddBot(bot);
 
-                        Logger.Instance.LogMessage($"Granted {configuration.AllocatedAmountOfBaseCurrency}{baseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[baseMarket]}{baseMarket}");
-                        bot.Start();
-                        balanceSemaphore.Release();
+                        AllocateBot(bot);
                     }
 
                     if (!anyConfigurationAvailable)
                         break;
                 }
             }
+        }
+
+        private void AllocateBot(Bot bot)
+        {
+            balanceSemaphore.Wait();
+            availableBalanceForBaseMarket.AddOrUpdate(
+                bot.BaseMarket,
+                bot.Balance * -1,
+                (b, oldValue) => oldValue - bot.Balance
+            );
+
+            Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
+            bot.Start();
+            balanceSemaphore.Release();
         }
 
         private bool IsViableMarket(MarketData market)
@@ -146,7 +167,7 @@ namespace SpreadBot.Logic
             balanceSemaphore.Wait();
             
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], botRepository.GetBots().Where(b => b.BaseMarket == baseMarket), baseMarket);
+                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket), baseMarket);
 
             balanceSemaphore.Release();
         }
@@ -184,14 +205,14 @@ namespace SpreadBot.Logic
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
-            return botRepository.GetBotCount() < appSettings.MaxNumberOfBots
+            return context.GetBotCount() < appSettings.MaxNumberOfBots
                 && availableBalanceForBaseMarket[spreadConfiguration.BaseMarket] > spreadConfiguration.AllocatedAmountOfBaseCurrency;
         }
 
         private async void UnallocateBot(Bot bot)
         {
             balanceSemaphore.Wait();
-            bool removeAllocatedBot = await botRepository.RemoveBot(bot.Guid);
+            bool removeAllocatedBot = await context.RemoveBot(bot.Guid);
             bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].TryRemove(bot.MarketSymbol, out _);
 
             if (!removeAllocatedBot)
@@ -208,7 +229,7 @@ namespace SpreadBot.Logic
             balanceSemaphore.Release();
 
             if (bot.HeldAmount > 0)
-                DustPerMarket.AddOrUpdate(bot.MarketSymbol, bot.HeldAmount, (key, existingData) => existingData + bot.HeldAmount);
+                context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
         }
 
         private static IComparer<(decimal, decimal)> GetMarketComparer()

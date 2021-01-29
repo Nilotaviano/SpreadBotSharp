@@ -9,8 +9,22 @@ namespace SpreadBot.Infrastructure
     /// <summary>
     /// Responsible for managing bots current processing
     /// </summary>
-    public interface IBotRepository
+    public interface ICoordinatorContext
     {
+        /// <summary>
+        /// Associates an amount of dust to some currency
+        /// </summary>
+        /// <param name="marketSymbol">The currency of the accumulated dust</param>
+        /// <param name="dust">The dust value</param>
+        void AddDustForMarket(string marketSymbol, decimal dust);
+
+        /// <summary>
+        /// Removes the dust from the associated symbol
+        /// </summary>
+        /// <param name="marketSymbol">The currency of the accumulated dust</param>
+        /// <returns>The accumulated dust value for the currency</returns>
+        decimal RemoveDustForMarket(string marketSymbol);
+
         /// <summary>
         /// Gets the number of bots stored
         /// </summary>

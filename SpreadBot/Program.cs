@@ -62,9 +62,9 @@ namespace SpreadBot
             var dataRepository = new DataRepository(bittrex, appSettings);
             dataRepository.StartConsumingData();
 
-            var botRepository = new InMemoryBotRepository();
+            var coordinatorContext = new InMemoryCoordinatorContext();
 
-            var coordinator = new Coordinator(appSettings, dataRepository, botRepository);
+            var coordinator = new Coordinator(appSettings, dataRepository, coordinatorContext);
             coordinator.Start();
 
             Console.ReadLine();
