@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace SpreadBot.Infrastructure
+namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 {
     /*
      * TODO list:
@@ -14,19 +14,22 @@ namespace SpreadBot.Infrastructure
      * Implement socket unexpected disconnection handling (see: https://docs.microsoft.com/en-us/aspnet/signalr/overview/guide-to-the-api/handling-connection-lifetime-events)
      * Make sure that all subscriptions are preserved in both cases above (for both websocket streams (SocketClient.Subscribe) and events (SocketClient.On))
      */
-    public class SocketClient
+    public sealed class SocketClient : IDisposable
     {
         private readonly string _url;
         private readonly HubConnection _hubConnection;
         private readonly IHubProxy _hubProxy;
 
-        public SocketClient(string url)
+        private readonly Action _disconnected;
+
+        public SocketClient(string url, Action disconnected)
         {
             _url = url;
             _hubConnection = new HubConnection(_url);
             _hubProxy = _hubConnection.CreateHubProxy("c3");
             ServicePointManager.DefaultConnectionLimit = 10;
             _hubConnection.StateChanged += _hubConnection_StateChanged;
+            _disconnected = disconnected;
         }
 
         public async Task<bool> Connect()
@@ -44,13 +47,13 @@ namespace SpreadBot.Infrastructure
             }
         }
 
-        private async void _hubConnection_StateChanged(StateChange obj)
+        private void _hubConnection_StateChanged(StateChange obj)
         {
-            Logger.Instance.LogMessage($"State change: {obj.OldState}->{obj.NewState}");
+            Logger.Instance.LogMessage($"SocketClient State change: {obj.OldState}->{obj.NewState}");
             if (obj.NewState == ConnectionState.Disconnected)
             {
                 Logger.Instance.LogError("HubConnection disconnected");
-                await Connect();
+                _disconnected();
             }
         }
 
@@ -118,6 +121,12 @@ namespace SpreadBot.Infrastructure
 
                 callback(decoded);
             });
+        }
+
+        public void Dispose()
+        {
+            _hubConnection.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         public class SocketResponse

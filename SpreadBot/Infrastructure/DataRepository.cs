@@ -454,7 +454,8 @@ namespace SpreadBot.Infrastructure
                 Notice = data.Notice ?? existingData.Notice,
                 CreatedAt = data.CreatedAt ?? existingData.CreatedAt,
                 AggregatorQuote = data.AggregatorQuote ?? existingData.AggregatorQuote,
-                Status = data.Status ?? existingData.Status
+                Status = data.Status ?? existingData.Status,
+                IsTokenizedSecurity = data.IsTokenizedSecurity ?? existingData.IsTokenizedSecurity
             };
         }
 

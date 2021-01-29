@@ -4,10 +4,12 @@ using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
+using System.Timers;
 
 namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 {
@@ -22,49 +24,46 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         private SocketClient SocketClient { get; set; }
         private RestClient ApiClient { get; set; }
 
-        private Stopwatch HeartbeatStopwatch { get; set; } //To check if the websocket is still working
-
         private bool UseBittrexCredits { get; set; } = true; //Initially true, set to false if we get an INSUFFICIENT_AWARDS error
 
         public bool IsSetup { get; private set; }
 
         public decimal FeeRate => 0.002m;
 
+        private readonly Timer reconnectWebsocketTimer = new Timer(TimeSpan.FromMinutes(1).TotalMilliseconds);
+        private readonly ConcurrentBag<Action<BittrexApiBalanceData>> onBalanceCallBacks = new ConcurrentBag<Action<BittrexApiBalanceData>>();
+        private readonly ConcurrentBag<Action<BittrexApiMarketSummariesData>> onSummariesCallBacks = new ConcurrentBag<Action<BittrexApiMarketSummariesData>>();
+        private readonly ConcurrentBag<Action<BittrexApiTickersData>> onTickersCallBacks = new ConcurrentBag<Action<BittrexApiTickersData>>();
+        private readonly ConcurrentBag<Action<BittrexApiOrderData>> onOrderCallBacks = new ConcurrentBag<Action<BittrexApiOrderData>>();
+
         public BittrexClient(string apiKey, string apiSecret)
         {
             ApiKey = apiKey;
             ApiSecret = apiSecret;
-            SocketClient = new SocketClient(websocketUrl);
             ApiClient = new RestClient(apiUrl);
-            HeartbeatStopwatch = new Stopwatch();
+
+            reconnectWebsocketTimer = new Timer(TimeSpan.FromSeconds(30).TotalMilliseconds);
+            reconnectWebsocketTimer.Elapsed += async (sender, e) => await ConnectWebsocket();
+            reconnectWebsocketTimer.AutoReset = false;
         }
 
         public async Task Setup()
         {
-            await ConnectWebsocket(SocketClient);
+            var websocketConnected = await ConnectWebsocket();
+
+            if (!websocketConnected)
+                throw new Exception("Websocket failed to connect");
 
             IsSetup = true;
         }
 
-        public void OnBalance(Action<BittrexApiBalanceData> callback)
-        {
-            SocketClient.On("balance", callback);
-        }
+        public void OnBalance(Action<BittrexApiBalanceData> callback) => onBalanceCallBacks.Add(callback);
 
-        public void OnSummaries(Action<BittrexApiMarketSummariesData> callback)
-        {
-            SocketClient.On("marketsummaries", callback);
-        }
+        public void OnSummaries(Action<BittrexApiMarketSummariesData> callback) => onSummariesCallBacks.Add(callback);
 
-        public void OnTickers(Action<BittrexApiTickersData> callback)
-        {
-            SocketClient.On("tickers", callback);
-        }
+        public void OnTickers(Action<BittrexApiTickersData> callback) => onTickersCallBacks.Add(callback);
 
-        public void OnOrder(Action<BittrexApiOrderData> callback)
-        {
-            SocketClient.On("order", callback);
-        }
+        public void OnOrder(Action<BittrexApiOrderData> callback) => onOrderCallBacks.Add(callback);
 
         public async Task<CompleteBalanceData> GetBalanceData()
         {
@@ -143,23 +142,70 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return new OrderData(apiOrderData.Data);
         }
 
-        private async Task ConnectWebsocket(SocketClient socketClient)
+        private void WebSocketDisconnected()
         {
-            if (!await socketClient.Connect())
-                throw new Exception("Error connecting to websocket");
+            reconnectWebsocketTimer.Start();
+        }
 
-            var authResponse = await socketClient.Authenticate(ApiKey, ApiSecret);
+        private async Task<bool> ConnectWebsocket()
+        {
+            bool success = true;
 
-            if (!authResponse.Success)
-                throw new Exception($"Error authenticating to websocket. Code: {authResponse.ErrorCode}");
+            SocketClient?.Dispose(); //dispose of the old SocketClient
 
-            var subscribeResponse = await socketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
+            try
+            {
+                SocketClient = new SocketClient(websocketUrl, WebSocketDisconnected);
 
-            if (subscribeResponse.Any(r => !r.Success))
-                throw new Exception(message: $"Error subscribing to data streams. Code: {JsonConvert.SerializeObject(subscribeResponse)}");
+                if (!await SocketClient.Connect())
+                {
+                    success = false;
+                    Logger.Instance.LogUnexpectedError("Error connecting to websocket");
+                }
 
-            HeartbeatStopwatch.Start();
-            socketClient.On("heartbeat", HeartbeatStopwatch.Restart);
+                if (success)
+                {
+                    var authResponse = await SocketClient.Authenticate(ApiKey, ApiSecret);
+
+                    if (!authResponse.Success)
+                    {
+                        success = false;
+                        Logger.Instance.LogUnexpectedError($"Error authenticating to websocket. Code: {authResponse.ErrorCode}");
+                    }
+                }
+
+                if (success)
+                {
+
+                    var subscribeResponse = await SocketClient.Subscribe(new[] { "balance", "market_summaries", "tickers", "order", "heartbeat" });
+
+                    if (subscribeResponse.Any(r => !r.Success))
+                    {
+                        success = false;
+                        Logger.Instance.LogUnexpectedError($"Error subscribing to data streams. Code: {JsonConvert.SerializeObject(subscribeResponse)}");
+                    }
+                }
+
+                if (success)
+                {
+
+                    SocketClient.On<BittrexApiBalanceData>("balance", (balance) => { foreach (var callback in onBalanceCallBacks) { callback(balance); } });
+                    SocketClient.On<BittrexApiMarketSummariesData>("marketsummaries", (balance) => { foreach (var callback in onSummariesCallBacks) { callback(balance); } });
+                    SocketClient.On<BittrexApiTickersData>("tickers", (balance) => { foreach (var callback in onTickersCallBacks) { callback(balance); } });
+                    SocketClient.On<BittrexApiOrderData>("order", (balance) => { foreach (var callback in onOrderCallBacks) { callback(balance); } });
+                }
+            }
+            catch (Exception e)
+            {
+                success = false;
+
+                Logger.Instance.LogUnexpectedError($"Error connecting to websocket: {e}");
+            }
+
+            if (!success)
+                reconnectWebsocketTimer.Start();
+
+            return success;
         }
 
         public async Task<OrderData> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true)
