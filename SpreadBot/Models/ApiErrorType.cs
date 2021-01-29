@@ -12,6 +12,7 @@
         RetryLater,
         OrderNotOpen,
         CannotEstimateCommission,
-        PrecisionNotAllowed
+        PrecisionNotAllowed,
+        ClientOrderIdAlreadyExists
     }
 }

@@ -45,21 +45,33 @@ namespace SpreadBot.Logic
             if (botContext.currentOrderData?.Id != value?.Id)
             {
                 if (botContext.currentOrderData != null)
-                    dataRepository.UnsubscribeToOrderData(botContext.currentOrderData.Id, Guid);
+                    dataRepository.UnsubscribeToOrderData(botContext.currentOrderData.ClientOrderId, Guid);
 
                 if (value?.Status == OrderStatus.OPEN)
-                    dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
+                    dataRepository.SubscribeToOrderData(value.ClientOrderId, Guid, ProcessMessage);
             }
             if (value?.Status == OrderStatus.CLOSED)
-                dataRepository.UnsubscribeToOrderData(value.Id, Guid);
+                dataRepository.UnsubscribeToOrderData(value.ClientOrderId, Guid);
 
 
             botContext.currentOrderData = value;
         }
 
-        public void Start()
+        public async void Start()
         {
             LogMessage($"started on {MarketSymbol}");
+
+            if (botContext.currentOrderData != null)
+            {
+                if (dataRepository.OrdersData.TryGetValue(botContext.currentOrderData.ClientOrderId, out var updatedOrder))
+                    await ProcessOrderData(updatedOrder);
+                else
+                {
+                    // TODO how to recover from this?
+                    await ProcessOrderData(null);
+                }
+            }
+
             //This will trigger a call to ProcessMessage
             dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
         }

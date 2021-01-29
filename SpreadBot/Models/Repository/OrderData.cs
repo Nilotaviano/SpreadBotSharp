@@ -22,7 +22,7 @@ namespace SpreadBot.Models.Repository
         public OrderData(BittrexApiOrderData.Order order)
         {
             Ceiling = order.Ceiling;
-            ClientOrderId = order.ClientOrderId;
+            ClientOrderId = order.ClientOrderId ?? order.Id;
             ClosedAt = order.ClosedAt;
             Commission = order.Commission;
             CreatedAt = order.CreatedAt;
