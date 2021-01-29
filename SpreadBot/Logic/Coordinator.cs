@@ -184,8 +184,7 @@ namespace SpreadBot.Logic
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
             return AllocatedBotsByGuid.Count < appSettings.MaxNumberOfBots
-                && availableBalanceForBaseMarket[spreadConfiguration.BaseMarket] > spreadConfiguration.AllocatedAmountOfBaseCurrency
-                &&;
+                && availableBalanceForBaseMarket[spreadConfiguration.BaseMarket] > spreadConfiguration.AllocatedAmountOfBaseCurrency;
         }
 
         private void UnallocateBot(Bot bot)
