@@ -1,4 +1,5 @@
 ﻿using SpreadBot.Models;
+using SpreadBot.Models.Repository;
 using System;
 
 namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
@@ -9,6 +10,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
         public int Sequence { get; set; }
 
         public Order Delta { get; set; }
+
+        public OrderData ToOrderData()
+        {
+            var order = this.Delta?.ToOrderData();
+
+            order.AccountId = this.AccountId;
+            order.Sequence = this.Sequence;
+
+            return order;
+        }
 
         public class Order
         {
@@ -36,6 +47,29 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
                 public string Type { get; set; }
 
                 public string Id { get; set; }
+            }
+
+            public OrderData ToOrderData()
+            {
+                return new OrderData()
+                {
+                    Ceiling = this.Ceiling,
+                    ClientOrderId = this.ClientOrderId ?? this.Id,
+                    ClosedAt = this.ClosedAt,
+                    Commission = this.Commission,
+                    CreatedAt = this.CreatedAt,
+                    Direction = this.Direction,
+                    FillQuantity = this.FillQuantity,
+                    Id = this.Id,
+                    Limit = this.Limit,
+                    MarketSymbol = this.MarketSymbol,
+                    Proceeds = this.Proceeds,
+                    Quantity = this.Quantity,
+                    Status = this.Status,
+                    TimeInForce = this.TimeInForce,
+                    Type = this.Type,
+                    UpdatedAt = this.UpdatedAt
+                };
             }
         }
     }

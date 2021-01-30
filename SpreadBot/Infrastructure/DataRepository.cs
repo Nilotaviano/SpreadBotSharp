@@ -253,6 +253,7 @@ namespace SpreadBot.Infrastructure
                 }
 
                 var data = new OrderData(orderData);
+                OrdersData.AddOrUpdate(data.ClientOrderId, data, (id, existing) => existing.Status == Models.OrderStatus.CLOSED ? existing : data);
 
                 InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
 
@@ -354,6 +355,7 @@ namespace SpreadBot.Infrastructure
                 FetchBalanceData(),
                 FetchMarketSummariesData(),
                 FetchTickersData(),
+                FetchOpenOrdersData(),
                 FetchClosedOrdersData(),
                 FetchMarketsData()
             );
@@ -426,6 +428,25 @@ namespace SpreadBot.Infrastructure
             }
         }
 
+        private async Task FetchOpenOrdersData()
+        {
+            //TODO: Handle exceptions here
+            var openOrders = await Exchange.GetOpenOrdersData();
+
+            if (openOrders.Data != null && openOrders.Data.Any())
+            {
+                foreach (var order in openOrders.Data)
+                {
+                    var orderData = new OrderData(order);
+                    OrdersData[orderData.ClientOrderId] = orderData;
+                    InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
+                }
+            }
+
+            // There is no sequence information in OpenOrders
+            lastOrderSequence = null;
+        }
+
         private async Task FetchClosedOrdersData()
         {
             //TODO: Handle exceptions here
@@ -438,6 +459,7 @@ namespace SpreadBot.Infrastructure
                 foreach (var order in closedOrders.Data)
                 {
                     var orderData = new OrderData(order);
+                    OrdersData[orderData.ClientOrderId] = orderData;
                     InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
                 }
             }

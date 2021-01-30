@@ -113,6 +113,22 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
         }
 
+        public async Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetOpenOrdersData()
+        {
+            var request = new RestRequest("/orders/open", Method.GET, DataFormat.Json);
+
+            return await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
+        }
+
+        public async Task<OrderData> GetOrderData(string orderId)
+        {
+            var request = new RestRequest($"/orders/{orderId}", Method.GET, DataFormat.Json);
+
+            var order = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
+
+            return order?.Data?.ToOrderData();
+        }
+
         public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
         {
             return await ExecuteLimitOrder(OrderDirection.BUY, marketSymbol, quantity, limit, clientOrderId: clientOrderId);

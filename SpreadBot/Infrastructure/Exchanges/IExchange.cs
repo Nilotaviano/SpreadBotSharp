@@ -33,5 +33,8 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<BittrexApiMarketSummariesData> GetMarketSummariesData();
         Task<BittrexApiMarketData[]> GetMarketsData();
         Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId);
+        Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetOpenOrdersData();
+
+        Task<OrderData> GetOrderData(string orderId);
     }
 }

@@ -19,21 +19,21 @@ namespace SpreadBot.Infrastructure
         /// <param name="unallocateBotCallback"></param>
         /// <param name="botStrategiesFactory"></param>
         /// <returns></returns>
-        Task<IEnumerable<Bot>> Initialize(DataRepository dataRepository, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory);
+        IEnumerable<Bot> Initialize(DataRepository dataRepository, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory);
 
         /// <summary>
         /// Associates an amount of dust to some currency
         /// </summary>
         /// <param name="marketSymbol">The currency of the accumulated dust</param>
         /// <param name="dust">The dust value</param>
-        Task AddDustForMarket(string marketSymbol, decimal dust);
+        void AddDustForMarket(string marketSymbol, decimal dust);
 
         /// <summary>
         /// Removes the dust from the associated symbol
         /// </summary>
         /// <param name="marketSymbol">The currency of the accumulated dust</param>
         /// <returns>The accumulated dust value for the currency</returns>
-        Task<decimal> RemoveDustForMarket(string marketSymbol);
+        decimal RemoveDustForMarket(string marketSymbol);
 
         /// <summary>
         /// Gets the number of bots stored
@@ -50,13 +50,13 @@ namespace SpreadBot.Infrastructure
         /// Adds a new bot
         /// </summary>
         /// <param name="bot">The bot about to start processing</param>
-        Task AddBot(Bot bot);
+        void AddBot(Bot bot);
 
         /// <summary>
         /// Removes a bot by its id
         /// </summary>
         /// <param name="botId">The id of the bot to remove</param>
         /// <returns>True if a bot with the equivalent id has been removed, false otherwise</returns>
-        Task<bool> RemoveBot(Guid botId);
+        bool RemoveBot(Guid botId);
     }
 }

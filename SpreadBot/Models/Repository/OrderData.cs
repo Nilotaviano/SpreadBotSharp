@@ -41,7 +41,7 @@ namespace SpreadBot.Models.Repository
 
         public MessageType MessageType => MessageType.OrderData;
 
-        public int Sequence { get; private set; }
+        public int Sequence { get; set; }
 
         public string AccountId { get; set; }
         public string Id { get; set; }

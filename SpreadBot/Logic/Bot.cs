@@ -64,13 +64,12 @@ namespace SpreadBot.Logic
 
             if (botContext.currentOrderData != null)
             {
-                if (dataRepository.OrdersData.TryGetValue(botContext.currentOrderData.ClientOrderId, out var updatedOrder))
-                    await ProcessOrderData(updatedOrder);
-                else
+                if (!dataRepository.OrdersData.TryGetValue(botContext.currentOrderData.ClientOrderId, out var updatedOrder))
                 {
-                    // TODO how to recover from this?
-                    await ProcessOrderData(null);
+                    updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.currentOrderData.ClientOrderId);
                 }
+                    
+                await ProcessOrderData(updatedOrder);
             }
 
             //This will trigger a call to ProcessMessage
@@ -84,7 +83,7 @@ namespace SpreadBot.Logic
 
             LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
 
-            if (botContext.botState == BotState.FinishedWork)
+            if (botContext.BotState == BotState.FinishedWork)
             {
                 LogError("Bot is still running after FinishWork was called");
             }
@@ -113,15 +112,15 @@ namespace SpreadBot.Logic
                     //TODO: Clean up/refactor
                     switch (e.ApiErrorType)
                     {
-                        case ApiErrorType.DustTrade when botContext.botState == BotState.Bought:
+                        case ApiErrorType.DustTrade when botContext.BotState == BotState.Bought:
                             //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
-                            botContext.botState = BotState.Buying;
+                            botContext.BotState = BotState.Buying;
                             break;
                         case ApiErrorType.InsufficientFunds:
                             //Too many bots running?
                             await FinishWork();
                             break;
-                        case ApiErrorType.MarketOffline when botContext.botState == BotState.Buying:
+                        case ApiErrorType.MarketOffline when botContext.BotState == BotState.Buying:
                             await FinishWork();
                             break;
                         case ApiErrorType.OrderNotOpen:
@@ -172,7 +171,7 @@ namespace SpreadBot.Logic
             switch (orderData?.Status)
             {
                 case OrderStatus.OPEN:
-                    botContext.botState = (orderData?.Direction) switch
+                    botContext.BotState = (orderData?.Direction) switch
                     {
                         OrderDirection.BUY => BotState.BuyOrderActive,
                         OrderDirection.SELL => BotState.SellOrderActive,
@@ -200,11 +199,11 @@ namespace SpreadBot.Logic
 
                     if (botContext.HeldAmount * botContext.latestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {
-                        botContext.botState = BotState.Bought;
+                        botContext.BotState = BotState.Bought;
                         await ProcessMarketData(botContext.latestMarketData); //So that we immediatelly set a sell order
                     }
                     else if (botContext.Balance > botContext.spreadConfiguration.MinimumNegotiatedAmount)
-                        botContext.botState = BotState.Buying;
+                        botContext.BotState = BotState.Buying;
                     else
                         await FinishWork(); //Can't buy or sell, so stop
 
@@ -219,7 +218,7 @@ namespace SpreadBot.Logic
             if (HeldAmount > 0)
                 await CleanDust();
 
-            botContext.botState = BotState.FinishedWork;
+            botContext.BotState = BotState.FinishedWork;
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
             semaphore.Clear();
