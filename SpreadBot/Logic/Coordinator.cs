@@ -57,7 +57,7 @@ namespace SpreadBot.Logic
 
         public void Start()
         {
-            // StartCurrentBots();
+            StartCurrentBots();
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 this.dataRepository.SubscribeToCurrencyBalance(baseMarket, guid, (bd) => ReportBalance());
@@ -65,6 +65,9 @@ namespace SpreadBot.Logic
 
         private void StartCurrentBots()
         {
+            if (!appSettings.TryToRestoreSession)
+                return;
+
             foreach (var bot in context.Initialize(dataRepository, UnallocateBot, botStrategiesFactory))
             {
                 var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(bot.SpreadConfigurationGuid, key => new ConcurrentDictionary<string, bool>());
@@ -168,7 +171,7 @@ namespace SpreadBot.Logic
             balanceSemaphore.Wait();
             
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket), baseMarket);
+                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket).ToList(), baseMarket);
 
             balanceSemaphore.Release();
         }
