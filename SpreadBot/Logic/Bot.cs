@@ -36,17 +36,17 @@ namespace SpreadBot.Logic
         public Guid Guid => botContext.Guid;
         public Guid SpreadConfigurationGuid => botContext.spreadConfiguration.Guid;
         public string BaseMarket => botContext.spreadConfiguration.BaseMarket;
-        public string MarketSymbol => botContext.latestMarketData.Symbol;
+        public string MarketSymbol => botContext.LatestMarketData.Symbol;
         public decimal Balance => botContext.Balance;
         public decimal HeldAmount => botContext.HeldAmount;
-        public decimal LastTradeRate => botContext.latestMarketData.LastTradeRate.GetValueOrDefault();
+        public decimal LastTradeRate => botContext.LatestMarketData.LastTradeRate.GetValueOrDefault();
 
         private void SetCurrentOrderData(OrderData value)
         {
-            if (botContext.currentOrderData?.Id != value?.Id)
+            if (botContext.CurrentOrderData?.Id != value?.Id)
             {
-                if (botContext.currentOrderData != null)
-                    dataRepository.UnsubscribeToOrderData(botContext.currentOrderData.ClientOrderId, Guid);
+                if (botContext.CurrentOrderData != null)
+                    dataRepository.UnsubscribeToOrderData(botContext.CurrentOrderData.ClientOrderId, Guid);
 
                 if (value?.Status == OrderStatus.OPEN)
                     dataRepository.SubscribeToOrderData(value.ClientOrderId, Guid, ProcessMessage);
@@ -55,18 +55,24 @@ namespace SpreadBot.Logic
                 dataRepository.UnsubscribeToOrderData(value.ClientOrderId, Guid);
 
 
-            botContext.currentOrderData = value;
+            botContext.CurrentOrderData = value;
         }
 
         public async void Start()
         {
             LogMessage($"started on {MarketSymbol}");
 
-            if (botContext.currentOrderData != null)
+            if (botContext.CurrentOrderData != null)
             {
-                if (!dataRepository.OrdersData.TryGetValue(botContext.currentOrderData.ClientOrderId, out var updatedOrder))
+                if (!dataRepository.OrdersData.TryGetValue(botContext.CurrentOrderData.ClientOrderId, out var updatedOrder))
                 {
-                    updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.currentOrderData.ClientOrderId);
+                    try
+                    {
+                        updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.ClientOrderId);
+                    } catch (Exception e)
+                    {
+                        LogError(e.ToString());
+                    }
                 }
                     
                 await ProcessOrderData(updatedOrder);
@@ -150,7 +156,7 @@ namespace SpreadBot.Logic
 
         private async Task ProcessMarketData(MarketData marketData)
         {
-            botContext.latestMarketData = marketData;
+            botContext.LatestMarketData = marketData;
 
             await botStrategy.ProcessMarketData(dataRepository, botContext, ExecuteOrderFunction, FinishWork);
         }
@@ -165,7 +171,7 @@ namespace SpreadBot.Logic
         //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
-            if (orderData.Id != botContext.currentOrderData?.Id)
+            if (orderData.Id != botContext.CurrentOrderData?.Id)
                 return;
 
             switch (orderData?.Status)
@@ -186,7 +192,7 @@ namespace SpreadBot.Logic
                         case OrderDirection.BUY:
                             botContext.HeldAmount += orderData.FillQuantity;
                             botContext.Balance -= orderData.Proceeds + orderData.Commission;
-                            botContext.boughtPrice = orderData.Limit;
+                            botContext.BoughtPrice = orderData.Limit;
                             botContext.buyStopwatch.Restart();
                             break;
                         case OrderDirection.SELL:
@@ -197,10 +203,10 @@ namespace SpreadBot.Logic
                             throw new ArgumentException();
                     }
 
-                    if (botContext.HeldAmount * botContext.latestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
+                    if (botContext.HeldAmount * botContext.LatestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {
                         botContext.BotState = BotState.Bought;
-                        await ProcessMarketData(botContext.latestMarketData); //So that we immediatelly set a sell order
+                        await ProcessMarketData(botContext.LatestMarketData); //So that we immediatelly set a sell order
                     }
                     else if (botContext.Balance > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                         botContext.BotState = BotState.Buying;
@@ -238,7 +244,7 @@ namespace SpreadBot.Logic
             OrderData sellOrder = null;
             try
             {
-                sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+                sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.RetryLater && retry) //Try just once more. TODO: Investigate if any more ApiErrorTypes should go here
             {
@@ -250,13 +256,13 @@ namespace SpreadBot.Logic
                 {
                     OrderData buyOrder = null;
 
-                    decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.latestMarketData.Precision);
+                    decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.LatestMarketData.Precision);
                     buyOrder = await exchange.BuyMarket(MarketSymbol, buyAmount);
 
                     if (buyOrder != null && buyOrder.Status == OrderStatus.CLOSED)
                         botContext.HeldAmount += buyOrder.FillQuantity;
 
-                    sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+                    sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
                 }
                 catch (Exception ex)
                 {

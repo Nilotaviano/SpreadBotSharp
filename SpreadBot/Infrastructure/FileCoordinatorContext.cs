@@ -19,7 +19,7 @@ namespace SpreadBot.Infrastructure
 
         public FileCoordinatorContext()
         {
-            saveDataTPSController = new Timer(TimeSpan.FromSeconds(3).TotalMilliseconds);
+            saveDataTPSController = new Timer(TimeSpan.FromSeconds(1).TotalMilliseconds);
             saveDataTPSController.AutoReset = false;
             saveDataTPSController.Stop();
             saveDataTPSController.Elapsed += (sender, args) => SaveData();
@@ -130,6 +130,10 @@ namespace SpreadBot.Infrastructure
 
         private void RequestSaveData()
         {
+            // If the timer is enabled it's about to save the whole data so instead of delaying the save we just wait for it
+            if (saveDataTPSController.Enabled)
+                return;
+
             saveDataTPSController.Stop();
             saveDataTPSController.Start();
         }

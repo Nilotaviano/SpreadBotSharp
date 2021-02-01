@@ -9,16 +9,16 @@ namespace SpreadBot.Logic.BotStrategies.Spread
     {
         public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
-            if (!botContext.latestMarketData.AskRate.HasValue)
+            if (!botContext.LatestMarketData.AskRate.HasValue)
                 return;
 
-            decimal askPrice = botContext.latestMarketData.AskRate.Value - 1.Satoshi().CeilToPrecision(botContext.latestMarketData.Precision);
+            decimal askPrice = botContext.LatestMarketData.AskRate.Value - 1.Satoshi().CeilToPrecision(botContext.LatestMarketData.Precision);
 
             bool canSellAtLoss = botContext.buyStopwatch.Elapsed.TotalMinutes > botContext.spreadConfiguration.MinutesForLoss;
             if (!canSellAtLoss)
-                askPrice = Math.Max(botContext.boughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToPrecision(botContext.latestMarketData.Precision);
+                askPrice = Math.Max(botContext.BoughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToPrecision(botContext.LatestMarketData.Precision);
 
-            await executeOrderFunctionCallback(async () => await dataRepository.Exchange.SellLimit(botContext.latestMarketData.Symbol, botContext.HeldAmount, askPrice));
+            await executeOrderFunctionCallback(async () => await dataRepository.Exchange.SellLimit(botContext.LatestMarketData.Symbol, botContext.HeldAmount, askPrice));
         }
     }
 }

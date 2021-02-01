@@ -14,9 +14,9 @@ namespace SpreadBot.Infrastructure
         public readonly SpreadConfiguration spreadConfiguration;
         public readonly Stopwatch buyStopwatch = new Stopwatch();
 
-        public MarketData latestMarketData;
-        public OrderData currentOrderData;
-        public decimal boughtPrice;
+        private MarketData latestMarketData;
+        private OrderData currentOrderData;
+        private decimal boughtPrice;
         private BotState botState;
         private decimal heldAmount;
         private decimal balance;
@@ -25,7 +25,7 @@ namespace SpreadBot.Infrastructure
         {
             Guid = Guid.NewGuid();
             this.spreadConfiguration = spreadConfiguration;
-            this.latestMarketData = marketData;
+            this.LatestMarketData = marketData;
             this.BotState = buy;
             this.Balance = spreadConfiguration.AllocatedAmountOfBaseCurrency;
             this.HeldAmount = existingDust;
@@ -34,7 +34,8 @@ namespace SpreadBot.Infrastructure
         //Initial balance + profit/loss
         public decimal Balance
         {
-            get => balance; set
+            get => balance;
+            set
             {
                 balance = value;
                 NotifyPropertyChanged();
@@ -54,9 +55,39 @@ namespace SpreadBot.Infrastructure
 
         public BotState BotState
         {
-            get => botState; set
+            get => botState;
+            set
             {
                 botState = value;
+                NotifyPropertyChanged();
+            }
+        }
+
+        public OrderData CurrentOrderData
+        {
+            get => currentOrderData;
+            set
+            {
+                currentOrderData = value;
+                NotifyPropertyChanged();
+            }
+        }
+
+        public MarketData LatestMarketData
+        {
+            get => latestMarketData;
+            set
+            {
+                latestMarketData = value;
+                NotifyPropertyChanged();
+            }
+        }
+        public decimal BoughtPrice
+        {
+            get => boughtPrice;
+            set
+            {
+                boughtPrice = value;
                 NotifyPropertyChanged();
             }
         }
