@@ -394,7 +394,18 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             }
             catch (Exception e)
             {
-                Logger.Instance.LogUnexpectedError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
+                string errorDescription;
+                try
+                {
+                    errorDescription = JsonConvert.SerializeObject(e);
+                }
+                catch (Exception serializationException)
+                {
+                    errorDescription = e.ToString();
+                    Logger.Instance.LogUnexpectedError($"Error when serializing exception. Using ToString instead. SerializationException: {serializationException}");
+                }
+
+                Logger.Instance.LogUnexpectedError($"Error parsing API error data: {errorDescription}");
 
                 return ApiErrorType.UnknownError;
             }
