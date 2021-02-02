@@ -13,13 +13,9 @@ namespace SpreadBot.Infrastructure
     public interface ICoordinatorContext
     {
         /// <summary>
-        /// Initialize stored bots with correct parameters. This function MUST be called between program executions.
+        /// Gets stored bot contexts from last session.
         /// </summary>
-        /// <param name="dataRepository"></param>
-        /// <param name="unallocateBotCallback"></param>
-        /// <param name="botStrategiesFactory"></param>
-        /// <returns></returns>
-        IEnumerable<Bot> Initialize(DataRepository dataRepository, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory);
+        PreviousSessionContext GetPreviousSessionContext();
 
         /// <summary>
         /// Associates an amount of dust to some currency
@@ -27,6 +23,12 @@ namespace SpreadBot.Infrastructure
         /// <param name="marketSymbol">The currency of the accumulated dust</param>
         /// <param name="dust">The dust value</param>
         void AddDustForMarket(string marketSymbol, decimal dust);
+
+        /// <summary>
+        /// Associates an amount of dust to some currencies
+        /// </summary>
+        /// <param name="dustPerMarket">A map of dust values indexed by market symbols</param>
+        void AddDustForMarkets(Dictionary<string, decimal> dustPerMarket);
 
         /// <summary>
         /// Removes the dust from the associated symbol

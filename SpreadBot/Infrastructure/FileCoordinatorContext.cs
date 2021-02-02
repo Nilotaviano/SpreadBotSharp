@@ -28,26 +28,16 @@ namespace SpreadBot.Infrastructure
         private ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
         private ConcurrentDictionary<string, decimal> DustPerMarket { get; set; } = new ConcurrentDictionary<string, decimal>();
 
-        public IEnumerable<Bot> Initialize(DataRepository dataRepository, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
+        public PreviousSessionContext GetPreviousSessionContext()
         {
             if (File.Exists(FILE_NAME))
             {
                 contextSemaphore.Wait();
                 try
                 {
-                    var savedData = JsonConvert.DeserializeObject<SavedData>(File.ReadAllText(FILE_NAME));
+                    var savedData = JsonConvert.DeserializeObject<PreviousSessionContext>(File.ReadAllText(FILE_NAME));
 
-                    if (savedData.BotContexts != null)
-                    {
-                        foreach (var botContext in savedData.BotContexts)
-                        {
-                            var bot = new Bot(dataRepository, botContext, unallocateBotCallback, botStrategiesFactory);
-                            InnerAddBot(bot);
-                        }
-                    }
-
-                    if (savedData.DustPerMarket != null)
-                        DustPerMarket = new ConcurrentDictionary<string, decimal>(savedData.DustPerMarket);
+                    return savedData;
                 }
                 catch (Exception e)
                 {
@@ -59,12 +49,23 @@ namespace SpreadBot.Infrastructure
                 }
             }
 
-            return AllocatedBotsByGuid.Values;
+            return null;
         }
 
         public void AddDustForMarket(string marketSymbol, decimal dust)
         {
-            DustPerMarket.AddOrUpdate(marketSymbol, dust, (key, existingData) => existingData + dust);
+            UpdateDustValue(marketSymbol, dust);
+            RequestSaveData();
+        }
+
+        public void AddDustForMarkets(Dictionary<string, decimal> dustPerMarket)
+        {
+            if (dustPerMarket == null)
+                return;
+
+            foreach (var dustEntry in dustPerMarket)
+                UpdateDustValue(dustEntry.Key, dustEntry.Value);
+            
             RequestSaveData();
         }
 
@@ -79,7 +80,8 @@ namespace SpreadBot.Infrastructure
 
         public void AddBot(Bot bot)
         {
-            InnerAddBot(bot);
+            AllocatedBotsByGuid[bot.Guid] = bot;
+            ListenBotEvents(bot);
 
             RequestSaveData();
         }
@@ -107,10 +109,9 @@ namespace SpreadBot.Infrastructure
             return removed;
         }
 
-        private void InnerAddBot(Bot bot)
+        private void UpdateDustValue(string marketSymbol, decimal dust)
         {
-            AllocatedBotsByGuid[bot.Guid] = bot;
-            ListenBotEvents(bot);
+            DustPerMarket.AddOrUpdate(marketSymbol, dust, (key, existingData) => existingData + dust);
         }
 
         private void ListenBotEvents(Bot bot)
@@ -143,7 +144,7 @@ namespace SpreadBot.Infrastructure
             contextSemaphore.Wait();
             try
             {
-                var savedData = new SavedData
+                var savedData = new PreviousSessionContext
                 {
                     BotContexts = new List<BotContext>(AllocatedBotsByGuid.Values.Select(b => b.botContext)),
                     DustPerMarket = new Dictionary<string, decimal>(this.DustPerMarket)
@@ -157,12 +158,6 @@ namespace SpreadBot.Infrastructure
             {
                 contextSemaphore.Release();
             }
-        }
-
-        public class SavedData
-        {
-            public List<BotContext> BotContexts { get; set; }
-            public Dictionary<string, decimal> DustPerMarket { get; set; }
         }
     }
 }

@@ -57,26 +57,40 @@ namespace SpreadBot.Logic
 
         public void Start()
         {
-            StartCurrentBots();
+            if (appSettings.TryToRestoreSession)
+                RestorePreviousSession();
+
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 this.dataRepository.SubscribeToCurrencyBalance(baseMarket, guid, (bd) => ReportBalance());
         }
 
-        private void StartCurrentBots()
+        private void RestorePreviousSession()
         {
-            if (!appSettings.TryToRestoreSession)
-                return;
+            var previousSession = context.GetPreviousSessionContext();
 
-            foreach (var bot in context.Initialize(dataRepository, UnallocateBot, botStrategiesFactory))
+            if (previousSession == null)
             {
-                var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(bot.SpreadConfigurationGuid, key => new ConcurrentDictionary<string, bool>());
+                Logger.Instance.LogMessage("No previous session data.");
+                return;
+            }
 
-                allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
+            context.AddDustForMarkets(previousSession.DustPerMarket);
 
-                AllocateBot(bot);
+            if (previousSession.BotContexts != null)
+            {
+                foreach (var botContext in previousSession.BotContexts)
+                {
+                    var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory);
 
-                Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
+                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(bot.SpreadConfigurationGuid, key => new ConcurrentDictionary<string, bool>());
+
+                    allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
+
+                    AllocateBot(bot);
+
+                    Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
+                }
             }
         }
 
@@ -136,7 +150,6 @@ namespace SpreadBot.Logic
                         // TODO keep dust values between executions
                         var existingDust = context.RemoveDustForMarket(market.Symbol);
                         var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
-                        context.AddBot(bot);
 
                         AllocateBot(bot);
                     }
@@ -150,6 +163,7 @@ namespace SpreadBot.Logic
         private void AllocateBot(Bot bot)
         {
             balanceSemaphore.Wait();
+            context.AddBot(bot);
             availableBalanceForBaseMarket.AddOrUpdate(
                 bot.BaseMarket,
                 bot.Balance * -1,
