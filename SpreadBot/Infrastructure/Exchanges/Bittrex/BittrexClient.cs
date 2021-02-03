@@ -113,14 +113,30 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
         }
 
-        public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit)
+        public async Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetOpenOrdersData()
         {
-            return await ExecuteLimitOrder(OrderDirection.BUY, marketSymbol, quantity, limit);
+            var request = new RestRequest("/orders/open", Method.GET, DataFormat.Json);
+
+            return await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
         }
 
-        public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit)
+        public async Task<OrderData> GetOrderData(string orderId)
         {
-            return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit);
+            var request = new RestRequest($"/orders/{orderId}", Method.GET, DataFormat.Json);
+
+            var order = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
+
+            return order?.Data?.ToOrderData();
+        }
+
+        public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
+        {
+            return await ExecuteLimitOrder(OrderDirection.BUY, marketSymbol, quantity, limit, clientOrderId: clientOrderId);
+        }
+
+        public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
+        {
+            return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit, clientOrderId: clientOrderId);
         }
 
         public async Task<OrderData> BuyMarket(string marketSymbol, decimal quantity)
@@ -208,7 +224,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return success;
         }
 
-        public async Task<OrderData> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true)
+        public async Task<OrderData> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true, string clientOrderId = null)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
             var body = JsonConvert.SerializeObject(new
@@ -219,7 +235,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 direction = direction.ToString(),
                 type = OrderType.LIMIT.ToString(),
                 timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString(),
-                useAwards = useCredits && UseBittrexCredits
+                useAwards = useCredits && UseBittrexCredits,
+                clientOrderId
             });
             request.AddParameter("application/json", body, ParameterType.RequestBody);
 
@@ -232,7 +249,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             catch (ApiException e) when ((e.ApiErrorType == ApiErrorType.CannotEstimateCommission || e.ApiErrorType == ApiErrorType.RetryLater) && useCredits)
             {
                 Logger.Instance.LogMessage("Handling INSUFFICIENT_AWARDS for " + marketSymbol);
-                return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false);
+                return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false, clientOrderId);
             }
         }
 
@@ -382,6 +399,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     "CANNOT_ESTIMATE_COMMISSION" => ApiErrorType.CannotEstimateCommission,
                     "RATE_PRECISION_NOT_ALLOWED" => ApiErrorType.PrecisionNotAllowed,
                     "MIN_TRADE_REQUIREMENT_NOT_MET" => ApiErrorType.DustTrade,
+                    "CLIENTORDERID_ALREADY_EXISTS" => ApiErrorType.ClientOrderIdAlreadyExists,
                     _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
                     _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,
                     _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline,
@@ -392,7 +410,18 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             }
             catch (Exception e)
             {
-                Logger.Instance.LogUnexpectedError($"Error parsing API error data: {JsonConvert.SerializeObject(e)}");
+                string errorDescription;
+                try
+                {
+                    errorDescription = JsonConvert.SerializeObject(e);
+                }
+                catch (Exception serializationException)
+                {
+                    errorDescription = e.ToString();
+                    Logger.Instance.LogUnexpectedError($"Error when serializing exception. Using ToString instead. SerializationException: {serializationException}");
+                }
+
+                Logger.Instance.LogUnexpectedError($"Error parsing API error data: {errorDescription}");
 
                 return ApiErrorType.UnknownError;
             }

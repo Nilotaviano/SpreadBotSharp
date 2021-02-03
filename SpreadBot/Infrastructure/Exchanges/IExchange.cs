@@ -22,8 +22,8 @@ namespace SpreadBot.Infrastructure.Exchanges
         void OnOrder(Action<BittrexApiOrderData> callback);
 
         //Rest API methods
-        Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
-        Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
+        Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
+        Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
         Task<OrderData> BuyMarket(string marketSymbol, decimal quantity);
         Task<OrderData> SellMarket(string marketSymbol, decimal quantity);
         Task<OrderData> CancelOrder(string orderId);
@@ -33,5 +33,8 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<BittrexApiMarketSummariesData> GetMarketSummariesData();
         Task<BittrexApiMarketData[]> GetMarketsData();
         Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId);
+        Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetOpenOrdersData();
+
+        Task<OrderData> GetOrderData(string orderId);
     }
 }

@@ -1,28 +1,24 @@
 ﻿using SpreadBot.Infrastructure;
-using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadBuyStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
+        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
-            if (!botContext.latestMarketData.BidRate.HasValue)
+            if (!botContext.LatestMarketData.BidRate.HasValue)
                 return;
 
-            if (botContext.latestMarketData.SpreadPercentage >= botContext.spreadConfiguration.MinimumSpreadPercentage)
+            if (botContext.LatestMarketData.SpreadPercentage >= botContext.spreadConfiguration.MinimumSpreadPercentage)
             {
 
-                decimal bidPrice = (botContext.latestMarketData.BidRate.Value + 1.Satoshi()).CeilToPrecision(botContext.latestMarketData.Precision);
-                decimal amount = (botContext.Balance * (1 - botContext.exchange.FeeRate) / bidPrice).CeilToPrecision(botContext.latestMarketData.Precision);
+                decimal bidPrice = (botContext.LatestMarketData.BidRate.Value + 1.Satoshi()).CeilToPrecision(botContext.LatestMarketData.Precision);
+                decimal amount = (botContext.Balance * (1 - dataRepository.Exchange.FeeRate) / bidPrice).CeilToPrecision(botContext.LatestMarketData.Precision);
 
-                await executeOrderFunctionCallback(async () => await botContext.exchange.BuyLimit(botContext.latestMarketData.Symbol, amount, bidPrice));
+                await executeOrderFunctionCallback(async () => await dataRepository.Exchange.BuyLimit(botContext.LatestMarketData.Symbol, amount, bidPrice));
             }
             else
                 await finishWorkCallBack();

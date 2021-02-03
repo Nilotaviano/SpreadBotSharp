@@ -9,6 +9,8 @@ namespace SpreadBot.Infrastructure
     {
         public event EventHandler Reloaded;
 
+        public bool TryToRestoreSession { get; set; }
+
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }

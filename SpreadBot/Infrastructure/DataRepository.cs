@@ -70,6 +70,11 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public ConcurrentDictionary<string, MarketData> MarketsData { get; private set; } = new ConcurrentDictionary<string, MarketData>();
 
+        /// <summary>
+        /// MarketData dictionary indexed by Symbol
+        /// </summary>
+        public ConcurrentDictionary<string, OrderData> OrdersData { get; private set; } = new ConcurrentDictionary<string, OrderData>();
+
         // key: currency abbreviation, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
         // key: Guid — which will be used for unsubscribing, value: handlers 
@@ -125,12 +130,16 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific order by orderId
         /// </summary>
-        public void SubscribeToOrderData(string orderId, Guid handlerGuid, Action<OrderData> callback)
+        public void SubscribeToOrderData(string clientOrderId, Guid handlerGuid, Action<OrderData> callback)
         {
-            if (!OrderHandlers.TryGetValue(orderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
-                OrderHandlers[orderId] = handlers = new ConcurrentDictionary<Guid, Action<OrderData>>();
+            if (!OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+                OrderHandlers[clientOrderId] = handlers = new ConcurrentDictionary<Guid, Action<OrderData>>();
 
             handlers[handlerGuid] = callback;
+
+            //If there is already data for the market, fire callback
+            if (OrdersData.ContainsKey(clientOrderId))
+                callback(OrdersData[clientOrderId]);
         }
 
         public void UnsubscribeToMarketsData(Guid handlerGuid)
@@ -163,15 +172,17 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Unsubscribe to a specific order by orderId
         /// </summary>
-        public void UnsubscribeToOrderData(string orderId, Guid handlerGuid)
+        public void UnsubscribeToOrderData(string clientOrderId, Guid handlerGuid)
         {
-            if (OrderHandlers.TryGetValue(orderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+            if (OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
             {
                 handlers.Remove(handlerGuid, out _);
 
                 if (handlers.Count == 0)
-                    OrderHandlers.Remove(orderId, out _);
+                    OrderHandlers.Remove(clientOrderId, out _);
             }
+
+            OrdersData.Remove(clientOrderId, out _);
         }
 
         public void StartConsumingData()
@@ -242,8 +253,9 @@ namespace SpreadBot.Infrastructure
                 }
 
                 var data = new OrderData(orderData);
+                OrdersData.AddOrUpdate(data.ClientOrderId, data, (id, existing) => existing.Status == Models.OrderStatus.CLOSED ? existing : data);
 
-                InvokeHandlers(this.OrderHandlers, data.Id, data);
+                InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
 
                 lastOrderSequence = orderData.Sequence;
             });
@@ -343,6 +355,7 @@ namespace SpreadBot.Infrastructure
                 FetchBalanceData(),
                 FetchMarketSummariesData(),
                 FetchTickersData(),
+                FetchOpenOrdersData(),
                 FetchClosedOrdersData(),
                 FetchMarketsData()
             );
@@ -415,6 +428,25 @@ namespace SpreadBot.Infrastructure
             }
         }
 
+        private async Task FetchOpenOrdersData()
+        {
+            //TODO: Handle exceptions here
+            var openOrders = await Exchange.GetOpenOrdersData();
+
+            if (openOrders.Data != null && openOrders.Data.Any())
+            {
+                foreach (var order in openOrders.Data)
+                {
+                    var orderData = new OrderData(order);
+                    OrdersData[orderData.ClientOrderId] = orderData;
+                    InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
+                }
+            }
+
+            // There is no sequence information in OpenOrders
+            lastOrderSequence = null;
+        }
+
         private async Task FetchClosedOrdersData()
         {
             //TODO: Handle exceptions here
@@ -427,7 +459,8 @@ namespace SpreadBot.Infrastructure
                 foreach (var order in closedOrders.Data)
                 {
                     var orderData = new OrderData(order);
-                    InvokeHandlers(OrderHandlers, orderData.Id, orderData);
+                    OrdersData[orderData.ClientOrderId] = orderData;
+                    InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
                 }
             }
 

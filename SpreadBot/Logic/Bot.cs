@@ -5,59 +5,79 @@ using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Logic
 {
     public class Bot
     {
+        public readonly BotContext botContext;
+
         private readonly Action<Bot> unallocateBotCallback;
         private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
 
-        private readonly BotContext botContext;
         private readonly DataRepository dataRepository;
+        private IExchange exchange => dataRepository.Exchange;
 
         private readonly IBotStrategy botStrategy;
 
-        public Bot(AppSettings appSettings, DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, decimal existingDust)
+        public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
             this.dataRepository = dataRepository;
-            botContext = new BotContext(appSettings, dataRepository.Exchange, spreadConfiguration, marketData, BotState.Buying, existingDust);
+            this.botContext = context;
             this.unallocateBotCallback = unallocateBotCallback;
             botStrategy = botStrategiesFactory.GetStrategy();
         }
 
+        public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
+            : this(dataRepository, new BotContext(spreadConfiguration, marketData, BotState.Buying, existingDust), unallocateBotCallback, botStrategiesFactory)
+        { }
+
         public Guid Guid => botContext.Guid;
         public Guid SpreadConfigurationGuid => botContext.spreadConfiguration.Guid;
         public string BaseMarket => botContext.spreadConfiguration.BaseMarket;
-        public string MarketSymbol => botContext.latestMarketData.Symbol;
+        public string MarketSymbol => botContext.LatestMarketData.Symbol;
         public decimal Balance => botContext.Balance;
         public decimal HeldAmount => botContext.HeldAmount;
-        public decimal LastTradeRate => botContext.latestMarketData.LastTradeRate.GetValueOrDefault();
+        public decimal LastTradeRate => botContext.LatestMarketData.LastTradeRate.GetValueOrDefault();
 
         private void SetCurrentOrderData(OrderData value)
         {
-            if (botContext.currentOrderData?.Id != value?.Id)
+            if (botContext.CurrentOrderData?.Id != value?.Id)
             {
-                if (botContext.currentOrderData != null)
-                    dataRepository.UnsubscribeToOrderData(botContext.currentOrderData.Id, Guid);
+                if (botContext.CurrentOrderData != null)
+                    dataRepository.UnsubscribeToOrderData(botContext.CurrentOrderData.ClientOrderId, Guid);
 
                 if (value?.Status == OrderStatus.OPEN)
-                    dataRepository.SubscribeToOrderData(value.Id, Guid, ProcessMessage);
+                    dataRepository.SubscribeToOrderData(value.ClientOrderId, Guid, ProcessMessage);
             }
             if (value?.Status == OrderStatus.CLOSED)
-                dataRepository.UnsubscribeToOrderData(value.Id, Guid);
+                dataRepository.UnsubscribeToOrderData(value.ClientOrderId, Guid);
 
 
-            botContext.currentOrderData = value;
+            botContext.CurrentOrderData = value;
         }
 
-        public void Start()
+        public async void Start()
         {
             LogMessage($"started on {MarketSymbol}");
+
+            if (botContext.CurrentOrderData != null)
+            {
+                if (!dataRepository.OrdersData.TryGetValue(botContext.CurrentOrderData.ClientOrderId, out var updatedOrder))
+                {
+                    try
+                    {
+                        updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.ClientOrderId);
+                    } catch (Exception e)
+                    {
+                        LogError(e.ToString());
+                    }
+                }
+                    
+                await ProcessOrderData(updatedOrder);
+            }
+
             //This will trigger a call to ProcessMessage
             dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
         }
@@ -69,7 +89,7 @@ namespace SpreadBot.Logic
 
             LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
 
-            if (botContext.botState == BotState.FinishedWork)
+            if (botContext.BotState == BotState.FinishedWork)
             {
                 LogError("Bot is still running after FinishWork was called");
             }
@@ -98,9 +118,9 @@ namespace SpreadBot.Logic
                     //TODO: Clean up/refactor
                     switch (e.ApiErrorType)
                     {
-                        case ApiErrorType.DustTrade when botContext.botState == BotState.Bought:
+                        case ApiErrorType.DustTrade when botContext.BotState == BotState.Bought:
                             //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
-                            botContext.botState = BotState.Buying;
+                            botContext.BotState = BotState.Buying;
                             break;
                         case ApiErrorType.DustTrade when botContext.botState == BotState.Buying:
                             await FinishWork();
@@ -109,7 +129,7 @@ namespace SpreadBot.Logic
                             //Too many bots running?
                             await FinishWork();
                             break;
-                        case ApiErrorType.MarketOffline when botContext.botState == BotState.Buying:
+                        case ApiErrorType.MarketOffline when botContext.BotState == BotState.Buying:
                             await FinishWork();
                             break;
                         case ApiErrorType.OrderNotOpen:
@@ -139,9 +159,9 @@ namespace SpreadBot.Logic
 
         private async Task ProcessMarketData(MarketData marketData)
         {
-            botContext.latestMarketData = marketData;
+            botContext.LatestMarketData = marketData;
 
-            await botStrategy.ProcessMarketData(botContext, ExecuteOrderFunction, FinishWork);
+            await botStrategy.ProcessMarketData(dataRepository, botContext, ExecuteOrderFunction, FinishWork);
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
@@ -154,13 +174,13 @@ namespace SpreadBot.Logic
         //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
-            if (orderData.Id != botContext.currentOrderData?.Id)
+            if (orderData.Id != botContext.CurrentOrderData?.Id)
                 return;
 
             switch (orderData?.Status)
             {
                 case OrderStatus.OPEN:
-                    botContext.botState = (orderData?.Direction) switch
+                    botContext.BotState = (orderData?.Direction) switch
                     {
                         OrderDirection.BUY => BotState.BuyOrderActive,
                         OrderDirection.SELL => BotState.SellOrderActive,
@@ -175,7 +195,7 @@ namespace SpreadBot.Logic
                         case OrderDirection.BUY:
                             botContext.HeldAmount += orderData.FillQuantity;
                             botContext.Balance -= orderData.Proceeds + orderData.Commission;
-                            botContext.boughtPrice = orderData.Limit;
+                            botContext.BoughtPrice = orderData.Limit;
                             botContext.buyStopwatch.Restart();
                             break;
                         case OrderDirection.SELL:
@@ -186,13 +206,13 @@ namespace SpreadBot.Logic
                             throw new ArgumentException();
                     }
 
-                    if (botContext.HeldAmount * botContext.latestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
+                    if (botContext.HeldAmount * botContext.LatestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {
-                        botContext.botState = BotState.Bought;
-                        await ProcessMarketData(botContext.latestMarketData); //So that we immediatelly set a sell order
+                        botContext.BotState = BotState.Bought;
+                        await ProcessMarketData(botContext.LatestMarketData); //So that we immediatelly set a sell order
                     }
                     else if (botContext.Balance > botContext.spreadConfiguration.MinimumNegotiatedAmount)
-                        botContext.botState = BotState.Buying;
+                        botContext.BotState = BotState.Buying;
                     else
                         await FinishWork(); //Can't buy or sell, so stop
 
@@ -207,7 +227,7 @@ namespace SpreadBot.Logic
             if (HeldAmount > 0)
                 await CleanDust();
 
-            botContext.botState = BotState.FinishedWork;
+            botContext.BotState = BotState.FinishedWork;
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
             semaphore.Clear();
@@ -219,7 +239,7 @@ namespace SpreadBot.Logic
         private async Task CleanDust(bool retry = true)
         {
             //Check if dust is worth at least the fee it would cost to clean
-            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * botContext.exchange.FeeRate * botContext.spreadConfiguration.MinimumNegotiatedAmount;
+            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * exchange.FeeRate * botContext.spreadConfiguration.MinimumNegotiatedAmount;
 
             if (!dustIsWorthCleaning)
                 return;
@@ -227,7 +247,7 @@ namespace SpreadBot.Logic
             OrderData sellOrder = null;
             try
             {
-                sellOrder = await botContext.exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+                sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.RetryLater && retry) //Try just once more. TODO: Investigate if any more ApiErrorTypes should go here
             {
@@ -239,13 +259,13 @@ namespace SpreadBot.Logic
                 {
                     OrderData buyOrder = null;
 
-                    decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.latestMarketData.Precision);
-                    buyOrder = await botContext.exchange.BuyMarket(MarketSymbol, buyAmount);
+                    decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.LatestMarketData.Precision);
+                    buyOrder = await exchange.BuyMarket(MarketSymbol, buyAmount);
 
                     if (buyOrder != null && buyOrder.Status == OrderStatus.CLOSED)
                         botContext.HeldAmount += buyOrder.FillQuantity;
 
-                    sellOrder = await botContext.exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.latestMarketData.Precision));
+                    sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
                 }
                 catch (Exception ex)
                 {
