@@ -34,7 +34,6 @@ namespace SpreadBot.Logic
         { }
 
         public Guid Guid => botContext.Guid;
-        public Guid SpreadConfigurationGuid => botContext.spreadConfiguration.Guid;
         public string BaseMarket => botContext.spreadConfiguration.BaseMarket;
         public string MarketSymbol => botContext.LatestMarketData.Symbol;
         public decimal Balance => botContext.Balance;

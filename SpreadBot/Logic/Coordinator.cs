@@ -22,7 +22,7 @@ namespace SpreadBot.Logic
 
         private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
 
-        public ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>>();
+        public ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfiguration { get; } = new ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>>();
 
         public Coordinator(AppSettings appSettings, DataRepository dataRepository, ICoordinatorContext context)
         {
@@ -83,7 +83,7 @@ namespace SpreadBot.Logic
                 {
                     var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory);
 
-                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(bot.SpreadConfigurationGuid, key => new ConcurrentDictionary<string, bool>());
+                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(bot.botContext.spreadConfiguration, key => new ConcurrentDictionary<string, bool>());
 
                     allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
 
@@ -137,7 +137,7 @@ namespace SpreadBot.Logic
                         if (!EvaluateMarketBasedOnConfiguration(market, configuration))
                             continue;
 
-                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
+                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
 
                         if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
                         {
@@ -232,7 +232,7 @@ namespace SpreadBot.Logic
         {
             balanceSemaphore.Wait();
             bool removeAllocatedBot = context.RemoveBot(bot.Guid);
-            bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].TryRemove(bot.MarketSymbol, out _);
+            bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfiguration[bot.botContext.spreadConfiguration].TryRemove(bot.MarketSymbol, out _);
 
             if (!removeAllocatedBot)
                 Logger.Instance.LogUnexpectedError($"Couldn't remove allocated bot {bot.Guid}");
@@ -241,14 +241,14 @@ namespace SpreadBot.Logic
                 Logger.Instance.LogUnexpectedError($"Couldn't remove allocated market {bot.MarketSymbol}");
 
             Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
-            Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.SpreadConfigurationGuid}");
+            Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.Guid}");
 
             availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
             Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
-            balanceSemaphore.Release();
 
             if (bot.HeldAmount > 0)
                 context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
+            balanceSemaphore.Release();
         }
 
         private static IComparer<(decimal, decimal)> GetMarketComparer()
