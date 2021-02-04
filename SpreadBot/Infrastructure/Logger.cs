@@ -54,20 +54,29 @@ namespace SpreadBot.Infrastructure
                     case LogLevel.Message:
                         Console.ForegroundColor = ConsoleColor.Blue;
                         Console.BackgroundColor = ConsoleColor.White;
+                        Console.Out.Write(GetTimestamp());
                         Console.Out.WriteLine(log.Content);
                         break;
                     case LogLevel.Error:
                         Console.ForegroundColor = ConsoleColor.DarkYellow;
                         Console.BackgroundColor = ConsoleColor.White;
+                        Console.Error.Write(GetTimestamp());
                         Console.Error.WriteLine(log.Content);
                         break;
                     case LogLevel.UnexpectedError:
                         Console.ForegroundColor = ConsoleColor.DarkRed;
                         Console.BackgroundColor = ConsoleColor.White;
+                        Console.Error.Write(GetTimestamp());
                         Console.Error.WriteLine(log.Content);
                         break;
                 }
             }
+        }
+
+        private string GetTimestamp()
+        {
+            var now = DateTime.UtcNow;
+            return $"{now.Day}/{now.Month}T{now.ToShortTimeString()}Z - ";
         }
 
         private class Log
