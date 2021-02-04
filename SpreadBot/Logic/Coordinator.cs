@@ -128,7 +128,7 @@ namespace SpreadBot.Logic
                     {
                         if (!CanAllocateBotForConfiguration(configuration))
                         {
-                            Console.WriteLine($"Not enough balance/bots for market {market.Symbol}");
+                            Logger.Instance.LogMessage($"Not enough balance/bots for market {market.Symbol}");
                             continue;
                         }
 
@@ -202,7 +202,7 @@ namespace SpreadBot.Logic
 
             if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
             {
-                Console.WriteLine($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
+                Logger.Instance.LogMessage($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
                 return false;
             }
 
