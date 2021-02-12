@@ -76,7 +76,7 @@ namespace SpreadBot.Infrastructure
         private string GetTimestamp()
         {
             var now = DateTime.UtcNow;
-            return $"{now.Day}/{now.Month}T{now.ToShortTimeString()}Z - ";
+            return $"{now.Day}/{now.Month}T{now.Hour}:{now.Minute}:{now.Second}Z - ";
         }
 
         private class Log
