@@ -49,6 +49,7 @@ namespace SpreadBot.Logic
 
             configurationsByBaseMarket = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
 
+            // TODO This may break when restoring bots for different base markets
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
             {
                 availableBalanceForBaseMarket.TryAdd(baseMarket, this.dataRepository.BalancesData[baseMarket].Amount);

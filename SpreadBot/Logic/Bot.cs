@@ -196,6 +196,7 @@ namespace SpreadBot.Logic
                             break;
                         case OrderDirection.SELL:
                             botContext.HeldAmount -= orderData.FillQuantity;
+                            // TODO: This may break when recovering a bot after the order was closed because the balance was already integrated with total balance
                             botContext.Balance += orderData.Proceeds - orderData.Commission;
                             break;
                         default:
