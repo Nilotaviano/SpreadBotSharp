@@ -162,17 +162,18 @@ namespace SpreadBot.Logic
 
         private void AllocateBot(Bot bot)
         {
-            balanceSemaphore.Wait();
-            context.AddBot(bot);
-            availableBalanceForBaseMarket.AddOrUpdate(
-                bot.BaseMarket,
-                bot.Balance * -1,
-                (b, oldValue) => oldValue - bot.Balance
-            );
+            ExecuteBalanceRelatedAction($"allocating bot {bot.Guid}", () =>
+            {
+                context.AddBot(bot);
+                availableBalanceForBaseMarket.AddOrUpdate(
+                    bot.BaseMarket,
+                    bot.Balance * -1,
+                    (b, oldValue) => oldValue - bot.Balance
+                );
 
-            Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
-            bot.Start();
-            balanceSemaphore.Release();
+                Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
+                bot.Start();
+            });
         }
 
         private bool IsViableMarket(MarketData market)
@@ -182,12 +183,11 @@ namespace SpreadBot.Logic
 
         private void ReportBalance()
         {
-            balanceSemaphore.Wait();
-            
-            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket).ToList(), baseMarket);
-
-            balanceSemaphore.Release();
+            ExecuteBalanceRelatedAction("reporting balance", () =>
+            {
+                foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
+                    BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket).ToList(), baseMarket);
+            });
         }
 
         private (decimal, decimal) GetMarketOrderKey(MarketData marketData)
@@ -230,25 +230,26 @@ namespace SpreadBot.Logic
 
         private void UnallocateBot(Bot bot)
         {
-            balanceSemaphore.Wait();
-            bool removeAllocatedBot = context.RemoveBot(bot.Guid);
-            bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfiguration[bot.botContext.spreadConfiguration].TryRemove(bot.MarketSymbol, out _);
+            ExecuteBalanceRelatedAction($"unallocating bot {bot.Guid}", () =>
+            {
+                bool removeAllocatedBot = context.RemoveBot(bot.Guid);
+                bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfiguration[bot.botContext.spreadConfiguration].TryRemove(bot.MarketSymbol, out _);
 
-            if (!removeAllocatedBot)
-                Logger.Instance.LogUnexpectedError($"Couldn't remove allocated bot {bot.Guid}");
+                if (!removeAllocatedBot)
+                    Logger.Instance.LogUnexpectedError($"Couldn't remove allocated bot {bot.Guid}");
 
-            if (!removedAllocatedMarket)
-                Logger.Instance.LogUnexpectedError($"Couldn't remove allocated market {bot.MarketSymbol}");
+                if (!removedAllocatedMarket)
+                    Logger.Instance.LogUnexpectedError($"Couldn't remove allocated market {bot.MarketSymbol}");
 
-            Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
-            Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.Guid}");
+                Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
+                Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.Guid}");
 
-            availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
-            Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
+                availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
+                Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
 
-            if (bot.HeldAmount > 0)
-                context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
-            balanceSemaphore.Release();
+                if (bot.HeldAmount > 0)
+                    context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
+            });
         }
 
         private static IComparer<(decimal, decimal)> GetMarketComparer()
@@ -262,6 +263,27 @@ namespace SpreadBot.Logic
                 //    return key2.Item2.CompareTo(key1.Item2);
                 //return result;
             });
+        }
+
+        private void ExecuteBalanceRelatedAction(string description, Action action)
+        {
+            balanceSemaphore.Wait();
+
+            try
+            {
+                Logger.Instance.LogMessage($"Lock acquired for {description}");
+
+                action();
+            } catch (Exception e)
+            {
+                Logger.Instance.LogError($"Error while {description}. Exception: {e}");
+                throw e;
+            }
+            finally
+            {
+                balanceSemaphore.Release();
+                Logger.Instance.LogMessage($"Lock released after {description}");
+            }
         }
 
         public void Dispose()

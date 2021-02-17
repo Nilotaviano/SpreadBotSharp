@@ -94,10 +94,10 @@ namespace SpreadBot.Logic
             }
             else
             {
+                await semaphore.WaitAsync();
+
                 try
                 {
-                    await semaphore.WaitAsync();
-
                     switch (message.MessageType)
                     {
                         case MessageType.MarketData:
