@@ -15,6 +15,7 @@ namespace SpreadBot
     {
         static async Task Main(string[] args)
         {
+            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
             string settingsFileName = "appsettings.json";
 
             if (args != null && args.Length > 0)
@@ -68,6 +69,11 @@ namespace SpreadBot
             coordinator.Start();
 
             Console.ReadLine();
+        }
+
+        private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            Logger.Instance.LogUnexpectedError($"Global unhandled exception. Terminating: {e.IsTerminating}. Exception: {e.ExceptionObject}");
         }
 
         private static void TestHashCode()

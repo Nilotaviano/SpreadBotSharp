@@ -22,7 +22,7 @@ namespace SpreadBot.Logic
 
         private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
 
-        public ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfigurationId { get; } = new ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>>();
+        public ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfiguration { get; } = new ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>>();
 
         public Coordinator(AppSettings appSettings, DataRepository dataRepository, ICoordinatorContext context)
         {
@@ -49,6 +49,7 @@ namespace SpreadBot.Logic
 
             configurationsByBaseMarket = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
 
+            // TODO This may break when restoring bots for different base markets
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
             {
                 availableBalanceForBaseMarket.TryAdd(baseMarket, this.dataRepository.BalancesData[baseMarket].Amount);
@@ -83,7 +84,7 @@ namespace SpreadBot.Logic
                 {
                     var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory);
 
-                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(bot.SpreadConfigurationGuid, key => new ConcurrentDictionary<string, bool>());
+                    var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(bot.botContext.spreadConfiguration, key => new ConcurrentDictionary<string, bool>());
 
                     allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
 
@@ -128,7 +129,7 @@ namespace SpreadBot.Logic
                     {
                         if (!CanAllocateBotForConfiguration(configuration))
                         {
-                            Console.WriteLine($"Not enough balance/bots for market {market.Symbol}");
+                            Logger.Instance.LogMessage($"Not enough balance/bots for market {market.Symbol}");
                             continue;
                         }
 
@@ -137,7 +138,7 @@ namespace SpreadBot.Logic
                         if (!EvaluateMarketBasedOnConfiguration(market, configuration))
                             continue;
 
-                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfigurationId.GetOrAdd(configuration.Guid, key => new ConcurrentDictionary<string, bool>());
+                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
 
                         if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
                         {
@@ -162,17 +163,18 @@ namespace SpreadBot.Logic
 
         private void AllocateBot(Bot bot)
         {
-            balanceSemaphore.Wait();
-            context.AddBot(bot);
-            availableBalanceForBaseMarket.AddOrUpdate(
-                bot.BaseMarket,
-                bot.Balance * -1,
-                (b, oldValue) => oldValue - bot.Balance
-            );
+            ExecuteBalanceRelatedAction($"allocating bot {bot.Guid}", () =>
+            {
+                context.AddBot(bot);
+                availableBalanceForBaseMarket.AddOrUpdate(
+                    bot.BaseMarket,
+                    bot.Balance * -1,
+                    (b, oldValue) => oldValue - bot.Balance
+                );
 
-            Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
-            bot.Start();
-            balanceSemaphore.Release();
+                Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
+                bot.Start();
+            });
         }
 
         private bool IsViableMarket(MarketData market)
@@ -182,12 +184,11 @@ namespace SpreadBot.Logic
 
         private void ReportBalance()
         {
-            balanceSemaphore.Wait();
-            
-            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket).ToList(), baseMarket);
-
-            balanceSemaphore.Release();
+            ExecuteBalanceRelatedAction("reporting balance", () =>
+            {
+                foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
+                    BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket).ToList(), baseMarket);
+            });
         }
 
         private (decimal, decimal) GetMarketOrderKey(MarketData marketData)
@@ -202,7 +203,7 @@ namespace SpreadBot.Logic
 
             if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
             {
-                Console.WriteLine($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
+                Logger.Instance.LogMessage($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
                 return false;
             }
 
@@ -230,25 +231,26 @@ namespace SpreadBot.Logic
 
         private void UnallocateBot(Bot bot)
         {
-            balanceSemaphore.Wait();
-            bool removeAllocatedBot = context.RemoveBot(bot.Guid);
-            bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfigurationId[bot.SpreadConfigurationGuid].TryRemove(bot.MarketSymbol, out _);
+            ExecuteBalanceRelatedAction($"unallocating bot {bot.Guid}", () =>
+            {
+                bool removeAllocatedBot = context.RemoveBot(bot.Guid);
+                bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfiguration[bot.botContext.spreadConfiguration].TryRemove(bot.MarketSymbol, out _);
 
-            if (!removeAllocatedBot)
-                Logger.Instance.LogUnexpectedError($"Couldn't remove allocated bot {bot.Guid}");
+                if (!removeAllocatedBot)
+                    Logger.Instance.LogUnexpectedError($"Couldn't remove allocated bot {bot.Guid}");
 
-            if (!removedAllocatedMarket)
-                Logger.Instance.LogUnexpectedError($"Couldn't remove allocated market {bot.MarketSymbol}");
+                if (!removedAllocatedMarket)
+                    Logger.Instance.LogUnexpectedError($"Couldn't remove allocated market {bot.MarketSymbol}");
 
-            Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
-            Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.SpreadConfigurationGuid}");
+                Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
+                Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.Guid}");
 
-            availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
-            Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
-            balanceSemaphore.Release();
+                availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
+                Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
 
-            if (bot.HeldAmount > 0)
-                context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
+                if (bot.HeldAmount > 0)
+                    context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
+            });
         }
 
         private static IComparer<(decimal, decimal)> GetMarketComparer()
@@ -262,6 +264,27 @@ namespace SpreadBot.Logic
                 //    return key2.Item2.CompareTo(key1.Item2);
                 //return result;
             });
+        }
+
+        private void ExecuteBalanceRelatedAction(string description, Action action)
+        {
+            balanceSemaphore.Wait();
+
+            try
+            {
+                Logger.Instance.LogMessage($"Lock acquired for {description}");
+
+                action();
+            } catch (Exception e)
+            {
+                Logger.Instance.LogError($"Error while {description}. Exception: {e}");
+                throw e;
+            }
+            finally
+            {
+                balanceSemaphore.Release();
+                Logger.Instance.LogMessage($"Lock released after {description}");
+            }
         }
 
         public void Dispose()

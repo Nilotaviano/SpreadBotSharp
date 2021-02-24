@@ -47,7 +47,7 @@ namespace SpreadBot.Infrastructure
             mostRecentClosedOrderId = null;
             resyncTimer = new Timer(appSettings.ResyncIntervalMs);
             resyncTimer.Elapsed += ResyncTimer_Elapsed;
-            resyncTimer.AutoReset = true;
+            resyncTimer.AutoReset = false;
 
             if (appSettings.CoinMarketCapApiKey != null)
             {
@@ -363,6 +363,7 @@ namespace SpreadBot.Infrastructure
 
         private async Task FetchBalanceData()
         {
+            Logger.Instance.LogMessage("Start resyncing balance");
             //TODO: Handle exceptions here
             var balances = await Exchange.GetBalanceData();
 
@@ -376,10 +377,12 @@ namespace SpreadBot.Infrastructure
             }
 
             lastBalanceSequence = balances.Sequence;
+            Logger.Instance.LogMessage("Finished resyncing balance");
         }
 
         private async Task FetchMarketSummariesData()
         {
+            Logger.Instance.LogMessage("Start resyncing market summaries");
             //TODO: Handle exceptions here
             var summaries = await Exchange.GetMarketSummariesData();
 
@@ -393,10 +396,13 @@ namespace SpreadBot.Infrastructure
             }
 
             lastSummarySequence = summaries.Sequence;
+            Logger.Instance.LogMessage("Finished resyncing market summaries");
         }
 
         private async Task FetchTickersData()
         {
+            Logger.Instance.LogMessage("Start resyncing tickers");
+
             //TODO: Handle exceptions here
             var tickers = await Exchange.GetTickersData();
 
@@ -410,11 +416,13 @@ namespace SpreadBot.Infrastructure
             }
 
             lastTickerSequence = tickers.Sequence;
+            Logger.Instance.LogMessage("Finished resyncing tickers");
         }
 
 
         private async Task FetchMarketsData()
         {
+            Logger.Instance.LogMessage("Start resyncing markets");
             //TODO: Handle exceptions here
             var markets = await Exchange.GetMarketsData();
 
@@ -426,10 +434,12 @@ namespace SpreadBot.Infrastructure
                     UpdateMarketData(marketData);
                 }
             }
+            Logger.Instance.LogMessage("Finished resyncing markets");
         }
 
         private async Task FetchOpenOrdersData()
         {
+            Logger.Instance.LogMessage("Start resyncing open orders");
             //TODO: Handle exceptions here
             var openOrders = await Exchange.GetOpenOrdersData();
 
@@ -445,10 +455,12 @@ namespace SpreadBot.Infrastructure
 
             // There is no sequence information in OpenOrders
             lastOrderSequence = null;
+            Logger.Instance.LogMessage("Finished resyncing open orders");
         }
 
         private async Task FetchClosedOrdersData()
         {
+            Logger.Instance.LogMessage("Start resyncing closed orders");
             //TODO: Handle exceptions here
             var closedOrders = await Exchange.GetClosedOrdersData(mostRecentClosedOrderId);
 
@@ -466,6 +478,7 @@ namespace SpreadBot.Infrastructure
 
             // There is no sequence information in ClosedOrders
             lastOrderSequence = null;
+            Logger.Instance.LogMessage("Finished resyncing closed orders");
         }
 
         private MarketData MergeMarketData(MarketData existingData, MarketData data)
@@ -511,6 +524,7 @@ namespace SpreadBot.Infrastructure
             finally
             {
                 ResumeConsumingData();
+                resyncTimer.Start();
             }
         }
 

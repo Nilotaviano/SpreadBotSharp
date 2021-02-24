@@ -34,7 +34,6 @@ namespace SpreadBot.Logic
         { }
 
         public Guid Guid => botContext.Guid;
-        public Guid SpreadConfigurationGuid => botContext.spreadConfiguration.Guid;
         public string BaseMarket => botContext.spreadConfiguration.BaseMarket;
         public string MarketSymbol => botContext.LatestMarketData.Symbol;
         public decimal Balance => botContext.Balance;
@@ -95,10 +94,10 @@ namespace SpreadBot.Logic
             }
             else
             {
+                await semaphore.WaitAsync();
+
                 try
                 {
-                    await semaphore.WaitAsync();
-
                     switch (message.MessageType)
                     {
                         case MessageType.MarketData:
@@ -200,6 +199,7 @@ namespace SpreadBot.Logic
                             break;
                         case OrderDirection.SELL:
                             botContext.HeldAmount -= orderData.FillQuantity;
+                            // TODO: This may break when recovering a bot after the order was closed because the balance was already integrated with total balance
                             botContext.Balance += orderData.Proceeds - orderData.Commission;
                             break;
                         default:

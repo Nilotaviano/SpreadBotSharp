@@ -8,6 +8,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Threading.Tasks;
 using System.Timers;
 
@@ -373,7 +374,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
         {
             try
             {
-                if (string.Empty.Equals(restResponse.Content))
+                if (string.IsNullOrWhiteSpace(restResponse.Content))
                 {
                     Logger.Instance.LogUnexpectedError($"Unknown API error data: {restResponse.ErrorMessage}. {JsonConvert.SerializeObject(restResponse.ErrorException)}");
                     return ApiErrorType.UnknownError;
@@ -410,18 +411,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             }
             catch (Exception e)
             {
-                string errorDescription;
-                try
-                {
-                    errorDescription = JsonConvert.SerializeObject(e);
-                }
-                catch (Exception serializationException)
-                {
-                    errorDescription = e.ToString();
-                    Logger.Instance.LogUnexpectedError($"Error when serializing exception. Using ToString instead. SerializationException: {serializationException}");
-                }
-
-                Logger.Instance.LogUnexpectedError($"Error parsing API error data: {errorDescription}");
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("Error when serializing restResponse. Using ToString instead");
+                sb.AppendLine("RestResponse:");
+                sb.AppendLine(restResponse.Content);
+                sb.AppendLine("RestException:");
+                sb.AppendLine(restResponse.ErrorException.ToString());
+                sb.AppendLine("SerializationError:");
+                sb.AppendLine(JsonConvert.SerializeObject(e));
+                
+                Logger.Instance.LogUnexpectedError(sb.ToString());
 
                 return ApiErrorType.UnknownError;
             }
