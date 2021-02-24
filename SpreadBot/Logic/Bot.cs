@@ -121,7 +121,7 @@ namespace SpreadBot.Logic
                             //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
                             botContext.BotState = BotState.Buying;
                             break;
-                        case ApiErrorType.DustTrade when botContext.botState == BotState.Buying:
+                        case ApiErrorType.DustTrade when botContext.BotState == BotState.Buying:
                             await FinishWork();
                             break;
                         case ApiErrorType.InsufficientFunds:
