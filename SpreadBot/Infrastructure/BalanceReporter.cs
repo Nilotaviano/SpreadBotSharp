@@ -40,9 +40,9 @@ namespace SpreadBot.Infrastructure
 
         public static BalanceReporter Instance { get; } = new BalanceReporter();
 
-        public void ReportBalance(decimal availableBalanceForBaseMarket, IEnumerable<Bot> activeBots, string baseMarket)
+        public void ReportBalance(decimal balanceForBaseMarket, string baseMarket)
         {
-            pendingBalanceReportData?.Add(new BalanceReportData() { AvailableBaseCurrency = availableBalanceForBaseMarket, ActiveBots = activeBots, BaseMarket = baseMarket });
+            pendingBalanceReportData?.Add(new BalanceReportData() { BalanceForBaseMarket = balanceForBaseMarket, BaseMarket = baseMarket });
         }
 
         private void ConsumePendingData()
@@ -51,19 +51,17 @@ namespace SpreadBot.Infrastructure
             {
                 try
                 {
-                    decimal botsBalance = data.ActiveBots.Aggregate(0m, (value, bot) => value + bot.Balance + (bot.HeldAmount * bot.LastTradeRate));
-                    decimal currentBalance = data.AvailableBaseCurrency + botsBalance;
                     var lastReportedBalance = lastReportedBalances.GetOrAdd(data.BaseMarket, 0);
 
-                    if (Math.Abs(currentBalance - lastReportedBalance) >= telegramSettings.ChangeThresholdPerMarket[data.BaseMarket])
+                    if (Math.Abs(data.BalanceForBaseMarket - lastReportedBalance) >= telegramSettings.ChangeThresholdPerMarket[data.BaseMarket])
                     {
-                        var emoji = currentBalance > lastReportedBalance ? "🚀" : "📉";
+                        var emoji = data.BalanceForBaseMarket > lastReportedBalance ? "🚀" : "📉";
 
                         if (lastReportedBalance == 0)
                             emoji = string.Empty;
 
-                        telegramBotClient.SendTextMessageAsync(chatId, $"{currentBalance} {data.BaseMarket} {emoji}");
-                        lastReportedBalances.AddOrUpdate(data.BaseMarket, currentBalance, (key, bal) => currentBalance);
+                        telegramBotClient.SendTextMessageAsync(chatId, $"{data.BalanceForBaseMarket} {data.BaseMarket} {emoji}");
+                        lastReportedBalances.AddOrUpdate(data.BaseMarket, data.BalanceForBaseMarket, (key, bal) => data.BalanceForBaseMarket);
                     }
                 }
                 catch (Exception e)
@@ -75,8 +73,7 @@ namespace SpreadBot.Infrastructure
 
         private class BalanceReportData
         {
-            public decimal AvailableBaseCurrency { get; set; }
-            public IEnumerable<Bot> ActiveBots { get; set; }
+            public decimal BalanceForBaseMarket { get; set; }
             public string BaseMarket { get; set; }
         }
 

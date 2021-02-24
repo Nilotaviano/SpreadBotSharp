@@ -187,7 +187,10 @@ namespace SpreadBot.Logic
             ExecuteBalanceRelatedAction("reporting balance", () =>
             {
                 foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                    BalanceReporter.Instance.ReportBalance(availableBalanceForBaseMarket[baseMarket], context.GetBots().Where(b => b.BaseMarket == baseMarket).ToList(), baseMarket);
+                {
+                    decimal balanceForBaseMarket = context.GetBots().Where(b => b.BaseMarket == baseMarket).Aggregate(availableBalanceForBaseMarket[baseMarket], (value, bot) => value + bot.Balance + (bot.HeldAmount * bot.LastTradeRate));
+                    BalanceReporter.Instance.ReportBalance(balanceForBaseMarket, baseMarket);
+                }
             });
         }
 
