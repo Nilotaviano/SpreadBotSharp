@@ -148,7 +148,6 @@ namespace SpreadBot.Logic
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
-                        // TODO keep dust values between executions
                         var existingDust = context.RemoveDustForMarket(market.Symbol);
                         var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
 

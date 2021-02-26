@@ -189,22 +189,7 @@ namespace SpreadBot.Logic
                 case OrderStatus.CLOSED:
                     SetCurrentOrderData(null);
 
-                    switch (orderData?.Direction)
-                    {
-                        case OrderDirection.BUY:
-                            botContext.HeldAmount += orderData.FillQuantity;
-                            botContext.Balance -= orderData.Proceeds + orderData.Commission;
-                            botContext.BoughtPrice = orderData.Limit;
-                            botContext.buyStopwatch.Restart();
-                            break;
-                        case OrderDirection.SELL:
-                            botContext.HeldAmount -= orderData.FillQuantity;
-                            // TODO: This may break when recovering a bot after the order was closed because the balance was already integrated with total balance
-                            botContext.Balance += orderData.Proceeds - orderData.Commission;
-                            break;
-                        default:
-                            throw new ArgumentException();
-                    }
+                    UpdateContext(orderData);
 
                     if (botContext.HeldAmount * botContext.LatestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {
@@ -222,15 +207,48 @@ namespace SpreadBot.Logic
             }
         }
 
+        private void UpdateContext(OrderData orderData)
+        {
+            if (orderData == null || orderData.Status != OrderStatus.CLOSED)
+                return;
+
+            if (orderData.FillQuantity != 0 ^ (orderData.Proceeds + orderData.Commission) != 0)
+            {
+                string errorMessage = $"Either fill quantity or proceeds is 0 while the other is not. " +
+                    $"Fill: {orderData.FillQuantity}. Proceeds: {orderData.Proceeds + orderData.Commission}";
+
+                Logger.Instance.LogUnexpectedError(errorMessage);
+            }
+
+            switch (orderData?.Direction)
+            {
+                case OrderDirection.BUY:
+                    botContext.HeldAmount += orderData.FillQuantity;
+                    botContext.Balance -= orderData.Proceeds + orderData.Commission;
+                    botContext.BoughtPrice = orderData.Limit;
+                    botContext.buyStopwatch.Restart();
+                    break;
+                case OrderDirection.SELL:
+                    botContext.HeldAmount -= orderData.FillQuantity;
+                    // TODO: This may break when recovering a bot after the order was closed because the balance was already integrated with total balance
+                    botContext.Balance += orderData.Proceeds - orderData.Commission;
+                    break;
+                default:
+                    throw new ArgumentException();
+            }
+        }
+
         private async Task FinishWork()
         {
-            if (HeldAmount > 0)
-                await CleanDust();
-
             botContext.BotState = BotState.FinishedWork;
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
+
             semaphore.Clear();
+
+            if (HeldAmount > 0)
+                await CleanDust();
+
             unallocateBotCallback(this);
             NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
             LogMessage($"finished on {MarketSymbol}");
@@ -262,8 +280,7 @@ namespace SpreadBot.Logic
                     decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.LatestMarketData.Precision);
                     buyOrder = await exchange.BuyMarket(MarketSymbol, buyAmount);
 
-                    if (buyOrder != null && buyOrder.Status == OrderStatus.CLOSED)
-                        botContext.HeldAmount += buyOrder.FillQuantity;
+                    UpdateContext(buyOrder);
 
                     sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
                 }
@@ -277,11 +294,7 @@ namespace SpreadBot.Logic
                 LogUnexpectedError($"Unexpected error on CleanDust:{e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
             }
 
-            if (sellOrder != null && sellOrder.Status == OrderStatus.CLOSED)
-            {
-                botContext.HeldAmount -= sellOrder.FillQuantity;
-                botContext.Balance += sellOrder.Proceeds - sellOrder.Commission;
-            }
+            UpdateContext(sellOrder);
         }
 
         private void LogMessage(string message)
