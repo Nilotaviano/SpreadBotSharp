@@ -271,24 +271,6 @@ namespace SpreadBot.Logic
             {
                 await CleanDust(false);
             }
-            catch (ApiException e) when (e.ApiErrorType == ApiErrorType.DustTrade)
-            {
-                try
-                {
-                    OrderData buyOrder = null;
-
-                    decimal buyAmount = (botContext.spreadConfiguration.MinimumNegotiatedAmount / LastTradeRate).CeilToPrecision(botContext.LatestMarketData.Precision);
-                    buyOrder = await exchange.BuyMarket(MarketSymbol, buyAmount);
-
-                    UpdateContext(buyOrder);
-
-                    sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
-                }
-                catch (Exception ex)
-                {
-                    LogUnexpectedError($"Unexpected error on CleanDust:{ex}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
-                }
-            }
             catch (Exception e)
             {
                 LogUnexpectedError($"Unexpected error on CleanDust:{e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext, Formatting.Indented)}");
