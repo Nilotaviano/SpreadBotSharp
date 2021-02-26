@@ -37,5 +37,7 @@ namespace SpreadBot.Models.Repository
         public EMarketStatus? Status { get; set; }
 
         public bool? IsTokenizedSecurity { get; set; }
+
+        public bool IsLeveragedToken => Symbol.Contains("BULL-", StringComparison.InvariantCultureIgnoreCase) || Symbol.Contains("BEAR-", StringComparison.InvariantCultureIgnoreCase);
     }
 }

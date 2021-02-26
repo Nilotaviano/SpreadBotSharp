@@ -216,7 +216,13 @@ namespace SpreadBot.Logic
                 return false;
             }
 
-            if(spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
+            if (spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
+            {
+                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
+                return false;
+            }
+
+            if (spreadConfiguration.AvoidLeveragedTokens && marketData.IsLeveragedToken)
             {
                 Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
                 return false;
