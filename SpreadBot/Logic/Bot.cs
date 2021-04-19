@@ -132,8 +132,11 @@ namespace SpreadBot.Logic
                             await FinishWork();
                             break;
                         case ApiErrorType.OrderNotOpen:
-                        //Bot tried to cancel an order that has just been executed (I'm assuming)
-                        //Closed order data will be received soon, so no need to do anything here
+                            //Bot tried to cancel an order that has just been executed (I'm assuming)
+                            //Closed order data will be received soon, so no need to do anything here
+                            //Nevermind the above, the WS message may be lost
+                            await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.Id));
+                            break;
                         case ApiErrorType.MarketOffline:
                         case ApiErrorType.Throttled:
                             //Do nothing, try again on the next cycle

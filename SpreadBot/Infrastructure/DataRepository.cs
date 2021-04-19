@@ -195,6 +195,7 @@ namespace SpreadBot.Infrastructure
             Exchange.OnOrder(pendingOrderMessages.Add);
 
             FetchAllData();
+            FetchOpenOrdersData().Wait();
             UpdateMarketDataFromAggregator().Wait();
 
             resyncTimer.Start();
