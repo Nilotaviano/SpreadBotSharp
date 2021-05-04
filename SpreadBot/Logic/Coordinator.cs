@@ -245,7 +245,7 @@ namespace SpreadBot.Logic
                     Logger.Instance.LogUnexpectedError($"Couldn't remove allocated market {bot.MarketSymbol}");
 
                 Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
-                Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.Guid}");
+                Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.GetHashCode()}");
 
                 availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
                 Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");

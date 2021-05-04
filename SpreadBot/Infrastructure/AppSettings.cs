@@ -34,7 +34,6 @@ namespace SpreadBot.Infrastructure
     public class SpreadConfiguration
     {
         public string BaseMarket { get; set; }
-        public Guid Guid { get; } = Guid.NewGuid();
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
         public decimal MinimumSpreadPercentage { get; set; }
         public decimal MinimumQuoteVolume { get; set; }
