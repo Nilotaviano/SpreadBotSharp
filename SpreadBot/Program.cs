@@ -41,10 +41,7 @@ namespace SpreadBot
             {
                 try
                 {
-                    var updatedAppSettings = new ConfigurationBuilder()
-                    .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
-                    .Build()
-                    .Get<AppSettings>();
+                    var updatedAppSettings = JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(appSettingsPath));
 
                     appSettings.Reload(updatedAppSettings);
                     Logger.Instance.LogMessage("App Settings reloaded");
