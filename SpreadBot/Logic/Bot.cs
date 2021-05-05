@@ -67,7 +67,7 @@ namespace SpreadBot.Logic
                 {
                     try
                     {
-                        updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.ClientOrderId);
+                        updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.Id);
                     } catch (Exception e)
                     {
                         LogError(e.ToString());

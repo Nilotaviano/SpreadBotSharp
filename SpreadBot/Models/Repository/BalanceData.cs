@@ -1,4 +1,5 @@
-﻿using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
+﻿using Huobi.Net.Objects;
+using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 
 namespace SpreadBot.Models.Repository
 {
@@ -10,6 +11,12 @@ namespace SpreadBot.Models.Repository
         {
             CurrencyAbbreviation = balance.CurrencySymbol;
             Amount = balance.Available;
+        }
+
+        public BalanceData(HuobiBalance balance)
+        {
+            CurrencyAbbreviation = balance.Currency;
+            Amount = balance.Balance;
         }
 
         public MessageType MessageType => MessageType.BalanceData;

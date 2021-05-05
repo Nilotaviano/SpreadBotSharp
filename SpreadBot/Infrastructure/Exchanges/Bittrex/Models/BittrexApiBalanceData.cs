@@ -5,7 +5,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
     public class BittrexApiBalanceData
     {
         public string AccountId { get; set; }
-        public int Sequence { get; set; }
+        public long Sequence { get; set; }
         public Balance Delta { get; set; }
 
         public class Balance

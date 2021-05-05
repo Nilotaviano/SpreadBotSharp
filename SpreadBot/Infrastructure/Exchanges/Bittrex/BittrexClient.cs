@@ -102,7 +102,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return marketSummaries.Data;
         }
 
-        public async Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId)
+        public async Task<OrderData[]> GetClosedOrdersData(string startAfterOrderId)
         {
             var request = new RestRequest("/orders/closed", Method.GET, DataFormat.Json);
 
@@ -111,14 +111,18 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             if (startAfterOrderId != null)
                 request.AddQueryParameter("previousPageToken", startAfterOrderId);
 
-            return await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
+            var response = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
+
+            return response?.Data?.Select(x => new OrderData(x)).ToArray();
         }
 
-        public async Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetOpenOrdersData()
+        public async Task<OrderData[]> GetOpenOrdersData()
         {
             var request = new RestRequest("/orders/open", Method.GET, DataFormat.Json);
 
-            return await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
+            var response = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
+
+            return response?.Data?.Select(x => new OrderData(x)).ToArray();
         }
 
         public async Task<OrderData> GetOrderData(string orderId)

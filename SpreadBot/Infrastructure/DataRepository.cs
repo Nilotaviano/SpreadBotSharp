@@ -19,10 +19,10 @@ namespace SpreadBot.Infrastructure
     public class DataRepository
     {
         private Timer resyncTimer;
-        private int? lastBalanceSequence;
-        private int? lastSummarySequence;
-        private int? lastTickerSequence;
-        private int? lastOrderSequence;
+        private long? lastBalanceSequence;
+        private long? lastSummarySequence;
+        private long? lastTickerSequence;
+        private long? lastOrderSequence;
 
         //I know it's not a Semaphore, but it works like one
         private readonly System.Threading.ManualResetEvent consumeDataSemaphore = new System.Threading.ManualResetEvent(true);
@@ -444,11 +444,10 @@ namespace SpreadBot.Infrastructure
             //TODO: Handle exceptions here
             var openOrders = await Exchange.GetOpenOrdersData();
 
-            if (openOrders.Data != null && openOrders.Data.Any())
+            if (openOrders != null && openOrders.Any())
             {
-                foreach (var order in openOrders.Data)
+                foreach (var orderData in openOrders)
                 {
-                    var orderData = new OrderData(order);
                     OrdersData[orderData.ClientOrderId] = orderData;
                     InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
                 }
@@ -465,13 +464,12 @@ namespace SpreadBot.Infrastructure
             //TODO: Handle exceptions here
             var closedOrders = await Exchange.GetClosedOrdersData(mostRecentClosedOrderId);
 
-            if (closedOrders.Data != null && closedOrders.Data.Any())
+            if (closedOrders != null && closedOrders.Any())
             {
-                mostRecentClosedOrderId = closedOrders.Data?.FirstOrDefault()?.Id;
+                mostRecentClosedOrderId = closedOrders.FirstOrDefault().Id;
 
-                foreach (var order in closedOrders.Data)
+                foreach (var orderData in closedOrders)
                 {
-                    var orderData = new OrderData(order);
                     OrdersData[orderData.ClientOrderId] = orderData;
                     InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
                 }

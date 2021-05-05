@@ -13,6 +13,7 @@ namespace SpreadBot.Infrastructure
 
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
+        public string AccountId { get; set; }
         public int MaxNumberOfBots { get; set; }
         public int ResyncIntervalMs { get; set; }
 

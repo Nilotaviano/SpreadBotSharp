@@ -7,7 +7,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
     public class BittrexApiMarketSummariesData
     {
-        public int Sequence { get; set; }
+        public long Sequence { get; set; }
 
         public MarketSummary[] Deltas { get; set; }
 

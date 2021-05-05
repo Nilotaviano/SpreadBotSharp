@@ -6,7 +6,7 @@ namespace SpreadBot.Models.Repository
 {
     public class CompleteBalanceData
     {
-        public CompleteBalanceData(int sequence, IEnumerable<BalanceData> balances)
+        public CompleteBalanceData(long sequence, IEnumerable<BalanceData> balances)
         {
             Sequence = sequence;
             Balances = balances;
@@ -18,7 +18,7 @@ namespace SpreadBot.Models.Repository
             Balances = balancesData.Data?.Select(balance => new BalanceData(balance));
         }
 
-        public int Sequence { get; private set; }
+        public long Sequence { get; private set; }
 
         public IEnumerable<BalanceData> Balances { get; private set; }
 

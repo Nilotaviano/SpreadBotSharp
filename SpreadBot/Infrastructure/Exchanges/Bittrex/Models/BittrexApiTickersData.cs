@@ -4,7 +4,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 {
     public class BittrexApiTickersData
     {
-        public int Sequence { get; set; }
+        public long Sequence { get; set; }
 
         public Ticker[] Deltas { get; set; }
 
