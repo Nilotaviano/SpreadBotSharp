@@ -143,19 +143,34 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                 throw new NotImplementedException();
         }
 
-        private DateTime? startTime = null;
+        private DateTime? nextStartTime = null;
         public async Task<Order[]> GetClosedOrdersData(string startAfterOrderId = null)
         {
-            var previousStartTime = startTime;
-            startTime = DateTime.UtcNow;
-            var response = await ApiClient.GetHistoryOrdersAsync(startTime: startTime);
+            var successful = false;
 
-            if (response.Success)
+            var startTime = nextStartTime;
+            nextStartTime = DateTime.UtcNow;
+
+            try
             {
-                return response.Data.Orders.Select(x => new Order(x)).ToArray();
+                var response = await ApiClient.GetHistoryOrdersAsync(startTime: startTime);
+
+                if (response.Success)
+                {
+                    var result = response.Data.Orders.Select(x => new Order(x)).ToArray();
+                    successful = true;
+                    return result;
+                }
+                else
+                {
+                    throw new NotImplementedException();
+                }
             }
-            else
-                throw new NotImplementedException();
+            finally
+            {
+                if (!successful)
+                    nextStartTime = startTime;
+            }
         }
 
         public async Task<Order[]> GetOpenOrdersData()
@@ -289,10 +304,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                     var closedOrders = await GetClosedOrdersData();
 
                     foreach (var orderData in closedOrders.Select(x => new OrderData() { Order = x }))
-                    foreach (var callback in onOrderCallBacks)
-                    {
-                        callback(orderData);
-                    }
+                        foreach (var callback in onOrderCallBacks)
+                        {
+                            callback(orderData);
+                        }
                 }, null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
 
                 var tickersTimer = new System.Threading.Timer(async e =>
