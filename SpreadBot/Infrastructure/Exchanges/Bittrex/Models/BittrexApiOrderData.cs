@@ -11,7 +11,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
 
         public Order Delta { get; set; }
 
-        public OrderData ToOrderData()
+        public SpreadBot.Models.Repository.Order ToOrderData()
         {
             var order = this.Delta?.ToOrderData();
 
@@ -49,9 +49,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
                 public string Id { get; set; }
             }
 
-            public OrderData ToOrderData()
+            public SpreadBot.Models.Repository.Order ToOrderData()
             {
-                return new OrderData()
+                return new SpreadBot.Models.Repository.Order()
                 {
                     Ceiling = this.Ceiling,
                     ClientOrderId = this.ClientOrderId ?? this.Id,

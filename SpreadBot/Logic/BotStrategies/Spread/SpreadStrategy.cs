@@ -20,7 +20,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             };
         }
 
-        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
+        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<Order>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
             await botStateStrategyDictionary[botContext.BotState].ProcessMarketData(dataRepository, botContext, executeOrderFunctionCallback, finishWorkCallBack);
         }

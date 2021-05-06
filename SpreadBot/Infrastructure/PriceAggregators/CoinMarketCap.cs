@@ -29,9 +29,9 @@ namespace SpreadBot.Infrastructure.PriceAggregators
             this.appSettings = appSettings;
         }
 
-        public async Task<IEnumerable<MarketData>> GetLatestQuotes(IEnumerable<string> symbols, bool retry = true)
+        public async Task<IEnumerable<Market>> GetLatestQuotes(IEnumerable<string> symbols, bool retry = true)
         {
-            var result = Enumerable.Empty<MarketData>();
+            var result = Enumerable.Empty<Market>();
             var request = new RestRequest("/cryptocurrency/quotes/latest", Method.GET, DataFormat.Json);
             var currencies = string.Join(",", symbols.Except(invalidSymbolsForCoinMarketCap));
             request.AddQueryParameter("symbol", currencies);
@@ -50,7 +50,7 @@ namespace SpreadBot.Infrastructure.PriceAggregators
                     {
                         var jObject = JObject.Parse(restResponse.Data);
                         result = jObject["data"].Values().Select(q =>
-                            new MarketData()
+                            new Market()
                             {
                                 // TODO
                                 // Symbol = $"{q["symbol"].Value<string>()}-{appSettings.BaseMarket}",

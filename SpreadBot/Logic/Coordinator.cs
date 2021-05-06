@@ -99,12 +99,12 @@ namespace SpreadBot.Logic
         /// Evaluates updated markets for new bot-allocation opportunities
         /// </summary>
         /// <param name="marketDeltas">Markets that were updated</param>
-        private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
+        private void EvaluateMarkets(IEnumerable<Market> marketDeltas)
         {
-            if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
-                return;
+            //if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
+            //    return;
 
-            var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
+            var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.Quote);
 
             foreach (var marketDeltaGroup in marketDeltasByBaseMarket)
             {
@@ -176,7 +176,7 @@ namespace SpreadBot.Logic
             });
         }
 
-        private bool IsViableMarket(MarketData market)
+        private bool IsViableMarket(Market market)
         {
             return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online;
         }
@@ -193,12 +193,12 @@ namespace SpreadBot.Logic
             });
         }
 
-        private (decimal, decimal) GetMarketOrderKey(MarketData marketData)
+        private (decimal, decimal) GetMarketOrderKey(Market marketData)
         {
             return (marketData.QuoteVolume.GetValueOrDefault(0), marketData.SpreadPercentage);
         }
 
-        private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
+        private bool EvaluateMarketBasedOnConfiguration(Market marketData, SpreadConfiguration spreadConfiguration)
         {
             if (marketData.LastTradeRate < spreadConfiguration.MinimumPrice)
                 return false;

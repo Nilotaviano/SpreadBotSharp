@@ -18,11 +18,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
         public string Notice { get; set; }
         public string[] Tags { get; set; }
 
-        public MarketData ToMarketData()
+        public string BaseMarket => Symbol.Split('-')[1];
+        public string Target => Symbol.Split('-')[0];
+
+        public Market ToMarketData()
         {
-            return new MarketData()
+            return new Market()
             {
                 Symbol = this.Symbol,
+                Quote = this.BaseMarket,
+                Target = this.Target,
                 MinTradeSize = this.MinTradeSize,
                 Precision = this.Precision,
                 CreatedAt = this.CreatedAt,

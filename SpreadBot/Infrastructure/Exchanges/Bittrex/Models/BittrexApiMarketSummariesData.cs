@@ -21,9 +21,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
             public decimal PercentChange { get; set; }
             public DateTime UpdatedAt { get; set; }
 
-            public MarketData ToMarketData()
+            public string BaseMarket => Symbol.Split('-')[1];
+            public string Target => Symbol.Split('-')[0];
+
+            public Market ToMarketData()
             {
-                return new MarketData()
+                return new Market()
                 {
                     High = this.High,
                     Low = this.Low,
@@ -31,7 +34,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
                     Volume = this.Volume,
                     QuoteVolume = this.QuoteVolume,
                     UpdatedAt = this.UpdatedAt,
-                    Symbol = this.Symbol
+                    Symbol = this.Symbol,
+                    Quote = this.BaseMarket,
+                    Target = this.Target,
                 };
             }
         }

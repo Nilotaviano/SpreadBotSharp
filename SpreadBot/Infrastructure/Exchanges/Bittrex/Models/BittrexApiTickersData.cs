@@ -16,14 +16,19 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
             public decimal BidRate { get; set; }
             public decimal AskRate { get; set; }
 
-            public MarketData ToMarketData()
+            public string BaseMarket => Symbol.Split('-')[1];
+            public string Target => Symbol.Split('-')[0];
+
+            public Market ToMarketData()
             {
-                return new MarketData()
+                return new Market()
                 {
                     LastTradeRate = this.LastTradeRate,
                     AskRate = this.AskRate,
                     BidRate = this.BidRate,
-                    Symbol = this.Symbol
+                    Symbol = this.Symbol,
+                    Quote = this.BaseMarket,
+                    Target = this.Target,
                 };
             }
         }

@@ -14,14 +14,14 @@ namespace SpreadBot.Infrastructure
         public readonly SpreadConfiguration spreadConfiguration;
         public readonly Stopwatch buyStopwatch = new Stopwatch();
 
-        private MarketData latestMarketData;
-        private OrderData currentOrderData;
+        private Market latestMarketData;
+        private Order currentOrderData;
         private decimal boughtPrice;
         private BotState botState;
         private decimal heldAmount;
         private decimal balance;
 
-        public BotContext(SpreadConfiguration spreadConfiguration, MarketData marketData, BotState buy, decimal existingDust)
+        public BotContext(SpreadConfiguration spreadConfiguration, Market marketData, BotState buy, decimal existingDust)
         {
             Guid = Guid.NewGuid();
             this.spreadConfiguration = spreadConfiguration;
@@ -63,7 +63,7 @@ namespace SpreadBot.Infrastructure
             }
         }
 
-        public OrderData CurrentOrderData
+        public Order CurrentOrderData
         {
             get => currentOrderData;
             set
@@ -73,7 +73,7 @@ namespace SpreadBot.Infrastructure
             }
         }
 
-        public MarketData LatestMarketData
+        public Market LatestMarketData
         {
             get => latestMarketData;
             set

@@ -6,9 +6,9 @@ using System.Text;
 
 namespace SpreadBot.Models.Repository
 {
-    public class MarketData : IMessage
+    public class Market : IMessage
     {
-        public MarketData() { }
+        public Market() { }
 
         public MessageType MessageType => MessageType.MarketData;
 
@@ -28,8 +28,11 @@ namespace SpreadBot.Models.Repository
         public DateTime? CreatedAt { get; set; }
         public string Notice { get; set; }
 
-        public string BaseMarket => Symbol.Split('-')[1];
-        public string Target => Symbol.Split('-')[0];
+        private string quote;
+        public string Quote { get => quote; set => quote = value?.ToUpper(); }
+        private string target;
+        public string Target { get => target; set => target = value?.ToUpper(); }
+
         public decimal SpreadPercentage => AskRate > 0 && BidRate > 0 ? (AskRate.Value - BidRate.Value) / AskRate.Value * 100 : 0; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php
 
         public AggregatorQuote AggregatorQuote { get; set; }
@@ -37,5 +40,17 @@ namespace SpreadBot.Models.Repository
         public EMarketStatus? Status { get; set; }
 
         public bool? IsTokenizedSecurity { get; set; }
+    }
+
+    public class MarketSummaryData
+    {
+        public long Sequence { get; set; }
+        public Market[] Markets { get; set; }
+    }
+
+    public class TickerData
+    {
+        public long Sequence { get; set; }
+        public Market[] Markets { get; set; }
     }
 }

@@ -18,7 +18,7 @@ namespace SpreadBot.Tests
         [TestMethod]
         public void BasicBotFlowTest()
         {
-            var openingMarketData = new MarketData()
+            var openingMarketData = new Market()
             {
                 AskRate = 10101.Satoshi(),
                 BidRate = 9999.Satoshi(),
@@ -102,7 +102,7 @@ namespace SpreadBot.Tests
 
             mockExchange
                 .Setup(e => e.BuyLimit(openingMarketData.Symbol, quantity, bidPrice, null))
-                .ReturnsAsync(new OrderData() { Id = buyOrderId, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN })
+                .ReturnsAsync(new Order() { Id = buyOrderId, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN })
                 .Callback(() =>
                 {
                     Thread.Sleep(10);
@@ -127,7 +127,7 @@ namespace SpreadBot.Tests
 
             mockExchange
                 .Setup(e => e.SellLimit(openingMarketData.Symbol, quantity, askPrice, null))
-                .ReturnsAsync(new OrderData() { Id = sellOrderId, Direction = OrderDirection.SELL, Status = OrderStatus.OPEN })
+                .ReturnsAsync(new Order() { Id = sellOrderId, Direction = OrderDirection.SELL, Status = OrderStatus.OPEN })
                 .Callback(() =>
                 {
                     Thread.Sleep(10);

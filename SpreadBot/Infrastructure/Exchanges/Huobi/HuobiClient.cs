@@ -28,9 +28,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
         public decimal FeeRate => 0.002m;
 
         private readonly ConcurrentBag<Action<BittrexApiBalanceData>> onBalanceCallBacks = new ConcurrentBag<Action<BittrexApiBalanceData>>();
-        private readonly ConcurrentBag<Action<BittrexApiMarketSummariesData>> onSummariesCallBacks = new ConcurrentBag<Action<BittrexApiMarketSummariesData>>();
-        private readonly ConcurrentBag<Action<BittrexApiTickersData>> onTickersCallBacks = new ConcurrentBag<Action<BittrexApiTickersData>>();
-        private readonly ConcurrentBag<Action<BittrexApiOrderData>> onOrderCallBacks = new ConcurrentBag<Action<BittrexApiOrderData>>();
+        private readonly ConcurrentBag<Action<MarketSummaryData>> onSummariesCallBacks = new ConcurrentBag<Action<MarketSummaryData>>();
+        private readonly ConcurrentBag<Action<TickerData>> onTickersCallBacks = new ConcurrentBag<Action<TickerData>>();
+        private readonly ConcurrentBag<Action<OrderData>> onOrderCallBacks = new ConcurrentBag<Action<OrderData>>();
 
         public HuobiClientWrapper(string apiKey, string apiSecret, string accountId)
         {
@@ -51,11 +51,11 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
 
         public void OnBalance(Action<BittrexApiBalanceData> callback) => onBalanceCallBacks.Add(callback);
 
-        public void OnSummaries(Action<BittrexApiMarketSummariesData> callback) => onSummariesCallBacks.Add(callback);
+        public void OnSummaries(Action<MarketSummaryData> callback) => onSummariesCallBacks.Add(callback);
 
-        public void OnTickers(Action<BittrexApiTickersData> callback) => onTickersCallBacks.Add(callback);
+        public void OnTickers(Action<TickerData> callback) => onTickersCallBacks.Add(callback);
 
-        public void OnOrder(Action<BittrexApiOrderData> callback) => onOrderCallBacks.Add(callback);
+        public void OnOrder(Action<OrderData> callback) => onOrderCallBacks.Add(callback);
 
         public async Task<CompleteBalanceData> GetBalanceData()
         {
@@ -72,16 +72,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
         }
 
         //TODO: merge this and GetMarketSummariesData into a single method if possible
-        public async Task<BittrexApiTickersData> GetTickersData()
+        public async Task<TickerData> GetTickersData()
         {
             var response = await ApiClient.GetTickersAsync();
 
             if (response.Success)
             {
-                return new BittrexApiTickersData
+                return new TickerData
                 {
                     Sequence = response.Data.Timestamp.Ticks,
-                    Deltas = response.Data.Ticks.Select(x => new BittrexApiTickersData.Ticker()
+                    Markets = response.Data.Ticks.Select(x => new Market()
                     {
                         AskRate = x.Ask,
                         BidRate = x.Bid,
@@ -95,16 +95,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
         }
 
         //TODO: merge this and GetTickersData into a single method if possible
-        public async Task<BittrexApiMarketSummariesData> GetMarketSummariesData()
+        public async Task<MarketSummaryData> GetMarketSummariesData()
         {
             var response = await ApiClient.GetTickersAsync();
 
             if (response.Success)
             {
-                return new BittrexApiMarketSummariesData
+                return new MarketSummaryData
                 {
                     Sequence = response.Data.Timestamp.Ticks,
-                    Deltas = response.Data.Ticks.Select(x => new BittrexApiMarketSummariesData.MarketSummary()
+                    Markets = response.Data.Ticks.Where(x => x.Open > 0).Select(x => new Market()
                     {
                         Symbol = x.Symbol,
                         High = x.High.GetValueOrDefault(),
@@ -120,86 +120,89 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                 throw new NotImplementedException();
         }
 
-        public async Task<BittrexApiMarketData[]> GetMarketsData()
+        public async Task<Market[]> GetMarketsData()
         {
             var response = await ApiClient.GetSymbolsAsync();
 
             if (response.Success)
             {
-                return response.Data.Select(x => new BittrexApiMarketData()
+                return response.Data.Select(x => new Market()
                 {
                     Symbol = x.Symbol,
-                    BaseCurrencySymbol = string.Empty, //unused
-                    QuoteCurrencySymbol = string.Empty, //unused
+                    Quote = x.QuoteCurrency,
+                    Target = x.BaseCurrency,
                     CreatedAt = DateTime.MinValue, //TODO
                     MinTradeSize = x.MinOrderValue,
-                    Notice = string.Empty,
-                    Status = x.State.ToString().ToUpper(), //ONLINE is the only one that we care about,
+                    Notice = string.Empty, //TODO we might have to use this
+                    Status = x.State == HuobiSymbolState.Online ? EMarketStatus.Online : EMarketStatus.Offline, //ONLINE is the only one that we care about,
                     Precision = x.PricePrecision, //TODO: We probably have to add support for AmountPrecision too 
-                    Tags = null //TODO we might have to use this
+                    IsTokenizedSecurity = null //TODO we might have to use this
                 }).ToArray();
             }
             else
                 throw new NotImplementedException();
         }
 
-        public async Task<OrderData[]> GetClosedOrdersData(string startAfterOrderId)
+        private DateTime? startTime = null;
+        public async Task<Order[]> GetClosedOrdersData(string startAfterOrderId = null)
         {
-            var response = await ApiClient.GetHistoryOrdersAsync();
+            var previousStartTime = startTime;
+            startTime = DateTime.UtcNow;
+            var response = await ApiClient.GetHistoryOrdersAsync(startTime: startTime);
 
             if (response.Success)
             {
-                return response.Data.Orders.Select(x => new OrderData(x)).ToArray();
+                return response.Data.Orders.Select(x => new Order(x)).ToArray();
             }
             else
                 throw new NotImplementedException();
         }
 
-        public async Task<OrderData[]> GetOpenOrdersData()
+        public async Task<Order[]> GetOpenOrdersData()
         {
             var response = await ApiClient.GetOpenOrdersAsync();
 
             if (response.Success)
             {
-                return response.Data.Select(x => new OrderData(x)).ToArray();
+                return response.Data.Select(x => new Order(x)).ToArray();
             }
             else
                 throw new NotImplementedException();
         }
 
-        public async Task<OrderData> GetOrderData(string orderId)
+        public async Task<Order> GetOrderData(string orderId)
         {
             var response = await ApiClient.GetOrderInfoAsync(long.Parse(orderId));
 
             if (response.Success)
             {
-                return new OrderData(response.Data);
+                return new Order(response.Data);
             }
             else
                 throw new NotImplementedException();
         }
 
-        public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
+        public async Task<Order> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
         {
             return await ExecuteLimitOrder(OrderDirection.BUY, marketSymbol, quantity, limit, clientOrderId: clientOrderId);
         }
 
-        public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
+        public async Task<Order> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
         {
             return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit, clientOrderId: clientOrderId);
         }
 
-        public async Task<OrderData> BuyMarket(string marketSymbol, decimal quantity)
+        public async Task<Order> BuyMarket(string marketSymbol, decimal quantity)
         {
             return await ExecuteMarketOrder(OrderDirection.BUY, marketSymbol, quantity);
         }
 
-        public async Task<OrderData> SellMarket(string marketSymbol, decimal quantity)
+        public async Task<Order> SellMarket(string marketSymbol, decimal quantity)
         {
             return await ExecuteMarketOrder(OrderDirection.SELL, marketSymbol, quantity);
         }
 
-        public async Task<OrderData> CancelOrder(string orderId)
+        public async Task<Order> CancelOrder(string orderId)
         {
             var response = await ApiClient.CancelOrderAsync(long.Parse(orderId));
 
@@ -243,11 +246,11 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                 //await SocketClient.SubscribeToOrderUpdatesAsync(
                 //    onOrderSubmitted: orderUpdate =>
                 //    {
-                //        var order = new BittrexApiOrderData()
+                //        var order = new OrderData()
                 //        {
                 //            Sequence = DateTime.UtcNow.Ticks,
                 //            AccountId = orderUpdate.AccountId.ToString(),
-                //            Delta = new BittrexApiOrderData.Order()
+                //            Delta = new OrderData.Order()
                 //            {
                 //                ClientOrderId = orderUpdate.ClientOrderId,
                 //                Commission = orderUpdate.fee
@@ -260,7 +263,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                 //    },
                 //    onOrderCancellation: orderCancelled =>
                 //    {
-                //        var order = new BittrexApiOrderData()
+                //        var order = new OrderData()
                 //        {
 
                 //        };
@@ -271,7 +274,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                 //    },
                 //    onOrderMatched: matchedOrder =>
                 //    {
-                //        var order = new BittrexApiOrderData()
+                //        var order = new OrderData()
                 //        {
 
                 //        };
@@ -283,14 +286,13 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
 
                 var ordersTimer = new System.Threading.Timer(async e =>
                 {
-                    var openOrdersData = await GetOpenOrdersData();
+                    var closedOrders = await GetClosedOrdersData();
 
+                    foreach (var orderData in closedOrders.Select(x => new OrderData() { Order = x }))
                     foreach (var callback in onOrderCallBacks)
                     {
-                        callback(openOrdersData);
+                        callback(orderData);
                     }
-
-
                 }, null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
 
                 var tickersTimer = new System.Threading.Timer(async e =>
@@ -313,7 +315,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
             return success;
         }
 
-        public async Task<OrderData> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true, string clientOrderId = null)
+        public async Task<Order> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true, string clientOrderId = null)
         {
             var orderType = direction switch
             {
@@ -332,7 +334,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                 throw new NotImplementedException();
         }
 
-        private async Task<OrderData> ExecuteMarketOrder(OrderDirection direction, string marketSymbol, decimal quantity, bool useCredits = true)
+        private async Task<Order> ExecuteMarketOrder(OrderDirection direction, string marketSymbol, decimal quantity, bool useCredits = true)
         {
             var orderType = direction switch
             {

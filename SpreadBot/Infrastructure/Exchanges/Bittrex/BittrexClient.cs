@@ -33,9 +33,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
         private readonly Timer reconnectWebsocketTimer = new Timer(TimeSpan.FromMinutes(1).TotalMilliseconds);
         private readonly ConcurrentBag<Action<BittrexApiBalanceData>> onBalanceCallBacks = new ConcurrentBag<Action<BittrexApiBalanceData>>();
-        private readonly ConcurrentBag<Action<BittrexApiMarketSummariesData>> onSummariesCallBacks = new ConcurrentBag<Action<BittrexApiMarketSummariesData>>();
-        private readonly ConcurrentBag<Action<BittrexApiTickersData>> onTickersCallBacks = new ConcurrentBag<Action<BittrexApiTickersData>>();
-        private readonly ConcurrentBag<Action<BittrexApiOrderData>> onOrderCallBacks = new ConcurrentBag<Action<BittrexApiOrderData>>();
+        private readonly ConcurrentBag<Action<MarketSummaryData>> onSummariesCallBacks = new ConcurrentBag<Action<MarketSummaryData>>();
+        private readonly ConcurrentBag<Action<TickerData>> onTickersCallBacks = new ConcurrentBag<Action<TickerData>>();
+        private readonly ConcurrentBag<Action<OrderData>> onOrderCallBacks = new ConcurrentBag<Action<OrderData>>();
 
         public BittrexClient(string apiKey, string apiSecret)
         {
@@ -60,11 +60,11 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
         public void OnBalance(Action<BittrexApiBalanceData> callback) => onBalanceCallBacks.Add(callback);
 
-        public void OnSummaries(Action<BittrexApiMarketSummariesData> callback) => onSummariesCallBacks.Add(callback);
+        public void OnSummaries(Action<MarketSummaryData> callback) => onSummariesCallBacks.Add(callback);
 
-        public void OnTickers(Action<BittrexApiTickersData> callback) => onTickersCallBacks.Add(callback);
+        public void OnTickers(Action<TickerData> callback) => onTickersCallBacks.Add(callback);
 
-        public void OnOrder(Action<BittrexApiOrderData> callback) => onOrderCallBacks.Add(callback);
+        public void OnOrder(Action<OrderData> callback) => onOrderCallBacks.Add(callback);
 
         public async Task<CompleteBalanceData> GetBalanceData()
         {
@@ -75,34 +75,34 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return new CompleteBalanceData(balances);
         }
 
-        public async Task<BittrexApiTickersData> GetTickersData()
+        public async Task<TickerData> GetTickersData()
         {
             var request = new RestRequest("/markets/tickers", Method.GET, DataFormat.Json);
 
             var tickers = await ExecuteAuthenticatedRequest<BittrexApiTickersData.Ticker[]>(request);
 
-            return new BittrexApiTickersData { Sequence = tickers.Sequence, Deltas = tickers.Data };
+            return new TickerData { Sequence = tickers.Sequence, Markets = tickers.Data.Select(x => x.ToMarketData()).ToArray() };
         }
 
-        public async Task<BittrexApiMarketSummariesData> GetMarketSummariesData()
+        public async Task<MarketSummaryData> GetMarketSummariesData()
         {
             var request = new RestRequest("/markets/summaries", Method.GET, DataFormat.Json);
 
             var marketSummaries = await ExecuteAuthenticatedRequest<BittrexApiMarketSummariesData.MarketSummary[]>(request);
 
-            return new BittrexApiMarketSummariesData { Sequence = marketSummaries.Sequence, Deltas = marketSummaries.Data };
+            return new MarketSummaryData { Sequence = marketSummaries.Sequence, Markets = marketSummaries.Data.Select(x => x.ToMarketData()).ToArray() };
         }
 
-        public async Task<BittrexApiMarketData[]> GetMarketsData()
+        public async Task<Market[]> GetMarketsData()
         {
             var request = new RestRequest("/markets", Method.GET, DataFormat.Json);
 
             var marketSummaries = await ExecuteAuthenticatedRequest<BittrexApiMarketData[]>(request);
 
-            return marketSummaries.Data;
+            return marketSummaries.Data.Select(x => x.ToMarketData()).ToArray();
         }
 
-        public async Task<OrderData[]> GetClosedOrdersData(string startAfterOrderId)
+        public async Task<Order[]> GetClosedOrdersData(string startAfterOrderId)
         {
             var request = new RestRequest("/orders/closed", Method.GET, DataFormat.Json);
 
@@ -113,19 +113,19 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
             var response = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
 
-            return response?.Data?.Select(x => new OrderData(x)).ToArray();
+            return response?.Data?.Select(x => new Order(x)).ToArray();
         }
 
-        public async Task<OrderData[]> GetOpenOrdersData()
+        public async Task<Order[]> GetOpenOrdersData()
         {
             var request = new RestRequest("/orders/open", Method.GET, DataFormat.Json);
 
             var response = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order[]>(request);
 
-            return response?.Data?.Select(x => new OrderData(x)).ToArray();
+            return response?.Data?.Select(x => new Order(x)).ToArray();
         }
 
-        public async Task<OrderData> GetOrderData(string orderId)
+        public async Task<Order> GetOrderData(string orderId)
         {
             var request = new RestRequest($"/orders/{orderId}", Method.GET, DataFormat.Json);
 
@@ -134,33 +134,33 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return order?.Data?.ToOrderData();
         }
 
-        public async Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
+        public async Task<Order> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
         {
             return await ExecuteLimitOrder(OrderDirection.BUY, marketSymbol, quantity, limit, clientOrderId: clientOrderId);
         }
 
-        public async Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
+        public async Task<Order> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
         {
             return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit, clientOrderId: clientOrderId);
         }
 
-        public async Task<OrderData> BuyMarket(string marketSymbol, decimal quantity)
+        public async Task<Order> BuyMarket(string marketSymbol, decimal quantity)
         {
             return await ExecuteMarketOrder(OrderDirection.BUY, marketSymbol, quantity);
         }
 
-        public async Task<OrderData> SellMarket(string marketSymbol, decimal quantity)
+        public async Task<Order> SellMarket(string marketSymbol, decimal quantity)
         {
             return await ExecuteMarketOrder(OrderDirection.SELL, marketSymbol, quantity);
         }
 
-        public async Task<OrderData> CancelOrder(string orderId)
+        public async Task<Order> CancelOrder(string orderId)
         {
             var request = new RestRequest($"/orders/{orderId}", Method.DELETE, DataFormat.Json);
 
             var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
 
-            return new OrderData(apiOrderData.Data);
+            return new Order(apiOrderData.Data);
         }
 
         private void WebSocketDisconnected()
@@ -211,9 +211,29 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 {
 
                     SocketClient.On<BittrexApiBalanceData>("balance", (balance) => { foreach (var callback in onBalanceCallBacks) { callback(balance); } });
-                    SocketClient.On<BittrexApiMarketSummariesData>("marketsummaries", (balance) => { foreach (var callback in onSummariesCallBacks) { callback(balance); } });
-                    SocketClient.On<BittrexApiTickersData>("tickers", (balance) => { foreach (var callback in onTickersCallBacks) { callback(balance); } });
-                    SocketClient.On<BittrexApiOrderData>("order", (balance) => { foreach (var callback in onOrderCallBacks) { callback(balance); } });
+                    SocketClient.On<BittrexApiMarketSummariesData>("marketsummaries", (summariesData) =>
+                    {
+                        foreach (var callback in onSummariesCallBacks)
+                        {
+                            callback(new MarketSummaryData()
+                            {
+                                Sequence = summariesData.Sequence,
+                                Markets = summariesData.Deltas.Select(x => x.ToMarketData()).ToArray()
+                            });
+                        }
+                    });
+                    SocketClient.On<BittrexApiTickersData>("tickers", (tickersData) =>
+                    {
+                        foreach (var callback in onTickersCallBacks)
+                        {
+                            callback(new TickerData()
+                            {
+                                Sequence = tickersData.Sequence,
+                                Markets = tickersData.Deltas.Select(x => x.ToMarketData()).ToArray()
+                            });
+                            SocketClient.On<BittrexApiOrderData>("order", (orderData) => { foreach (var callback in onOrderCallBacks) { callback(new OrderData() { Sequence = orderData.Sequence, Order = orderData.ToOrderData() }); } });
+                        }
+                    });
                 }
             }
             catch (Exception e)
@@ -229,7 +249,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return success;
         }
 
-        public async Task<OrderData> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true, string clientOrderId = null)
+        public async Task<Order> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true, string clientOrderId = null)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
             var body = JsonConvert.SerializeObject(new
@@ -249,7 +269,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             {
                 var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
 
-                return new OrderData(apiOrderData.Data);
+                return new Order(apiOrderData.Data);
             }
             catch (ApiException e) when ((e.ApiErrorType == ApiErrorType.CannotEstimateCommission || e.ApiErrorType == ApiErrorType.RetryLater) && useCredits)
             {
@@ -258,7 +278,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             }
         }
 
-        private async Task<OrderData> ExecuteMarketOrder(OrderDirection direction, string marketSymbol, decimal quantity, bool useCredits = true)
+        private async Task<Order> ExecuteMarketOrder(OrderDirection direction, string marketSymbol, decimal quantity, bool useCredits = true)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
             var body = JsonConvert.SerializeObject(new
@@ -276,7 +296,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             {
                 var apiOrderData = await ExecuteAuthenticatedRequest<BittrexApiOrderData.Order>(request);
 
-                return new OrderData(apiOrderData.Data);
+                return new Order(apiOrderData.Data);
             }
             catch (ApiException e) when ((e.ApiErrorType == ApiErrorType.CannotEstimateCommission || e.ApiErrorType == ApiErrorType.RetryLater) && useCredits)
             {
@@ -423,7 +443,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 sb.AppendLine(restResponse.ErrorException.ToString());
                 sb.AppendLine("SerializationError:");
                 sb.AppendLine(JsonConvert.SerializeObject(e));
-                
+
                 Logger.Instance.LogUnexpectedError(sb.ToString());
 
                 return ApiErrorType.UnknownError;

@@ -17,24 +17,24 @@ namespace SpreadBot.Infrastructure.Exchanges
         //Websocket subscription methods
         //For exchanges that don't support websockets, use an interval-based cycle to call equivalent API methods to simulate Websocket behavior
         void OnBalance(Action<BittrexApiBalanceData> callback);
-        void OnSummaries(Action<BittrexApiMarketSummariesData> callback);
-        void OnTickers(Action<BittrexApiTickersData> callback);
-        void OnOrder(Action<BittrexApiOrderData> callback);
+        void OnSummaries(Action<MarketSummaryData> callback);
+        void OnTickers(Action<TickerData> callback);
+        void OnOrder(Action<OrderData> callback);
 
         //Rest API methods
-        Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
-        Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
-        Task<OrderData> BuyMarket(string marketSymbol, decimal quantity);
-        Task<OrderData> SellMarket(string marketSymbol, decimal quantity);
-        Task<OrderData> CancelOrder(string orderId);
+        Task<Order> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
+        Task<Order> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
+        Task<Order> BuyMarket(string marketSymbol, decimal quantity);
+        Task<Order> SellMarket(string marketSymbol, decimal quantity);
+        Task<Order> CancelOrder(string orderId);
 
         Task<CompleteBalanceData> GetBalanceData();
-        Task<BittrexApiTickersData> GetTickersData();
-        Task<BittrexApiMarketSummariesData> GetMarketSummariesData();
-        Task<BittrexApiMarketData[]> GetMarketsData();
-        Task<OrderData[]> GetClosedOrdersData(string startAfterOrderId);
-        Task<OrderData[]> GetOpenOrdersData();
+        Task<TickerData> GetTickersData();
+        Task<MarketSummaryData> GetMarketSummariesData();
+        Task<Market[]> GetMarketsData();
+        Task<Order[]> GetClosedOrdersData(string startAfterOrderId);
+        Task<Order[]> GetOpenOrdersData();
 
-        Task<OrderData> GetOrderData(string orderId);
+        Task<Order> GetOrderData(string orderId);
     }
 }

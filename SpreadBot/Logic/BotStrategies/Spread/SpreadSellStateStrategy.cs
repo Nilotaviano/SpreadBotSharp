@@ -7,7 +7,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadSellStateStrategy : IBotStateStrategy
     {
-        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
+        public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<Order>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
             if (!botContext.LatestMarketData.AskRate.HasValue)
                 return;

@@ -21,7 +21,8 @@ namespace SpreadBot.Models.Repository
 
         public MessageType MessageType => MessageType.BalanceData;
 
-        public string CurrencyAbbreviation { get; set; }
+        private string currencyAbbreviation;
+        public string CurrencyAbbreviation { get => currencyAbbreviation; set => currencyAbbreviation = value.ToUpper(); }
         public decimal Amount { get; set; }
     }
 }

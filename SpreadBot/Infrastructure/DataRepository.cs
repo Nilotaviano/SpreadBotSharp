@@ -38,9 +38,9 @@ namespace SpreadBot.Infrastructure
                 throw new ArgumentException("Exchange is not setup");
 
             pendingBalanceMessages = new BlockingCollection<BittrexApiBalanceData>();
-            pendingMarketSummaryMessages = new BlockingCollection<BittrexApiMarketSummariesData>();
-            pendingOrderMessages = new BlockingCollection<BittrexApiOrderData>();
-            pendingTickersMessages = new BlockingCollection<BittrexApiTickersData>();
+            pendingMarketSummaryMessages = new BlockingCollection<MarketSummaryData>();
+            pendingOrderMessages = new BlockingCollection<OrderData>();
+            pendingTickersMessages = new BlockingCollection<TickerData>();
 
             Exchange = exchange;
             this.appSettings = appSettings;
@@ -68,28 +68,28 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// MarketData dictionary indexed by Symbol
         /// </summary>
-        public ConcurrentDictionary<string, MarketData> MarketsData { get; private set; } = new ConcurrentDictionary<string, MarketData>();
+        public ConcurrentDictionary<string, Market> MarketsData { get; private set; } = new ConcurrentDictionary<string, Market>();
 
         /// <summary>
         /// MarketData dictionary indexed by Symbol
         /// </summary>
-        public ConcurrentDictionary<string, OrderData> OrdersData { get; private set; } = new ConcurrentDictionary<string, OrderData>();
+        public ConcurrentDictionary<string, Order> OrdersData { get; private set; } = new ConcurrentDictionary<string, Order>();
 
         // key: currency abbreviation, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
         // key: Guid — which will be used for unsubscribing, value: handlers 
-        private ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>> AllMarketHandlers { get; set; } = new ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>>();
+        private ConcurrentDictionary<Guid, Action<IEnumerable<Market>>> AllMarketHandlers { get; set; } = new ConcurrentDictionary<Guid, Action<IEnumerable<Market>>>();
         // key: market symbol, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
-        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>> SpecificMarketHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>>();
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Market>>> SpecificMarketHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Market>>>();
         // key: order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
-        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Order>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Order>>>();
 
         private BlockingCollection<BittrexApiBalanceData> pendingBalanceMessages;
-        private BlockingCollection<BittrexApiMarketSummariesData> pendingMarketSummaryMessages;
-        private BlockingCollection<BittrexApiOrderData> pendingOrderMessages;
-        private BlockingCollection<BittrexApiTickersData> pendingTickersMessages;
+        private BlockingCollection<MarketSummaryData> pendingMarketSummaryMessages;
+        private BlockingCollection<OrderData> pendingOrderMessages;
+        private BlockingCollection<TickerData> pendingTickersMessages;
 
-        public void SubscribeToMarketsData(Guid handlerGuid, Action<IEnumerable<MarketData>> evaluateMarkets)
+        public void SubscribeToMarketsData(Guid handlerGuid, Action<IEnumerable<Market>> evaluateMarkets)
         {
             AllMarketHandlers[handlerGuid] = evaluateMarkets;
 
@@ -115,10 +115,10 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific market by marketName
         /// </summary>
-        public void SubscribeToMarketData(string marketName, Guid handlerGuid, Action<MarketData> callback)
+        public void SubscribeToMarketData(string marketName, Guid handlerGuid, Action<Market> callback)
         {
-            if (!SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
-                SpecificMarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
+            if (!SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<Market>> handlers))
+                SpecificMarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<Market>>();
 
             handlers[handlerGuid] = callback;
 
@@ -130,10 +130,10 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific order by orderId
         /// </summary>
-        public void SubscribeToOrderData(string clientOrderId, Guid handlerGuid, Action<OrderData> callback)
+        public void SubscribeToOrderData(string clientOrderId, Guid handlerGuid, Action<Order> callback)
         {
-            if (!OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
-                OrderHandlers[clientOrderId] = handlers = new ConcurrentDictionary<Guid, Action<OrderData>>();
+            if (!OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<Order>> handlers))
+                OrderHandlers[clientOrderId] = handlers = new ConcurrentDictionary<Guid, Action<Order>>();
 
             handlers[handlerGuid] = callback;
 
@@ -163,7 +163,7 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void UnsubscribeToMarketData(string marketName, Guid handlerGuid)
         {
-            if (SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
+            if (SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<Market>> handlers))
             {
                 handlers.Remove(handlerGuid, out _);
             }
@@ -174,7 +174,7 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void UnsubscribeToOrderData(string clientOrderId, Guid handlerGuid)
         {
-            if (OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+            if (OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<Order>> handlers))
             {
                 handlers.Remove(handlerGuid, out _);
 
@@ -253,10 +253,9 @@ namespace SpreadBot.Infrastructure
                     return;
                 }
 
-                var data = new OrderData(orderData);
-                OrdersData.AddOrUpdate(data.ClientOrderId, data, (id, existing) => existing.Status == Models.OrderStatus.CLOSED ? existing : data);
+                OrdersData.AddOrUpdate(orderData.Order.ClientOrderId, orderData.Order, (id, existing) => existing.Status == Models.OrderStatus.CLOSED ? existing : orderData.Order);
 
-                InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
+                InvokeHandlers(this.OrderHandlers, orderData.Order.ClientOrderId, orderData.Order);
 
                 lastOrderSequence = orderData.Sequence;
             });
@@ -272,9 +271,7 @@ namespace SpreadBot.Infrastructure
                     return;
                 }
 
-                var marketData = summaryData.Deltas.Select(delta => delta.ToMarketData());
-
-                UpdateMarketData(marketData);
+                UpdateMarketData(summaryData.Markets);
 
                 lastSummarySequence = summaryData.Sequence;
             });
@@ -290,9 +287,7 @@ namespace SpreadBot.Infrastructure
                     return;
                 }
 
-                var marketData = tickersData.Deltas.Select(delta => delta.ToMarketData());
-
-                UpdateMarketData(marketData);
+                UpdateMarketData(tickersData.Markets);
 
                 lastTickerSequence = tickersData.Sequence;
             });
@@ -320,20 +315,20 @@ namespace SpreadBot.Infrastructure
             Logger.Instance.LogUnexpectedError($"Stopped {typeName} WS data consumption");
         }
 
-        private void UpdateMarketData(IEnumerable<MarketData> marketData)
+        private void UpdateMarketData(IEnumerable<Market> marketData)
         {
             foreach (var market in marketData)
                 UpdateMarketData(market);
         }
 
-        private void UpdateMarketData(MarketData data)
+        private void UpdateMarketData(Market data)
         {
             var newData = this.MarketsData.AddOrUpdate(data.Symbol,
                                                         data,
                                                         (key, existingData) => this.MergeMarketData(existingData, data));
             InvokeHandlers(this.SpecificMarketHandlers, data.Symbol, newData);
 
-            InvokeHandlers(AllMarketHandlers, new MarketData[] { newData });
+            InvokeHandlers(AllMarketHandlers, new Market[] { newData });
         }
 
         private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
@@ -387,13 +382,10 @@ namespace SpreadBot.Infrastructure
             //TODO: Handle exceptions here
             var summaries = await Exchange.GetMarketSummariesData();
 
-            if (summaries.Deltas != null)
+            if (summaries.Markets != null)
             {
-                foreach (var summary in summaries.Deltas)
-                {
-                    var marketData = summary.ToMarketData();
-                    UpdateMarketData(marketData);
-                }
+                foreach (var summary in summaries.Markets)
+                    UpdateMarketData(summary);
             }
 
             lastSummarySequence = summaries.Sequence;
@@ -407,13 +399,10 @@ namespace SpreadBot.Infrastructure
             //TODO: Handle exceptions here
             var tickers = await Exchange.GetTickersData();
 
-            if (tickers.Deltas != null)
+            if (tickers.Markets != null)
             {
-                foreach (var ticker in tickers.Deltas)
-                {
-                    var marketData = ticker.ToMarketData();
-                    UpdateMarketData(marketData);
-                }
+                foreach (var ticker in tickers.Markets)
+                    UpdateMarketData(ticker);
             }
 
             lastTickerSequence = tickers.Sequence;
@@ -430,10 +419,7 @@ namespace SpreadBot.Infrastructure
             if (markets != null)
             {
                 foreach (var market in markets)
-                {
-                    var marketData = market.ToMarketData();
-                    UpdateMarketData(marketData);
-                }
+                    UpdateMarketData(market);
             }
             Logger.Instance.LogMessage("Finished resyncing markets");
         }
@@ -480,9 +466,9 @@ namespace SpreadBot.Infrastructure
             Logger.Instance.LogMessage("Finished resyncing closed orders");
         }
 
-        private MarketData MergeMarketData(MarketData existingData, MarketData data)
+        private Market MergeMarketData(Market existingData, Market data)
         {
-            return new MarketData
+            return new Market
             {
                 AskRate = data.AskRate ?? existingData.AskRate,
                 BidRate = data.BidRate ?? existingData.BidRate,
@@ -494,6 +480,8 @@ namespace SpreadBot.Infrastructure
                 UpdatedAt = data.UpdatedAt ?? existingData.UpdatedAt,
                 Volume = data.Volume ?? existingData.Volume,
                 Symbol = data.Symbol ?? existingData.Symbol,
+                Quote = data.Quote ?? existingData.Quote,
+                Target = data.Target ?? existingData.Target,
                 Precision = data.Precision ?? existingData.Precision,
                 MinTradeSize = data.MinTradeSize ?? existingData.MinTradeSize,
                 Notice = data.Notice ?? existingData.Notice,
@@ -534,7 +522,7 @@ namespace SpreadBot.Infrastructure
 
             try
             {
-                var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.BaseMarket))).Select(v => v.Target));
+                var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.Quote))).Select(v => v.Target));
                 UpdateMarketData(latestQuotes);
             }
             catch (Exception e)

@@ -29,7 +29,7 @@ namespace SpreadBot.Logic
             botStrategy = botStrategiesFactory.GetStrategy();
         }
 
-        public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
+        public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, Market marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
             : this(dataRepository, new BotContext(spreadConfiguration, marketData, BotState.Buying, existingDust), unallocateBotCallback, botStrategiesFactory)
         { }
 
@@ -40,7 +40,7 @@ namespace SpreadBot.Logic
         public decimal HeldAmount => botContext.HeldAmount;
         public decimal LastTradeRate => botContext.LatestMarketData.LastTradeRate.GetValueOrDefault();
 
-        private void SetCurrentOrderData(OrderData value)
+        private void SetCurrentOrderData(Order value)
         {
             if (botContext.CurrentOrderData?.Id != value?.Id)
             {
@@ -101,10 +101,10 @@ namespace SpreadBot.Logic
                     switch (message.MessageType)
                     {
                         case MessageType.MarketData:
-                            await ProcessMarketData(message as MarketData);
+                            await ProcessMarketData(message as Market);
                             break;
                         case MessageType.OrderData:
-                            await ProcessOrderData(message as OrderData);
+                            await ProcessOrderData(message as Order);
                             break;
                         default:
                             throw new ArgumentException();
@@ -159,14 +159,14 @@ namespace SpreadBot.Logic
             }
         }
 
-        private async Task ProcessMarketData(MarketData marketData)
+        private async Task ProcessMarketData(Market marketData)
         {
             botContext.LatestMarketData = marketData;
 
             await botStrategy.ProcessMarketData(dataRepository, botContext, ExecuteOrderFunction, FinishWork);
         }
 
-        private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
+        private async Task ExecuteOrderFunction(Func<Task<Order>> func)
         {
             var orderData = await func();
             SetCurrentOrderData(orderData);
@@ -174,7 +174,7 @@ namespace SpreadBot.Logic
         }
 
         //TODO: Refactor/clean this method
-        private async Task ProcessOrderData(OrderData orderData)
+        private async Task ProcessOrderData(Order orderData)
         {
             if (orderData.Id != botContext.CurrentOrderData?.Id)
                 return;
@@ -210,7 +210,7 @@ namespace SpreadBot.Logic
             }
         }
 
-        private void UpdateContext(OrderData orderData)
+        private void UpdateContext(Order orderData)
         {
             if (orderData == null || orderData.Status != OrderStatus.CLOSED)
                 return;
@@ -265,7 +265,7 @@ namespace SpreadBot.Logic
             if (!dustIsWorthCleaning)
                 return;
 
-            OrderData sellOrder = null;
+            Order sellOrder = null;
             try
             {
                 sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
