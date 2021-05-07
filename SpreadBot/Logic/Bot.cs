@@ -6,6 +6,7 @@ using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Threading.Tasks;
+using System.Timers;
 
 namespace SpreadBot.Logic
 {
@@ -14,12 +15,14 @@ namespace SpreadBot.Logic
         public readonly BotContext botContext;
 
         private readonly Action<Bot> unallocateBotCallback;
-        private readonly SemaphoreQueue semaphore = new SemaphoreQueue(1, 1);
 
         private readonly DataRepository dataRepository;
         private IExchange exchange => dataRepository.Exchange;
 
         private readonly IBotStrategy botStrategy;
+
+        private readonly Timer processingMessageTimeExceededTimer;
+
 
         public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
@@ -27,6 +30,10 @@ namespace SpreadBot.Logic
             this.botContext = context;
             this.unallocateBotCallback = unallocateBotCallback;
             botStrategy = botStrategiesFactory.GetStrategy();
+
+            processingMessageTimeExceededTimer = new Timer(TimeSpan.FromMinutes(1).TotalMilliseconds);
+            processingMessageTimeExceededTimer.Elapsed += ProcessingMessageTimeExceededTimer_Elapsed;
+            processingMessageTimeExceededTimer.AutoReset = false;
         }
 
         public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
@@ -48,10 +55,14 @@ namespace SpreadBot.Logic
                     dataRepository.UnsubscribeToOrderData(botContext.CurrentOrderData.ClientOrderId, Guid);
 
                 if (value?.Status == OrderStatus.OPEN)
+                {
                     dataRepository.SubscribeToOrderData(value.ClientOrderId, Guid, ProcessMessage);
+                }
             }
             if (value?.Status == OrderStatus.CLOSED)
+            {
                 dataRepository.UnsubscribeToOrderData(value.ClientOrderId, Guid);
+            }
 
 
             botContext.CurrentOrderData = value;
@@ -68,12 +79,13 @@ namespace SpreadBot.Logic
                     try
                     {
                         updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.ClientOrderId);
-                    } catch (Exception e)
+                    }
+                    catch (Exception e)
                     {
                         LogError(e.ToString());
                     }
                 }
-                    
+
                 await ProcessOrderData(updatedOrder);
             }
 
@@ -94,7 +106,8 @@ namespace SpreadBot.Logic
             }
             else
             {
-                await semaphore.WaitAsync();
+                await botContext.Semaphore.WaitAsync();
+                processingMessageTimeExceededTimer.Start();
 
                 try
                 {
@@ -154,7 +167,10 @@ namespace SpreadBot.Logic
                 }
                 finally
                 {
-                    semaphore.Release();
+                    botContext.Semaphore.Release();
+
+                    if (botContext.BotState != BotState.FinishedWork) //otherwise processingMessageTimeExceededTimer would already be disposed
+                        processingMessageTimeExceededTimer.Stop();
                 }
             }
         }
@@ -220,7 +236,7 @@ namespace SpreadBot.Logic
                 string errorMessage = $"Either fill quantity or proceeds is 0 while the other is not. " +
                     $"Fill: {orderData.FillQuantity}. Proceeds: {orderData.Proceeds + orderData.Commission}";
 
-                Logger.Instance.LogUnexpectedError(errorMessage);
+                LogUnexpectedError(errorMessage);
             }
 
             switch (orderData?.Direction)
@@ -247,13 +263,14 @@ namespace SpreadBot.Logic
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
 
-            semaphore.Clear();
+            botContext.Semaphore.Clear();
 
             if (HeldAmount > 0)
                 await CleanDust();
 
             unallocateBotCallback(this);
             NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
+            processingMessageTimeExceededTimer.Dispose();
             LogMessage($"finished on {MarketSymbol}");
         }
 
@@ -282,6 +299,11 @@ namespace SpreadBot.Logic
             UpdateContext(sellOrder);
         }
 
+        private void ProcessingMessageTimeExceededTimer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            LogUnexpectedError("Processing message time exceeded");
+        }
+
         private void LogMessage(string message)
         {
             Logger.Instance.LogMessage($"Bot {Guid}: {message}");
@@ -296,7 +318,6 @@ namespace SpreadBot.Logic
         {
             Logger.Instance.LogUnexpectedError($"Bot {Guid}: {message}");
         }
-
     }
 
     public enum BotState

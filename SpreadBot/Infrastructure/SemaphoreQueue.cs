@@ -13,6 +13,9 @@ namespace SpreadBot.Infrastructure
         private readonly SemaphoreSlim semaphore;
         private readonly ConcurrentQueue<TaskCompletionSource<bool>> queue =
             new ConcurrentQueue<TaskCompletionSource<bool>>();
+
+        public int CurrentCount => semaphore.CurrentCount;
+
         public SemaphoreQueue(int initialCount)
         {
             semaphore = new SemaphoreSlim(initialCount);
@@ -33,6 +36,8 @@ namespace SpreadBot.Infrastructure
             {
                 if (queue.TryDequeue(out TaskCompletionSource<bool> popped))
                     popped.SetResult(true);
+                else
+                    Logger.Instance.LogError("Failed TryDequeue in SemaphoreQueue.WaitAsync");
             });
             return tcs.Task;
         }
