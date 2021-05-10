@@ -36,8 +36,6 @@ namespace SpreadBot.Infrastructure
             {
                 if (queue.TryDequeue(out TaskCompletionSource<bool> popped))
                     popped.SetResult(true);
-                else
-                    Logger.Instance.LogError("Failed TryDequeue in SemaphoreQueue.WaitAsync");
             });
             return tcs.Task;
         }
