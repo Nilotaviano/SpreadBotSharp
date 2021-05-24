@@ -2,6 +2,7 @@
 using SpreadBot.Models.Repository;
 using System;
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 
 namespace SpreadBot.Infrastructure
 {
@@ -20,6 +21,12 @@ namespace SpreadBot.Infrastructure
         private BotState botState;
         private decimal heldAmount;
         private decimal balance;
+
+        [JsonIgnore]
+        public readonly SemaphoreQueue Semaphore = new SemaphoreQueue(1, 1);
+
+        //Just so that this exists o coordinatorContext.json
+        public int SemaphoreCurrentCount => Semaphore.CurrentCount;
 
         public BotContext(SpreadConfiguration spreadConfiguration, Market marketData, BotState buy, decimal existingDust)
         {

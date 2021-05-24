@@ -13,6 +13,9 @@ namespace SpreadBot.Infrastructure
         private readonly SemaphoreSlim semaphore;
         private readonly ConcurrentQueue<TaskCompletionSource<bool>> queue =
             new ConcurrentQueue<TaskCompletionSource<bool>>();
+
+        public int CurrentCount => semaphore.CurrentCount;
+
         public SemaphoreQueue(int initialCount)
         {
             semaphore = new SemaphoreSlim(initialCount);
