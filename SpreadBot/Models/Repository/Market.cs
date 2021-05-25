@@ -20,7 +20,8 @@ namespace SpreadBot.Models.Repository
         public DateTime? UpdatedAt { get; set; }
 
         public decimal? MinTradeSize { get; set; } //In base currency (minTradeSize is the minimum order quantity in the base currency (e.g. LTC)
-        public int? Precision { get; set; } //Number of decimal places allowed on the price when creating an order
+        public int? LimitPrecision { get; set; } //Number of decimal places allowed on the price when creating an order
+        public int? AmountPrecision { get; set; } //Number of decimal places allowed on the amount when creating an order
         public DateTime? CreatedAt { get; set; }
         public string Notice { get; set; }
 

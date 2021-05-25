@@ -12,11 +12,11 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             if (!botContext.LatestMarketData.AskRate.HasValue)
                 return;
 
-            decimal askPrice = botContext.LatestMarketData.AskRate.Value - 1.Satoshi().CeilToPrecision(botContext.LatestMarketData.Precision);
+            decimal askPrice = botContext.LatestMarketData.AskRate.Value - 1.Satoshi().CeilToPrecision(botContext.LatestMarketData.LimitPrecision);
 
             bool canSellAtLoss = botContext.buyStopwatch.Elapsed.TotalMinutes > botContext.spreadConfiguration.MinutesForLoss;
             if (!canSellAtLoss)
-                askPrice = Math.Max(botContext.BoughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToPrecision(botContext.LatestMarketData.Precision);
+                askPrice = Math.Max(botContext.BoughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToPrecision(botContext.LatestMarketData.LimitPrecision);
 
             await executeOrderFunctionCallback(async () => await dataRepository.Exchange.SellLimit(botContext.LatestMarketData.Symbol, botContext.HeldAmount, askPrice));
         }

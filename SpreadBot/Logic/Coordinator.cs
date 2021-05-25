@@ -178,7 +178,7 @@ namespace SpreadBot.Logic
 
         private bool IsViableMarket(Market market)
         {
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online;
+            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && market.Target != "SMBSWAP";
         }
 
         private void ReportBalance()

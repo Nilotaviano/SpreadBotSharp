@@ -125,8 +125,6 @@ namespace SpreadBot.Logic
                 }
                 catch (ApiException e)
                 {
-                    LogError($"ApiException {e.ApiErrorType} context:{Environment.NewLine}{e}{Environment.NewLine}BotContext:{JsonConvert.SerializeObject(botContext, Formatting.Indented)}Message:{JsonConvert.SerializeObject(message, Formatting.Indented)}");
-
                     //TODO: Clean up/refactor
                     switch (e.ApiErrorType)
                     {
@@ -138,10 +136,12 @@ namespace SpreadBot.Logic
                             await FinishWork();
                             break;
                         case ApiErrorType.InsufficientFunds:
+                            LogError($"{e.ApiErrorType}: {e}");
                             //Too many bots running?
                             await FinishWork();
                             break;
                         case ApiErrorType.MarketOffline when botContext.BotState == BotState.Buying:
+                            LogError($"{e.ApiErrorType}: {e}");
                             await FinishWork();
                             break;
                         case ApiErrorType.OrderNotOpen:
@@ -285,7 +285,7 @@ namespace SpreadBot.Logic
             Order sellOrder = null;
             try
             {
-                sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
+                sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.AmountPrecision));
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.RetryLater && retry) //Try just once more. TODO: Investigate if any more ApiErrorTypes should go here
             {

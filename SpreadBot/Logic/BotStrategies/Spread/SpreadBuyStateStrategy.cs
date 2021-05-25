@@ -15,8 +15,8 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             if (botContext.LatestMarketData.SpreadPercentage >= botContext.spreadConfiguration.MinimumSpreadPercentage)
             {
 
-                decimal bidPrice = (botContext.LatestMarketData.BidRate.Value + 1.Satoshi()).CeilToPrecision(botContext.LatestMarketData.Precision);
-                decimal amount = (botContext.Balance * (1 - dataRepository.Exchange.FeeRate) / bidPrice).CeilToPrecision(botContext.LatestMarketData.Precision);
+                decimal bidPrice = (botContext.LatestMarketData.BidRate.Value + 1.Satoshi()).CeilToPrecision(botContext.LatestMarketData.LimitPrecision);
+                decimal amount = (botContext.Balance * (1 - dataRepository.Exchange.FeeRate) / bidPrice).CeilToPrecision(botContext.LatestMarketData.AmountPrecision);
 
                 await executeOrderFunctionCallback(async () => await dataRepository.Exchange.BuyLimit(botContext.LatestMarketData.Symbol, amount, bidPrice));
             }

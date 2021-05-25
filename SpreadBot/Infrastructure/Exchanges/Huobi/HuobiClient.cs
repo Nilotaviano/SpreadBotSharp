@@ -132,7 +132,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
                     MinTradeSize = x.MinOrderValue,
                     Notice = string.Empty, //TODO we might have to use this
                     Status = x.State == HuobiSymbolState.Online ? EMarketStatus.Online : EMarketStatus.Offline, //ONLINE is the only one that we care about,
-                    Precision = x.PricePrecision, //TODO: We probably have to add support for AmountPrecision too 
+                    LimitPrecision = x.PricePrecision,
+                    AmountPrecision = x.AmountPrecision,
                     IsTokenizedSecurity = null //TODO we might have to use this
                 }).ToArray();
             }
