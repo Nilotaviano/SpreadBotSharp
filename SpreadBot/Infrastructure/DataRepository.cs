@@ -1,5 +1,4 @@
 ﻿using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
@@ -7,7 +6,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
-using RestSharp;
 using SpreadBot.Infrastructure.PriceAggregators;
 
 namespace SpreadBot.Infrastructure
@@ -37,7 +35,7 @@ namespace SpreadBot.Infrastructure
             if (!exchange.IsSetup)
                 throw new ArgumentException("Exchange is not setup");
 
-            pendingBalanceMessages = new BlockingCollection<BittrexApiBalanceData>();
+            pendingBalanceMessages = new BlockingCollection<BalanceData>();
             pendingMarketSummaryMessages = new BlockingCollection<MarketSummaryData>();
             pendingOrderMessages = new BlockingCollection<OrderData>();
             pendingTickersMessages = new BlockingCollection<TickerData>();
@@ -63,7 +61,7 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// BalanceData dictionary indexed by CurrencyAbbreviation
         /// </summary>
-        public ConcurrentDictionary<string, BalanceData> BalancesData { get; private set; } = new ConcurrentDictionary<string, BalanceData>();
+        public ConcurrentDictionary<string, Balance> BalancesData { get; private set; } = new ConcurrentDictionary<string, Balance>();
 
         /// <summary>
         /// MarketData dictionary indexed by Symbol
@@ -76,7 +74,7 @@ namespace SpreadBot.Infrastructure
         public ConcurrentDictionary<string, Order> OrdersData { get; private set; } = new ConcurrentDictionary<string, Order>();
 
         // key: currency abbreviation, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
-        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Balance>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Balance>>>();
         // key: Guid — which will be used for unsubscribing, value: handlers 
         private ConcurrentDictionary<Guid, Action<IEnumerable<Market>>> AllMarketHandlers { get; set; } = new ConcurrentDictionary<Guid, Action<IEnumerable<Market>>>();
         // key: market symbol, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
@@ -84,7 +82,7 @@ namespace SpreadBot.Infrastructure
         // key: order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Order>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<Order>>>();
 
-        private BlockingCollection<BittrexApiBalanceData> pendingBalanceMessages;
+        private BlockingCollection<BalanceData> pendingBalanceMessages;
         private BlockingCollection<MarketSummaryData> pendingMarketSummaryMessages;
         private BlockingCollection<OrderData> pendingOrderMessages;
         private BlockingCollection<TickerData> pendingTickersMessages;
@@ -100,10 +98,10 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// Subscribe to a specific currency balance by currencyName
         /// </summary>
-        public void SubscribeToCurrencyBalance(string currencyName, Guid handlerGuid, Action<BalanceData> callback)
+        public void SubscribeToCurrencyBalance(string currencyName, Guid handlerGuid, Action<Balance> callback)
         {
-            if (!BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
-                BalanceHandlers[currencyName] = handlers = new ConcurrentDictionary<Guid, Action<BalanceData>>();
+            if (!BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<Balance>> handlers))
+                BalanceHandlers[currencyName] = handlers = new ConcurrentDictionary<Guid, Action<Balance>>();
 
             handlers[handlerGuid] = callback;
 
@@ -152,7 +150,7 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void UnsubscribeToCurrencyBalance(string currencyName, Guid handlerGuid)
         {
-            if (BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
+            if (BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<Balance>> handlers))
             {
                 handlers.Remove(handlerGuid, out _);
             }
@@ -233,8 +231,7 @@ namespace SpreadBot.Infrastructure
                     return;
                 }
 
-                var balance = new BalanceData(balanceData.Delta);
-
+                Balance balance = balanceData.Balance;
                 this.BalancesData[balance.CurrencyAbbreviation] = balance;
 
                 InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);

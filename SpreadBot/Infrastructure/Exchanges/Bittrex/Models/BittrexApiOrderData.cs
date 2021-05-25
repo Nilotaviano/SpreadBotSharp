@@ -16,7 +16,6 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex.Models
             var order = this.Delta?.ToOrderData();
 
             order.AccountId = this.AccountId;
-            order.Sequence = this.Sequence;
 
             return order;
         }

@@ -101,8 +101,8 @@ namespace SpreadBot.Logic
         /// <param name="marketDeltas">Markets that were updated</param>
         private void EvaluateMarkets(IEnumerable<Market> marketDeltas)
         {
-            //if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
-            //    return;
+            if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
+                return;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.Quote);
 
