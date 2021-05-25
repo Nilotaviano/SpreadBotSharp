@@ -3,17 +3,14 @@ using Huobi.Net;
 using Huobi.Net.Objects;
 using Newtonsoft.Json;
 using RestSharp;
-using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
-using System.Timers;
 
 namespace SpreadBot.Infrastructure.Exchanges.Huobi
 {
@@ -27,7 +24,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
 
         public decimal FeeRate => 0.002m;
 
-        private readonly ConcurrentBag<Action<BittrexApiBalanceData>> onBalanceCallBacks = new ConcurrentBag<Action<BittrexApiBalanceData>>();
+        private readonly ConcurrentBag<Action<BalanceData>> onBalanceCallBacks = new ConcurrentBag<Action<BalanceData>>();
         private readonly ConcurrentBag<Action<MarketSummaryData>> onSummariesCallBacks = new ConcurrentBag<Action<MarketSummaryData>>();
         private readonly ConcurrentBag<Action<TickerData>> onTickersCallBacks = new ConcurrentBag<Action<TickerData>>();
         private readonly ConcurrentBag<Action<OrderData>> onOrderCallBacks = new ConcurrentBag<Action<OrderData>>();
@@ -49,7 +46,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
             IsSetup = true;
         }
 
-        public void OnBalance(Action<BittrexApiBalanceData> callback) => onBalanceCallBacks.Add(callback);
+        public void OnBalance(Action<BalanceData> callback) => onBalanceCallBacks.Add(callback);
 
         public void OnSummaries(Action<MarketSummaryData> callback) => onSummariesCallBacks.Add(callback);
 
@@ -63,7 +60,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
 
             if (response.Success)
             {
-                var balances = response.Data.Where(x => x.Type == HuobiBalanceType.Trade).Select(x => new BalanceData(x));
+                var balances = response.Data.Where(x => x.Type == HuobiBalanceType.Trade).Select(HuobiTypeConverter.ConvertBalance);
 
                 return new CompleteBalanceData(DateTime.UtcNow.Ticks, balances);
             }
@@ -157,7 +154,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
 
                 if (response.Success)
                 {
-                    var result = response.Data.Orders.Select(x => new Order(x)).ToArray();
+                    var result = response.Data.Orders.Select(HuobiTypeConverter.ConvertOrder).ToArray();
                     successful = true;
                     return result;
                 }
@@ -179,7 +176,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
 
             if (response.Success)
             {
-                return response.Data.Select(x => new Order(x)).ToArray();
+                return response.Data.Select(HuobiTypeConverter.ConvertOrder).ToArray();
             }
             else
                 throw new NotImplementedException();
@@ -191,7 +188,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
 
             if (response.Success)
             {
-                return new Order(response.Data);
+                return HuobiTypeConverter.ConvertOrder(response.Data);
             }
             else
                 throw new NotImplementedException();
@@ -234,22 +231,14 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
         {
             bool success = true;
 
-
             try
             {
                 await SocketClient.SubscribeToAccountUpdatesAsync(huobiBalance =>
                 {
-                    var balance = new BittrexApiBalanceData()
+                    var balance = new BalanceData()
                     {
-                        AccountId = huobiBalance.AccountId.ToString(),
                         Sequence = huobiBalance.ChangeTime.GetValueOrDefault().Ticks,
-                        Delta = new BittrexApiBalanceData.Balance()
-                        {
-                            Available = huobiBalance.Available.GetValueOrDefault(),
-                            CurrencySymbol = huobiBalance.Currency,
-                            Total = huobiBalance.Balance.GetValueOrDefault(),
-                            UpdatedAt = huobiBalance.ChangeTime.GetValueOrDefault()
-                        }
+                        Balance = HuobiTypeConverter.ConvertBalance(huobiBalance)
                     };
 
                     foreach (var callback in onBalanceCallBacks)
@@ -373,55 +362,55 @@ namespace SpreadBot.Infrastructure.Exchanges.Huobi
         {
             //TODO
             throw new NotImplementedException();
-            try
-            {
-                if (string.IsNullOrWhiteSpace(restResponse.Content))
-                {
-                    Logger.Instance.LogUnexpectedError($"Unknown API error data: {restResponse.ErrorMessage}. {JsonConvert.SerializeObject(restResponse.ErrorException)}");
-                    return ApiErrorType.UnknownError;
-                }
+            //try
+            //{
+            //    if (string.IsNullOrWhiteSpace(restResponse.Content))
+            //    {
+            //        Logger.Instance.LogUnexpectedError($"Unknown API error data: {restResponse.ErrorMessage}. {JsonConvert.SerializeObject(restResponse.ErrorException)}");
+            //        return ApiErrorType.UnknownError;
+            //    }
 
-                var errorData = JsonConvert.DeserializeObject<BittrexApiErrorData>(restResponse.Content);
+                //var errorData = JsonConvert.DeserializeObject<BittrexApiErrorData>(restResponse.Content);
 
-                return errorData.Code.ToUpperInvariant() switch
-                {
-                    "INSUFFICIENT_FUNDS" => ApiErrorType.InsufficientFunds,
-                    "MIN_TRADE_REQUIREMENT_NOT_MET " => ApiErrorType.DustTrade,
-                    "DUST_TRADE_DISALLOWED" => ApiErrorType.DustTrade,
-                    "DUST_TRADE_DISALLOWED_MIN_VALUE" => ApiErrorType.DustTrade,
-                    "INSUFFICIENT_AWARDS" => ApiErrorType.RetryLater,
-                    "MARKET_OFFLINE" => ApiErrorType.MarketOffline,
-                    "POST_ONLY" => ApiErrorType.RetryLater,
-                    "MAX_ORDERS_ALLOWED" => ApiErrorType.RetryLater,
-                    "ORDER_NOT_OPEN" => ApiErrorType.OrderNotOpen,
-                    "THROTTLED" => ApiErrorType.Throttled,
-                    "CANNOT_ESTIMATE_COMMISSION" => ApiErrorType.CannotEstimateCommission,
-                    "RATE_PRECISION_NOT_ALLOWED" => ApiErrorType.PrecisionNotAllowed,
-                    "MIN_TRADE_REQUIREMENT_NOT_MET" => ApiErrorType.DustTrade,
-                    "CLIENTORDERID_ALREADY_EXISTS" => ApiErrorType.ClientOrderIdAlreadyExists,
-                    _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
-                    _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,
-                    _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline,
-                    _ when restResponse.StatusCode == HttpStatusCode.Unauthorized => ApiErrorType.Unauthorized,
-                    _ when restResponse.StatusCode == HttpStatusCode.Forbidden => ApiErrorType.Unauthorized,
-                    _ => ApiErrorType.UnknownError
-                };
-            }
-            catch (Exception e)
-            {
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("Error when serializing restResponse. Using ToString instead");
-                sb.AppendLine("RestResponse:");
-                sb.AppendLine(restResponse.Content);
-                sb.AppendLine("RestException:");
-                sb.AppendLine(restResponse.ErrorException.ToString());
-                sb.AppendLine("SerializationError:");
-                sb.AppendLine(JsonConvert.SerializeObject(e));
+                //return errorData.Code.ToUpperInvariant() switch
+                //{
+                //    "INSUFFICIENT_FUNDS" => ApiErrorType.InsufficientFunds,
+                //    "MIN_TRADE_REQUIREMENT_NOT_MET " => ApiErrorType.DustTrade,
+                //    "DUST_TRADE_DISALLOWED" => ApiErrorType.DustTrade,
+                //    "DUST_TRADE_DISALLOWED_MIN_VALUE" => ApiErrorType.DustTrade,
+                //    "INSUFFICIENT_AWARDS" => ApiErrorType.RetryLater,
+                //    "MARKET_OFFLINE" => ApiErrorType.MarketOffline,
+                //    "POST_ONLY" => ApiErrorType.RetryLater,
+                //    "MAX_ORDERS_ALLOWED" => ApiErrorType.RetryLater,
+                //    "ORDER_NOT_OPEN" => ApiErrorType.OrderNotOpen,
+                //    "THROTTLED" => ApiErrorType.Throttled,
+                //    "CANNOT_ESTIMATE_COMMISSION" => ApiErrorType.CannotEstimateCommission,
+                //    "RATE_PRECISION_NOT_ALLOWED" => ApiErrorType.PrecisionNotAllowed,
+                //    "MIN_TRADE_REQUIREMENT_NOT_MET" => ApiErrorType.DustTrade,
+                //    "CLIENTORDERID_ALREADY_EXISTS" => ApiErrorType.ClientOrderIdAlreadyExists,
+                //    _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
+                //    _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,
+                //    _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline,
+                //    _ when restResponse.StatusCode == HttpStatusCode.Unauthorized => ApiErrorType.Unauthorized,
+                //    _ when restResponse.StatusCode == HttpStatusCode.Forbidden => ApiErrorType.Unauthorized,
+                //    _ => ApiErrorType.UnknownError
+                //};
+            //}
+            //catch (Exception e)
+            //{
+            //    StringBuilder sb = new StringBuilder();
+            //    sb.AppendLine("Error when serializing restResponse. Using ToString instead");
+            //    sb.AppendLine("RestResponse:");
+            //    sb.AppendLine(restResponse.Content);
+            //    sb.AppendLine("RestException:");
+            //    sb.AppendLine(restResponse.ErrorException.ToString());
+            //    sb.AppendLine("SerializationError:");
+            //    sb.AppendLine(JsonConvert.SerializeObject(e));
 
-                Logger.Instance.LogUnexpectedError(sb.ToString());
+            //    Logger.Instance.LogUnexpectedError(sb.ToString());
 
-                return ApiErrorType.UnknownError;
-            }
+            //    return ApiErrorType.UnknownError;
+            //}
         }
     }
 }

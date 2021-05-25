@@ -1,6 +1,4 @@
-﻿using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
-using SpreadBot.Models;
-using SpreadBot.Models.Repository;
+﻿using SpreadBot.Models.Repository;
 using System;
 using System.Threading.Tasks;
 
@@ -16,7 +14,7 @@ namespace SpreadBot.Infrastructure.Exchanges
 
         //Websocket subscription methods
         //For exchanges that don't support websockets, use an interval-based cycle to call equivalent API methods to simulate Websocket behavior
-        void OnBalance(Action<BittrexApiBalanceData> callback);
+        void OnBalance(Action<BalanceData> callback);
         void OnSummaries(Action<MarketSummaryData> callback);
         void OnTickers(Action<TickerData> callback);
         void OnOrder(Action<OrderData> callback);
