@@ -164,7 +164,7 @@ namespace SpreadBot.Infrastructure
 
             public bool Equals(SpreadConfigurationNetProfit obj)
             {
-                return obj?.Id == this.Id;
+                return base.Equals(obj);
             }
 
             public override int GetHashCode()
