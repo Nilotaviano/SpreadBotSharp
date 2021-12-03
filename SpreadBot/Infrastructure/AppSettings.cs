@@ -54,7 +54,7 @@ namespace SpreadBot.Infrastructure
 
         public override int GetHashCode()
         {
-            return Convert.ToInt32(this.Id, 16);
+            return Convert.ToInt64(this.Id, 16).GetHashCode();
         }
         public override bool Equals(object obj)
         {
