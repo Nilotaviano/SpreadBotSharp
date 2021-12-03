@@ -55,13 +55,13 @@ namespace SpreadBot
 
             NetProfitRecorder.Instance.AppSettings = appSettings;
 
-            //var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
-            //await bittrex.Setup();
+            var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
+            await bittrex.Setup();
 
-            var huobi = new HuobiClientWrapper(appSettings.ApiKey, appSettings.ApiSecret, appSettings.AccountId);
-            await huobi.Setup();
+            //var huobi = new HuobiClientWrapper(appSettings.ApiKey, appSettings.ApiSecret, appSettings.AccountId);
+            //await huobi.Setup();
 
-            var dataRepository = new DataRepository(huobi, appSettings);
+            var dataRepository = new DataRepository(bittrex, appSettings);
             dataRepository.StartConsumingData();
 
             var coordinatorContext = new FileCoordinatorContext();

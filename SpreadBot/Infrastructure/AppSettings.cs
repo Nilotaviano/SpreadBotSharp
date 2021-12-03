@@ -1,6 +1,8 @@
 ﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace SpreadBot.Infrastructure
@@ -19,14 +21,17 @@ namespace SpreadBot.Infrastructure
 
         public string CoinMarketCapApiKey { get; set; }
 
+        [JsonConverter(typeof(CustomHashSetConverter))]
+        public HashSet<string> BlacklistedMarkets { get; set; } = new HashSet<string>();
+
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 
         public void Reload(AppSettings newSettings)
         {
             //No reason to reload ApiKey and ApiSecret atm
-
             MaxNumberOfBots = newSettings.MaxNumberOfBots;
             SpreadConfigurations = newSettings.SpreadConfigurations;
+            BlacklistedMarkets = newSettings.BlacklistedMarkets;
 
             Reloaded?.Invoke(this, EventArgs.Empty);
         }
@@ -34,6 +39,7 @@ namespace SpreadBot.Infrastructure
 
     public class SpreadConfiguration
     {
+        public string Id { get; set; }
         public string BaseMarket { get; set; }
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
         public decimal MinimumSpreadPercentage { get; set; }
@@ -48,18 +54,7 @@ namespace SpreadBot.Infrastructure
 
         public override int GetHashCode()
         {
-            return (
-                BaseMarket,
-                MaxPercentChangeFromPreviousDay,
-                MinimumSpreadPercentage,
-                MinimumQuoteVolume,
-                AllocatedAmountOfBaseCurrency,
-                SpreadThresholdBeforeCancelingCurrentOrder,
-                MinutesForLoss,
-                MinimumProfitPercentage,
-                MinimumPrice,
-                MinimumNegotiatedAmount
-            ).GetHashCode();
+            return Convert.ToInt32(this.Id, 16);
         }
         public override bool Equals(object obj)
         {
@@ -68,22 +63,33 @@ namespace SpreadBot.Infrastructure
 
         public bool Equals(SpreadConfiguration obj)
         {
-            return obj != null
-                && obj.BaseMarket == this.BaseMarket
-                && obj.MaxPercentChangeFromPreviousDay == this.MaxPercentChangeFromPreviousDay
-                && obj.MinimumSpreadPercentage == this.MinimumSpreadPercentage
-                && obj.MinimumQuoteVolume == this.MinimumQuoteVolume
-                && obj.AllocatedAmountOfBaseCurrency == this.AllocatedAmountOfBaseCurrency
-                && obj.SpreadThresholdBeforeCancelingCurrentOrder == this.SpreadThresholdBeforeCancelingCurrentOrder
-                && obj.MinutesForLoss == this.MinutesForLoss
-                && obj.MinimumProfitPercentage == this.MinimumProfitPercentage
-                && obj.MinimumPrice == this.MinimumPrice
-                && obj.MinimumNegotiatedAmount == this.MinimumNegotiatedAmount;
+            return obj != null && obj.Id == this.Id;
         }
 
         public override string ToString()
         {
             return JsonConvert.SerializeObject(this);
+        }
+    }
+
+    public class CustomHashSetConverter : JsonConverter
+    {
+        public override bool CanConvert(Type objectType)
+        {
+            return objectType == typeof(HashSet<string>);
+        }
+
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+        {
+            JObject jo = JObject.Load(reader);
+            return new HashSet<string>(jo.Properties().Select(p => p.Name));
+        }
+
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+        {
+            HashSet<string> hashSet = (HashSet<string>)value;
+            JObject jo = new JObject(hashSet.Select(s => new JProperty(s, s)));
+            jo.WriteTo(writer);
         }
     }
 }

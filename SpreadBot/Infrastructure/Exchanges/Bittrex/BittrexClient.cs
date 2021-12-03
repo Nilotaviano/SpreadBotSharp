@@ -427,6 +427,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                     "RATE_PRECISION_NOT_ALLOWED" => ApiErrorType.PrecisionNotAllowed,
                     "MIN_TRADE_REQUIREMENT_NOT_MET" => ApiErrorType.DustTrade,
                     "CLIENTORDERID_ALREADY_EXISTS" => ApiErrorType.ClientOrderIdAlreadyExists,
+                    "POST_ONLY_NOT_MET" => ApiErrorType.RetryLater,
                     _ when restResponse.StatusCode == HttpStatusCode.TooManyRequests => ApiErrorType.Throttled,
                     _ when restResponse.StatusCode == HttpStatusCode.NotFound => ApiErrorType.MarketOffline,
                     _ when restResponse.StatusCode == HttpStatusCode.ServiceUnavailable => ApiErrorType.MarketOffline,

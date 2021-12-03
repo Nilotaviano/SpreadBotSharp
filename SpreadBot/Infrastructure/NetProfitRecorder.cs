@@ -15,14 +15,14 @@ namespace SpreadBot.Infrastructure
         private readonly string PROFIT_PER_MARKET_FILE_PATH = "profitPerMarket.json".ToLocalFilePath();
         private readonly string PROFIT_PER_CONFIGURATION_FILE_PATH = "profitPerSpreadConfiguration.json".ToLocalFilePath();
 
-        private BlockingCollection<NetProfit> pendingData;
+        private BlockingCollection<NetProfitMessage> pendingData;
 
         private HashSet<SpreadConfigurationNetProfit> netProfitPerSpreadConfiguration;
-        private Dictionary<string, decimal> netProfitPerMarket;
+        private HashSet<MarketNetProfit> netProfitPerMarket;
 
         private NetProfitRecorder()
         {
-            pendingData = new BlockingCollection<NetProfit>();
+            pendingData = new BlockingCollection<NetProfitMessage>();
             InitializeProfitCache();
 
             Task.Run(ConsumePendingData);
@@ -36,15 +36,18 @@ namespace SpreadBot.Infrastructure
         {
             decimal profit = bot.Balance - spreadConfiguration.AllocatedAmountOfBaseCurrency;
 
-            pendingData.Add(new NetProfit() { SpreadConfiguration = spreadConfiguration, Profit = profit, Market = bot.MarketSymbol });
+            pendingData.Add(new NetProfitMessage() { SpreadConfiguration = spreadConfiguration, Profit = profit, Market = bot.MarketSymbol });
         }
 
         private void InitializeProfitCache()
         {
             if (!File.Exists(PROFIT_PER_MARKET_FILE_PATH))
-                netProfitPerMarket = new Dictionary<string, decimal>();
+                netProfitPerMarket = new HashSet<MarketNetProfit>();
             else
-                netProfitPerMarket = JsonConvert.DeserializeObject<Dictionary<string, decimal>>(File.ReadAllText(PROFIT_PER_MARKET_FILE_PATH));
+            {
+                List<MarketNetProfit> list = JsonConvert.DeserializeObject<List<MarketNetProfit>>(File.ReadAllText(PROFIT_PER_MARKET_FILE_PATH));
+                netProfitPerMarket = new HashSet<MarketNetProfit>(list);
+            }
 
             if (!File.Exists(PROFIT_PER_CONFIGURATION_FILE_PATH))
                 netProfitPerSpreadConfiguration = new HashSet<SpreadConfigurationNetProfit>();
@@ -62,27 +65,34 @@ namespace SpreadBot.Infrastructure
                 try
                 {
                     //Calculate SpreadConfigurationNetProfit for current SpreadConfiguration
-                    var obj = netProfitPerSpreadConfiguration.SingleOrDefault(x => x.GetHashCode() == log.SpreadConfiguration.GetHashCode());
+                    var spreadConfigProfit = netProfitPerSpreadConfiguration.SingleOrDefault(x => x.Id == log.SpreadConfiguration.Id);
 
-                    if (obj == null)
+                    if (spreadConfigProfit == null)
                     {
-                        obj = new SpreadConfigurationNetProfit(log.SpreadConfiguration);
-                        netProfitPerSpreadConfiguration.Add(obj);
+                        spreadConfigProfit = new SpreadConfigurationNetProfit(log.SpreadConfiguration);
+                        netProfitPerSpreadConfiguration.Add(spreadConfigProfit);
                     }
 
-                    obj.Profit += log.Profit;
+                    spreadConfigProfit.Profit += log.Profit;
 
                     //Update active/inactive configurations
                     //TODO improve complexity
-                    foreach (var active in netProfitPerSpreadConfiguration.Where(x => AppSettings.SpreadConfigurations.Any(y => y.GetHashCode() == x.GetHashCode())))
+                    foreach (SpreadConfigurationNetProfit active in netProfitPerSpreadConfiguration.Intersect(AppSettings.SpreadConfigurations))
                         active.IsActive = true;
 
-                    foreach(var inactive in netProfitPerSpreadConfiguration.Where(x => !AppSettings.SpreadConfigurations.Any(y => y.GetHashCode() == x.GetHashCode())))
+                    foreach (SpreadConfigurationNetProfit inactive in netProfitPerSpreadConfiguration.Except(AppSettings.SpreadConfigurations))
                         inactive.IsActive = false;
 
                     //Calculate netProfitPerMarket 
-                    netProfitPerMarket.TryGetValue(log.Market, out decimal marketProfit);
-                    netProfitPerMarket[log.Market] = marketProfit + (log.Profit);
+                    var marketNetProfit = netProfitPerMarket.SingleOrDefault(x => x.Market == log.Market);
+
+                    if (marketNetProfit == null)
+                    {
+                        marketNetProfit = new MarketNetProfit() { Market = log.Market };
+                        netProfitPerMarket.Add(marketNetProfit);
+                    }
+
+                    marketNetProfit.Profit += log.Profit;
 
                     //Write to files
                     File.WriteAllText(PROFIT_PER_CONFIGURATION_FILE_PATH,
@@ -98,18 +108,19 @@ namespace SpreadBot.Infrastructure
             }
         }
 
-        private class NetProfit
+        private class NetProfitMessage
         {
             public SpreadConfiguration SpreadConfiguration { get; set; }
             public decimal Profit { get; set; }
             public string Market { get; set; }
         }
 
-        private class SpreadConfigurationNetProfit
+        private class SpreadConfigurationNetProfit : SpreadConfiguration
         {
             public SpreadConfigurationNetProfit() { }
             public SpreadConfigurationNetProfit(SpreadConfiguration spreadConfiguration)
             {
+                this.Id = spreadConfiguration.Id;
                 this.AllocatedAmountOfBaseCurrency = spreadConfiguration.AllocatedAmountOfBaseCurrency;
                 this.AvoidTokenizedSecurities = spreadConfiguration.AvoidTokenizedSecurities;
                 this.BaseMarket = spreadConfiguration.BaseMarket;
@@ -123,37 +134,29 @@ namespace SpreadBot.Infrastructure
                 this.SpreadThresholdBeforeCancelingCurrentOrder = spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder;
             }
 
-            public string BaseMarket { get; set; }
-            public decimal MaxPercentChangeFromPreviousDay { get; set; }
-            public decimal MinimumSpreadPercentage { get; set; }
-            public decimal MinimumQuoteVolume { get; set; }
-            public decimal MinimumPrice { get; set; }
-            public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
-            public decimal AllocatedAmountOfBaseCurrency { get; set; }
-            public decimal SpreadThresholdBeforeCancelingCurrentOrder { get; set; } = 1.Satoshi(); //default 1 satoshi, but should be set higher, I think
-            public int MinutesForLoss { get; set; }
-            public decimal MinimumProfitPercentage { get; set; } //Bot will try to sell with at least this amount of profit, until past the MinutesForLoss threshold
-            public bool AvoidTokenizedSecurities { get; set; }
-
-            //Shouldn't be used on GetHashCode
             public bool IsActive { get; set; }
-            public decimal Profit { get; set; }
 
-            public override int GetHashCode()
+            private decimal profit;
+
+            public decimal Profit
             {
-                return (
-                    BaseMarket,
-                    MaxPercentChangeFromPreviousDay,
-                    MinimumSpreadPercentage,
-                    MinimumQuoteVolume,
-                    AllocatedAmountOfBaseCurrency,
-                    SpreadThresholdBeforeCancelingCurrentOrder,
-                    MinutesForLoss,
-                    MinimumProfitPercentage,
-                    MinimumPrice,
-                    MinimumNegotiatedAmount
-                ).GetHashCode();
+                get => profit;
+                set
+                {
+                    this.profit = value;
+
+                    if (this.profit < this.MinProfit)
+                        this.MinProfit = this.profit;
+
+                    if (this.profit > this.MaxProfit)
+                        this.MaxProfit = this.profit;
+                }
             }
+
+            public decimal MaxProfit { get; set; }
+
+            public decimal MinProfit { get; set; }
+
             public override bool Equals(object obj)
             {
                 return Equals(obj as SpreadConfigurationNetProfit);
@@ -161,23 +164,44 @@ namespace SpreadBot.Infrastructure
 
             public bool Equals(SpreadConfigurationNetProfit obj)
             {
-                return obj != null
-                    && obj.BaseMarket == this.BaseMarket
-                    && obj.MaxPercentChangeFromPreviousDay == this.MaxPercentChangeFromPreviousDay
-                    && obj.MinimumSpreadPercentage == this.MinimumSpreadPercentage
-                    && obj.MinimumQuoteVolume == this.MinimumQuoteVolume
-                    && obj.AllocatedAmountOfBaseCurrency == this.AllocatedAmountOfBaseCurrency
-                    && obj.SpreadThresholdBeforeCancelingCurrentOrder == this.SpreadThresholdBeforeCancelingCurrentOrder
-                    && obj.MinutesForLoss == this.MinutesForLoss
-                    && obj.MinimumProfitPercentage == this.MinimumProfitPercentage
-                    && obj.MinimumPrice == this.MinimumPrice
-                    && obj.MinimumNegotiatedAmount == this.MinimumNegotiatedAmount;
+                return obj?.Id == this.Id;
+            }
+
+            public override int GetHashCode()
+            {
+                return Convert.ToInt32(this.Id, 16);
             }
 
             public override string ToString()
             {
                 return JsonConvert.SerializeObject(this);
             }
+        }
+
+        private class MarketNetProfit
+        {
+            public string Market { get; set; }
+
+            private decimal profit;
+
+            public decimal Profit
+            {
+                get => profit;
+                set
+                {
+                    this.profit = value;
+
+                    if (this.profit < this.MinProfit)
+                        this.MinProfit = this.profit;
+
+                    if (this.profit > this.MaxProfit)
+                        this.MaxProfit = this.profit;
+                }
+            }
+
+            public decimal MaxProfit { get; set; }
+
+            public decimal MinProfit { get; set; }
         }
     }
 }

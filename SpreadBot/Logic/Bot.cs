@@ -6,7 +6,6 @@ using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Threading.Tasks;
-using System.Timers;
 
 namespace SpreadBot.Logic
 {
@@ -21,19 +20,12 @@ namespace SpreadBot.Logic
 
         private readonly IBotStrategy botStrategy;
 
-        private readonly Timer processingMessageTimeExceededTimer;
-
-
         public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
             this.dataRepository = dataRepository;
             this.botContext = context;
             this.unallocateBotCallback = unallocateBotCallback;
             botStrategy = botStrategiesFactory.GetStrategy();
-
-            processingMessageTimeExceededTimer = new Timer(TimeSpan.FromMinutes(1).TotalMilliseconds);
-            processingMessageTimeExceededTimer.Elapsed += ProcessingMessageTimeExceededTimer_Elapsed;
-            processingMessageTimeExceededTimer.AutoReset = false;
         }
 
         public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, Market marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
@@ -107,7 +99,6 @@ namespace SpreadBot.Logic
             else
             {
                 await botContext.Semaphore.WaitAsync();
-                processingMessageTimeExceededTimer.Start();
 
                 try
                 {
@@ -168,9 +159,6 @@ namespace SpreadBot.Logic
                 finally
                 {
                     botContext.Semaphore.Release();
-
-                    if (botContext.BotState != BotState.FinishedWork) //otherwise processingMessageTimeExceededTimer would already be disposed
-                        processingMessageTimeExceededTimer.Stop();
                 }
             }
         }
@@ -270,7 +258,6 @@ namespace SpreadBot.Logic
 
             unallocateBotCallback(this);
             NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
-            processingMessageTimeExceededTimer.Dispose();
             LogMessage($"finished on {MarketSymbol}");
         }
 
@@ -297,11 +284,6 @@ namespace SpreadBot.Logic
             }
 
             UpdateContext(sellOrder);
-        }
-
-        private void ProcessingMessageTimeExceededTimer_Elapsed(object sender, ElapsedEventArgs e)
-        {
-            LogUnexpectedError("Processing message time exceeded");
         }
 
         private void LogMessage(string message)

@@ -178,7 +178,7 @@ namespace SpreadBot.Logic
 
         private bool IsViableMarket(Market market)
         {
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && market.Target != "SMBSWAP";
+            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && !appSettings.BlacklistedMarkets.Contains(market.Target);
         }
 
         private void ReportBalance()
@@ -215,7 +215,7 @@ namespace SpreadBot.Logic
                 return false;
             }
 
-            if(spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
+            if (spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
             {
                 Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
                 return false;
@@ -227,7 +227,7 @@ namespace SpreadBot.Logic
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
             return context.GetBotCount() < appSettings.MaxNumberOfBots
-                && availableBalanceForBaseMarket.TryGetValue(spreadConfiguration.BaseMarket, out var balance) 
+                && availableBalanceForBaseMarket.TryGetValue(spreadConfiguration.BaseMarket, out var balance)
                 && balance > spreadConfiguration.AllocatedAmountOfBaseCurrency;
         }
 
@@ -277,7 +277,8 @@ namespace SpreadBot.Logic
                 Logger.Instance.LogMessage($"Lock acquired for {description}");
 
                 action();
-            } catch (Exception e)
+            }
+            catch (Exception e)
             {
                 Logger.Instance.LogError($"Error while {description}. Exception: {e}");
                 throw e;
