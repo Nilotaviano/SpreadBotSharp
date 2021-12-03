@@ -13,6 +13,7 @@ namespace SpreadBot.Infrastructure
         private readonly SemaphoreSlim semaphore;
         private readonly ConcurrentQueue<TaskCompletionSource<bool>> queue =
             new ConcurrentQueue<TaskCompletionSource<bool>>();
+        private bool stopped = false;
 
         public int CurrentCount => semaphore.CurrentCount;
 
@@ -28,14 +29,14 @@ namespace SpreadBot.Infrastructure
         {
             WaitAsync().Wait();
         }
-        public Task WaitAsync()
+        public Task<bool> WaitAsync()
         {
             var tcs = new TaskCompletionSource<bool>();
             queue.Enqueue(tcs);
             semaphore.WaitAsync().ContinueWith(t =>
             {
                 if (queue.TryDequeue(out TaskCompletionSource<bool> popped))
-                    popped.SetResult(true);
+                    popped.SetResult(!stopped);
             });
             return tcs.Task;
         }
@@ -44,8 +45,9 @@ namespace SpreadBot.Infrastructure
             semaphore.Release();
         }
 
-        public void Clear()
+        public void ClearAndStopQueue()
         {
+            stopped = true;
             queue.Clear();
         }
     }

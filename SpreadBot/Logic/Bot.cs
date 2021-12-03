@@ -98,7 +98,10 @@ namespace SpreadBot.Logic
             }
             else
             {
-                await botContext.Semaphore.WaitAsync();
+                bool canProceed = await botContext.Semaphore.WaitAsync();
+
+                if (!canProceed)
+                    return;
 
                 try
                 {
@@ -251,7 +254,7 @@ namespace SpreadBot.Logic
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
 
-            botContext.Semaphore.Clear();
+            botContext.Semaphore.ClearAndStopQueue();
 
             if (HeldAmount > 0)
                 await CleanDust();
