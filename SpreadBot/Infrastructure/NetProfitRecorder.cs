@@ -169,7 +169,7 @@ namespace SpreadBot.Infrastructure
 
             public override int GetHashCode()
             {
-                return Convert.ToInt64(this.Id, 16).GetHashCode();
+                return base.GetHashCode();
             }
 
             public override string ToString()
