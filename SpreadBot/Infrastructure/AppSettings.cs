@@ -81,8 +81,8 @@ namespace SpreadBot.Infrastructure
 
         public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
         {
-            JObject jo = JObject.Load(reader);
-            return new HashSet<string>(jo.Properties().Select(p => p.Name));
+            JArray jo = JArray.Load(reader);
+            return new HashSet<string>(jo.AsEnumerable().Select(o => o.Value<string>()));
         }
 
         public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
