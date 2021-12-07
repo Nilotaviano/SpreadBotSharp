@@ -28,8 +28,8 @@ namespace SpreadBot.Logic
             botStrategy = botStrategiesFactory.GetStrategy();
         }
 
-        public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, Market marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
-            : this(dataRepository, new BotContext(spreadConfiguration, marketData, BotState.Buying, existingDust), unallocateBotCallback, botStrategiesFactory)
+        public Bot(DataRepository dataRepository, AppSettings appSettings, SpreadConfiguration spreadConfiguration, Market marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
+            : this(dataRepository, new BotContext(appSettings, spreadConfiguration, marketData, BotState.Buying, existingDust), unallocateBotCallback, botStrategiesFactory)
         { }
 
         public Guid Guid => botContext.Guid;
@@ -92,74 +92,70 @@ namespace SpreadBot.Logic
 
             LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
 
-            if (botContext.BotState == BotState.FinishedWork)
-            {
-                LogError("Bot is still running after FinishWork was called");
-            }
-            else
-            {
-                await botContext.Semaphore.WaitAsync();
+            bool canProceed = await botContext.Semaphore.WaitAsync() && botContext.BotState != BotState.FinishedWork;
 
-                try
+            if (!canProceed)
+                return;
+
+            try
+            {
+                switch (message.MessageType)
                 {
-                    switch (message.MessageType)
-                    {
-                        case MessageType.MarketData:
-                            await ProcessMarketData(message as Market);
-                            break;
-                        case MessageType.OrderData:
-                            await ProcessOrderData(message as Order);
-                            break;
-                        default:
-                            throw new ArgumentException();
-                    }
+                    case MessageType.MarketData:
+                        await ProcessMarketData(message as Market);
+                        break;
+                    case MessageType.OrderData:
+                        await ProcessOrderData(message as Order);
+                        break;
+                    default:
+                        throw new ArgumentException();
                 }
-                catch (ApiException e)
+            }
+            catch (ApiException e)
+            {
+                //TODO: Clean up/refactor
+                switch (e.ApiErrorType)
                 {
-                    //TODO: Clean up/refactor
-                    switch (e.ApiErrorType)
-                    {
-                        case ApiErrorType.DustTrade when botContext.BotState == BotState.Bought:
-                            //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
-                            botContext.BotState = BotState.Buying;
-                            break;
-                        case ApiErrorType.DustTrade when botContext.BotState == BotState.Buying:
-                            await FinishWork();
-                            break;
-                        case ApiErrorType.InsufficientFunds:
-                            LogError($"{e.ApiErrorType}: {e}");
-                            //Too many bots running?
-                            await FinishWork();
-                            break;
-                        case ApiErrorType.MarketOffline when botContext.BotState == BotState.Buying:
-                            LogError($"{e.ApiErrorType}: {e}");
-                            await FinishWork();
-                            break;
-                        case ApiErrorType.OrderNotOpen:
-                            //Bot tried to cancel an order that has just been executed (I'm assuming)
-                            //Closed order data will be received soon, so no need to do anything here
-                            //Nevermind the above, the WS message may be lost
-                            await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.Id));
-                            break;
-                        case ApiErrorType.MarketOffline:
-                        case ApiErrorType.Throttled:
-                            //Do nothing, try again on the next cycle
-                            LogError($"{e.ApiErrorType}: {e}");
-                            break;
-                        default:
-                            //TODO: Log all of the bot's state/properties/fields
-                            LogUnexpectedError($"{e.ApiErrorType}: {e}");
-                            break;
-                    };
-                }
-                catch (Exception e)
-                {
-                    LogUnexpectedError($"Bot {Guid}: Unexpected exception: {e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext)}");
-                }
-                finally
-                {
-                    botContext.Semaphore.Release();
-                }
+                    case ApiErrorType.DustTrade when botContext.BotState == BotState.Bought:
+                        //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
+                        botContext.BotState = BotState.Buying;
+                        break;
+                    case ApiErrorType.DustTrade when botContext.BotState == BotState.Buying:
+                        await FinishWork();
+                        break;
+                    case ApiErrorType.InsufficientFunds:
+                        LogError($"{e.ApiErrorType}: {e}");
+                        //Too many bots running?
+                        await FinishWork();
+                        break;
+                    case ApiErrorType.MarketOffline when botContext.BotState == BotState.Buying:
+                        LogError($"{e.ApiErrorType}: {e}");
+                        await FinishWork();
+                        break;
+                    case ApiErrorType.OrderNotOpen:
+                        //Bot tried to cancel an order that has just been executed (I'm assuming)
+                        //Closed order data will be received soon, so no need to do anything here
+                        //Nevermind the above, the WS message may be lost
+                        await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.Id));
+                        break;
+                    case ApiErrorType.MarketOffline:
+                    case ApiErrorType.Throttled:
+                        //Do nothing, try again on the next cycle
+                        LogError($"{e.ApiErrorType}: {e}");
+                        break;
+                    default:
+                        //TODO: Log all of the bot's state/properties/fields
+                        LogUnexpectedError($"{e.ApiErrorType}: {e}");
+                        break;
+                };
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedError($"Bot {Guid}: Unexpected exception: {e}{Environment.NewLine}Context: {JsonConvert.SerializeObject(botContext)}");
+            }
+            finally
+            {
+                botContext.Semaphore.Release();
             }
         }
 
@@ -247,11 +243,11 @@ namespace SpreadBot.Logic
 
         private async Task FinishWork()
         {
+            botContext.Semaphore.Stop();
+
             botContext.BotState = BotState.FinishedWork;
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
-
-            botContext.Semaphore.Clear();
 
             if (HeldAmount > 0)
                 await CleanDust();

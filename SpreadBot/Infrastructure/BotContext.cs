@@ -12,6 +12,7 @@ namespace SpreadBot.Infrastructure
 
         public Guid Guid { get; private set; }
 
+        public readonly AppSettings appSettings;
         public readonly SpreadConfiguration spreadConfiguration;
         public readonly Stopwatch buyStopwatch = new Stopwatch();
 
@@ -28,9 +29,10 @@ namespace SpreadBot.Infrastructure
         //Just so that this exists o coordinatorContext.json
         public int SemaphoreCurrentCount => Semaphore.CurrentCount;
 
-        public BotContext(SpreadConfiguration spreadConfiguration, Market marketData, BotState buy, decimal existingDust)
+        public BotContext(AppSettings appSettings, SpreadConfiguration spreadConfiguration, Market marketData, BotState buy, decimal existingDust)
         {
             Guid = Guid.NewGuid();
+            this.appSettings = appSettings;
             this.spreadConfiguration = spreadConfiguration;
             this.LatestMarketData = marketData;
             this.BotState = buy;

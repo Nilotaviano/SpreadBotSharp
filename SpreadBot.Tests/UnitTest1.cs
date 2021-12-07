@@ -204,7 +204,7 @@ namespace SpreadBot.Tests
                 }
             });
 
-            var bot = new Bot(datarepository, spreadConfiguration, openingMarketData, 0, (bot) => { }, new BotStrategiesFactory());
+            var bot = new Bot(datarepository, appSettings, spreadConfiguration, openingMarketData, 0, (bot) => { }, new BotStrategiesFactory());
             bot.Start();
 
             summariesEvent.WaitOne(100);

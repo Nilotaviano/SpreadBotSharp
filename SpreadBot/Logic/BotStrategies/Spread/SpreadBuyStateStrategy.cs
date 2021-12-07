@@ -12,7 +12,9 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             if (!botContext.LatestMarketData.BidRate.HasValue)
                 return;
 
-            if (botContext.LatestMarketData.SpreadPercentage >= botContext.spreadConfiguration.MinimumSpreadPercentage)
+            if (botContext.LatestMarketData.BidRate.HasValue 
+                && MarketEvaluator.EvaluateMarketBasedOnSpreadConfiguration(botContext.LatestMarketData, botContext.spreadConfiguration)
+                && MarketEvaluator.IsMarketViable(botContext.LatestMarketData, botContext.appSettings))
             {
 
                 decimal bidPrice = (botContext.LatestMarketData.BidRate.Value + 1.Satoshi()).CeilToPrecision(botContext.LatestMarketData.LimitPrecision);

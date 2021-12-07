@@ -115,27 +115,24 @@ namespace SpreadBot.Logic
 
                 //Filter only relevant markets
                 var orderedMarkets = marketDeltaGroup.OrderBy(GetMarketOrderKey, marketComparer);
-                var anyConfigurationAvailable = false;
+                var anyConfigurationAvailable = false; // default false is an optimization for stop looking for markets if is not possible to allocate any configuration
 
                 foreach (var market in orderedMarkets)
                 {
-                    if (!IsViableMarket(market))
+                    if (!MarketEvaluator.IsMarketViable(market, appSettings))
                         continue;
-
-                    // Optimization for stop looking for markets if is not possible to allocate any configuration
-                    anyConfigurationAvailable = false;
 
                     foreach (var configuration in marketConfigurations)
                     {
-                        if (!CanAllocateBotForConfiguration(configuration))
+                        anyConfigurationAvailable = HasEnoughBalanceAndFreeSlotForConfig(configuration);
+
+                        if (!anyConfigurationAvailable)
                         {
                             Logger.Instance.LogMessage($"Not enough balance/bots for market {market.Symbol}");
                             continue;
                         }
 
-                        anyConfigurationAvailable = true;
-
-                        if (!EvaluateMarketBasedOnConfiguration(market, configuration))
+                        if (!MarketEvaluator.EvaluateMarketBasedOnSpreadConfiguration(market, configuration))
                             continue;
 
                         var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
@@ -149,7 +146,7 @@ namespace SpreadBot.Logic
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
                         var existingDust = context.RemoveDustForMarket(market.Symbol);
-                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
+                        var bot = new Bot(dataRepository, appSettings, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
 
                         AllocateBot(bot);
                     }
@@ -176,11 +173,6 @@ namespace SpreadBot.Logic
             });
         }
 
-        private bool IsViableMarket(Market market)
-        {
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && !appSettings.BlacklistedMarkets.Contains(market.Target);
-        }
-
         private void ReportBalance()
         {
             ExecuteBalanceRelatedAction("reporting balance", () =>
@@ -198,33 +190,7 @@ namespace SpreadBot.Logic
             return (marketData.QuoteVolume.GetValueOrDefault(0), marketData.SpreadPercentage);
         }
 
-        private bool EvaluateMarketBasedOnConfiguration(Market marketData, SpreadConfiguration spreadConfiguration)
-        {
-            if (marketData.LastTradeRate < spreadConfiguration.MinimumPrice)
-                return false;
-
-            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
-                return false;
-            }
-
-            if (marketData.PercentChange > spreadConfiguration.MaxPercentChangeFromPreviousDay)
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is pumping {marketData.PercentChange}%");
-                return false;
-            }
-
-            if (spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
-                return false;
-            }
-
-            return true;
-        }
-
-        private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
+        private bool HasEnoughBalanceAndFreeSlotForConfig(SpreadConfiguration spreadConfiguration)
         {
             return context.GetBotCount() < appSettings.MaxNumberOfBots
                 && availableBalanceForBaseMarket.TryGetValue(spreadConfiguration.BaseMarket, out var balance)
