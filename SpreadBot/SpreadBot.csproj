@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="CoinGeckoAsyncApi" Version="1.5.0" />
     <PackageReference Include="Huobi.Net" Version="2.5.5" />
     <PackageReference Include="Microsoft.AspNet.SignalR.Client" Version="2.4.1" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="5.0.0" />

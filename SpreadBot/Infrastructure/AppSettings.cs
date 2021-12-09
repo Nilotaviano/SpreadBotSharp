@@ -18,7 +18,7 @@ namespace SpreadBot.Infrastructure
         public string AccountId { get; set; }
         public int MaxNumberOfBots { get; set; }
         public int ResyncIntervalMs { get; set; }
-        public int MaxBotCountPerMarket { get; set; }
+        public int MaxNumberOfBotsPerMarket { get; set; } = int.MaxValue;
 
         public string CoinMarketCapApiKey { get; set; }
 
@@ -41,6 +41,7 @@ namespace SpreadBot.Infrastructure
     public class SpreadConfiguration
     {
         public string Id { get; set; }
+        public bool UseCoinGecko { get; set; }
         public string BaseMarket { get; set; }
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
         public decimal MinimumSpreadPercentage { get; set; }

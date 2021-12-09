@@ -62,6 +62,7 @@ namespace SpreadBot.Logic
                 RestorePreviousSession();
 
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
+            this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 this.dataRepository.SubscribeToCurrencyBalance(baseMarket, guid, (bd) => ReportBalance());
         }
@@ -161,7 +162,7 @@ namespace SpreadBot.Logic
         {
             ExecuteBalanceRelatedAction($"allocating bot {bot.Guid}", () =>
             {
-                if (bypassMaxBotCountPerMarket || context.GetBotCount(bot.MarketSymbol) < appSettings.MaxBotCountPerMarket)
+                if (bypassMaxBotCountPerMarket || context.GetBotCount(bot.MarketSymbol) < appSettings.MaxNumberOfBotsPerMarket)
                 {
                     context.AddBot(bot);
                     availableBalanceForBaseMarket.AddOrUpdate(

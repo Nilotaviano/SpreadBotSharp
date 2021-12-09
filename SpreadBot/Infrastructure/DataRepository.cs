@@ -28,7 +28,7 @@ namespace SpreadBot.Infrastructure
         private string mostRecentClosedOrderId;
 
         private Timer priceAggregatorRefreshTimer;
-        private CoinMarketCap priceAggregator;
+        private CoinGeckoAggregator priceAggregator;
 
         public DataRepository(IExchange exchange, AppSettings appSettings)
         {
@@ -46,14 +46,6 @@ namespace SpreadBot.Infrastructure
             resyncTimer = new Timer(appSettings.ResyncIntervalMs);
             resyncTimer.Elapsed += ResyncTimer_Elapsed;
             resyncTimer.AutoReset = false;
-
-            if (appSettings.CoinMarketCapApiKey != null)
-            {
-                priceAggregator = new CoinMarketCap(appSettings);
-                priceAggregatorRefreshTimer = new Timer(TimeSpan.FromMinutes(30).TotalMilliseconds);
-                priceAggregatorRefreshTimer.Elapsed += async (sender, e) => await UpdateMarketDataFromAggregator();
-                priceAggregatorRefreshTimer.AutoReset = true;
-            }
         }
 
         public IExchange Exchange { get; }
@@ -197,12 +189,19 @@ namespace SpreadBot.Infrastructure
             UpdateMarketDataFromAggregator().Wait();
 
             resyncTimer.Start();
-            priceAggregatorRefreshTimer?.Start();
 
             Task.Run(ConsumeBalanceData);
             Task.Run(ConsumeOrderData);
             Task.Run(ConsumeMarketSummaryData);
             Task.Run(ConsumeTickersData);
+
+            priceAggregator = new CoinGeckoAggregator(readyCallback: async () => await UpdateMarketDataFromAggregator());
+            priceAggregatorRefreshTimer = new Timer(TimeSpan.FromMinutes(1).TotalMilliseconds)
+            {
+                AutoReset = true,
+                Enabled = true
+            };
+            priceAggregatorRefreshTimer.Elapsed += async (sender, e) => await UpdateMarketDataFromAggregator();
         }
 
         private void ResumeConsumingData()
@@ -515,12 +514,22 @@ namespace SpreadBot.Infrastructure
 
         private async Task UpdateMarketDataFromAggregator()
         {
-            if (priceAggregator == null)
+            if (priceAggregator == null || !MarketsData.Any())
                 return;
 
             try
             {
-                var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.Quote))).Select(v => v.Target));
+                Dictionary<string, IEnumerable<string>> coinsPerBaseMarket = MarketsData.Values
+                    .Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.Quote)))
+                    .GroupBy(m => m.Quote)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g
+                            .OrderByDescending(m => m.QuoteVolume)
+                            .Take(250) //max per coingecko call
+                            .Select(m => m.Target)
+                    );
+                var latestQuotes = await priceAggregator.GetLatestQuotesAsync(coinsPerBaseMarket);
                 UpdateMarketData(latestQuotes);
             }
             catch (Exception e)
