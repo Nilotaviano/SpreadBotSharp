@@ -88,7 +88,7 @@ namespace SpreadBot.Logic
 
                     allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
 
-                    AllocateBot(bot);
+                    AllocateBot(bot, bypassMaxBotCountPerMarket: true);
 
                     Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
                 }
@@ -157,19 +157,22 @@ namespace SpreadBot.Logic
             }
         }
 
-        private void AllocateBot(Bot bot)
+        private void AllocateBot(Bot bot, bool bypassMaxBotCountPerMarket = false)
         {
             ExecuteBalanceRelatedAction($"allocating bot {bot.Guid}", () =>
             {
-                context.AddBot(bot);
-                availableBalanceForBaseMarket.AddOrUpdate(
-                    bot.BaseMarket,
-                    bot.Balance * -1,
-                    (b, oldValue) => oldValue - bot.Balance
-                );
+                if (bypassMaxBotCountPerMarket || context.GetBotCount(bot.MarketSymbol) < appSettings.MaxBotCountPerMarket)
+                {
+                    context.AddBot(bot);
+                    availableBalanceForBaseMarket.AddOrUpdate(
+                        bot.BaseMarket,
+                        bot.Balance * -1,
+                        (b, oldValue) => oldValue - bot.Balance
+                    );
 
-                Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
-                bot.Start();
+                    Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
+                    bot.Start();
+                }
             });
         }
 

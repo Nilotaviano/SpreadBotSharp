@@ -19,13 +19,12 @@ namespace SpreadBot.Infrastructure
 
         public FileCoordinatorContext()
         {
-            saveDataTPSController = new Timer(TimeSpan.FromSeconds(1).TotalMilliseconds);
-            saveDataTPSController.AutoReset = false;
-            saveDataTPSController.Stop();
+            saveDataTPSController = new Timer(TimeSpan.FromSeconds(1).TotalMilliseconds) { AutoReset = false, Enabled = false };
             saveDataTPSController.Elapsed += (sender, args) => SaveData();
         }
 
         private ConcurrentDictionary<Guid, Bot> AllocatedBotsByGuid { get; } = new ConcurrentDictionary<Guid, Bot>();
+        private ConcurrentDictionary<string, int> AllocatedBotCountPerMarket { get; } = new ConcurrentDictionary<string, int>();
         private ConcurrentDictionary<string, decimal> DustPerMarket { get; set; } = new ConcurrentDictionary<string, decimal>();
 
         public PreviousSessionContext GetPreviousSessionContext()
@@ -65,7 +64,7 @@ namespace SpreadBot.Infrastructure
 
             foreach (var dustEntry in dustPerMarket)
                 UpdateDustValue(dustEntry.Key, dustEntry.Value);
-            
+
             RequestSaveData();
         }
 
@@ -81,6 +80,9 @@ namespace SpreadBot.Infrastructure
         public void AddBot(Bot bot)
         {
             AllocatedBotsByGuid[bot.Guid] = bot;
+
+            AllocatedBotCountPerMarket.AddOrUpdate(bot.MarketSymbol, _ => 1, (_, value) => value + 1);
+
             ListenBotEvents(bot);
 
             RequestSaveData();
@@ -89,6 +91,11 @@ namespace SpreadBot.Infrastructure
         public int GetBotCount()
         {
             return AllocatedBotsByGuid.Count;
+        }
+
+        public int GetBotCount(string marketSymbol)
+        {
+            return AllocatedBotCountPerMarket.GetOrAdd(marketSymbol, 0);
         }
 
         public IEnumerable<Bot> GetBots()
@@ -104,6 +111,7 @@ namespace SpreadBot.Infrastructure
             {
                 RequestSaveData();
                 StopListeningBotEvents(bot);
+                AllocatedBotCountPerMarket.AddOrUpdate(bot.MarketSymbol, key => 0, (key, value) => Math.Max(value - 1, 0));
             }
 
             return removed;
@@ -131,11 +139,6 @@ namespace SpreadBot.Infrastructure
 
         private void RequestSaveData()
         {
-            // If the timer is enabled it's about to save the whole data so instead of delaying the save we just wait for it
-            if (saveDataTPSController.Enabled)
-                return;
-
-            saveDataTPSController.Stop();
             saveDataTPSController.Start();
         }
 
@@ -151,10 +154,12 @@ namespace SpreadBot.Infrastructure
                 };
 
                 File.WriteAllText(FILE_NAME, JsonConvert.SerializeObject(savedData, Formatting.Indented));
-            } catch (Exception e)
+            }
+            catch (Exception e)
             {
                 Logger.Instance.LogError($"Could not save coordinator context. Exception: {e}");
-            } finally
+            }
+            finally
             {
                 contextSemaphore.Release();
             }

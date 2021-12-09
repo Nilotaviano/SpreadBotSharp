@@ -18,6 +18,7 @@ namespace SpreadBot.Infrastructure
         public string AccountId { get; set; }
         public int MaxNumberOfBots { get; set; }
         public int ResyncIntervalMs { get; set; }
+        public int MaxBotCountPerMarket { get; set; }
 
         public string CoinMarketCapApiKey { get; set; }
 

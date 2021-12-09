@@ -43,6 +43,11 @@ namespace SpreadBot.Infrastructure
         int GetBotCount();
 
         /// <summary>
+        /// Gets the number of bots per market
+        /// </summary>
+        int GetBotCount(string marketSymbol);
+
+        /// <summary>
         /// Gets all stored bots
         /// </summary>
         /// <returns></returns>
