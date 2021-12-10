@@ -69,7 +69,7 @@ namespace SpreadBot.Infrastructure.PriceAggregators
 
                     if (ids.Any())
                     {
-                        var coins = await _client.GetCoinMarkets(baseMarket, ids.ToArray(), "gecko_desc", perPage: 250, page: 1, priceChangePercentage: "24h", sparkline: false, category: string.Empty);
+                        var coins = await _client.GetCoinMarkets(vsCurrency, ids.ToArray(), "gecko_desc", perPage: 250, page: 1, priceChangePercentage: "24h", sparkline: false, category: string.Empty);
 
                         return coins
                             .Where(c => c.PriceChangePercentage24H.HasValue && c.CurrentPrice.HasValue && c.LastUpdated.HasValue && c.TotalVolume.HasValue)
