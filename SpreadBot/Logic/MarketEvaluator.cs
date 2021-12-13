@@ -45,7 +45,7 @@ namespace SpreadBot.Logic
 
                 if (marketData.AggregatorQuote.CurrentPrice < marketData.BidRate.Value * 0.99m)
                 {
-                    Logger.Instance.LogError($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but price is higher than on aggregator ({marketData.AggregatorQuote.CurrentPrice})");
+                    Logger.Instance.LogError($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but price ({marketData.AggregatorQuote.CurrentPrice}) is higher than on aggregator ({marketData.AggregatorQuote.CurrentPrice})");
                     return false;
                 }
             }
