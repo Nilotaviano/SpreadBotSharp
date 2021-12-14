@@ -12,7 +12,7 @@ namespace SpreadBot.Logic
         {
             return string.IsNullOrWhiteSpace(market.Notice)
                 && market.Status == EMarketStatus.Online
-                && !appSettings.BlacklistedMarkets.Contains(market.Target);
+                && !appSettings.BlacklistedMarkets.Contains(market.Target) && !appSettings.BlacklistedMarkets.Contains(market.Symbol);
         }
 
         public static bool EvaluateMarketBasedOnSpreadConfiguration(Market marketData, SpreadConfiguration spreadConfiguration)

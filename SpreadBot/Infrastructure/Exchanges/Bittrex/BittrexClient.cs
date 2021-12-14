@@ -140,7 +140,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
 
         public async Task<Order> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null)
         {
-            return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit, clientOrderId: clientOrderId);
+            return await ExecuteLimitOrder(OrderDirection.SELL, marketSymbol, quantity, limit, orderTimeInForce: OrderTimeInForce.GOOD_TIL_CANCELLED, clientOrderId: clientOrderId);
         }
 
         public async Task<Order> BuyMarket(string marketSymbol, decimal quantity)
@@ -209,12 +209,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 if (success)
                 {
 
-                    SocketClient.On<BittrexApiBalanceData>("balance", (balance) => 
-                    { 
-                        foreach (var callback in onBalanceCallBacks) 
-                        { 
-                            callback(BittrexTypeConverter.ConvertBalanceData(balance)); 
-                        } 
+                    SocketClient.On<BittrexApiBalanceData>("balance", (balance) =>
+                    {
+                        foreach (var callback in onBalanceCallBacks)
+                        {
+                            callback(BittrexTypeConverter.ConvertBalanceData(balance));
+                        }
                     });
                     SocketClient.On<BittrexApiMarketSummariesData>("marketsummaries", (summariesData) =>
                     {
@@ -230,12 +230,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                             callback(BittrexTypeConverter.ConvertTickerData(tickersData));
                         }
                     });
-                    SocketClient.On<BittrexApiOrderData>("order", (orderData) => 
-                    { 
-                        foreach (var callback in onOrderCallBacks) 
-                        { 
-                            callback(BittrexTypeConverter.ConvertOrderData(orderData)); 
-                        } 
+                    SocketClient.On<BittrexApiOrderData>("order", (orderData) =>
+                    {
+                        foreach (var callback in onOrderCallBacks)
+                        {
+                            callback(BittrexTypeConverter.ConvertOrderData(orderData));
+                        }
                     });
                 }
             }
@@ -252,7 +252,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             return success;
         }
 
-        public async Task<Order> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true, string clientOrderId = null)
+        public async Task<Order> ExecuteLimitOrder(OrderDirection direction, string marketSymbol, decimal quantity, decimal limit, bool useCredits = true, OrderTimeInForce orderTimeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED, string clientOrderId = null)
         {
             var request = new RestRequest("/orders", Method.POST, DataFormat.Json);
             var body = JsonConvert.SerializeObject(new
@@ -262,7 +262,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
                 limit,
                 direction = direction.ToString(),
                 type = OrderType.LIMIT.ToString(),
-                timeInForce = OrderTimeInForce.POST_ONLY_GOOD_TIL_CANCELLED.ToString(),
+                timeInForce = orderTimeInForce.ToString(),
                 useAwards = useCredits && UseBittrexCredits,
                 clientOrderId
             });
@@ -277,7 +277,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             catch (ApiException e) when ((e.ApiErrorType == ApiErrorType.CannotEstimateCommission || e.ApiErrorType == ApiErrorType.RetryLater) && useCredits)
             {
                 Logger.Instance.LogMessage("Handling INSUFFICIENT_AWARDS for " + marketSymbol);
-                return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false, clientOrderId);
+                return await ExecuteLimitOrder(direction, marketSymbol, quantity, limit, false, orderTimeInForce: orderTimeInForce, clientOrderId: clientOrderId);
             }
         }
 

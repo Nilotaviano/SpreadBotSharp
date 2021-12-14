@@ -85,6 +85,11 @@ namespace SpreadBot.Logic
             dataRepository.SubscribeToMarketData(MarketSymbol, Guid, ProcessMessage);
         }
 
+        public void Stop()
+        {
+            ProcessMessage(new StopMessage());
+        }
+
         //Doesn't return Task because this shouldn't be awaited
         private async void ProcessMessage(IMessage message)
         {
@@ -106,6 +111,9 @@ namespace SpreadBot.Logic
                         break;
                     case MessageType.OrderData:
                         await ProcessOrderData(message as Order);
+                        break;
+                    case MessageType.Stop:
+                        await ProcessStopMessage();
                         break;
                     default:
                         throw new ArgumentException();
@@ -239,6 +247,12 @@ namespace SpreadBot.Logic
                 default:
                     throw new ArgumentException();
             }
+        }
+
+        private async Task ProcessStopMessage()
+        {
+            await ExecuteOrderFunction(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id));
+            await FinishWork();
         }
 
         private async Task FinishWork()

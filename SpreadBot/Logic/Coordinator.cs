@@ -36,6 +36,21 @@ namespace SpreadBot.Logic
             this.appSettings.Reloaded += AppSettings_Reloaded;
 
             UpdateAppSettings();
+
+            TelegramBot.Instance.OnStopReceived += OnStopReceived;
+        }
+
+        private void OnStopReceived(object sender, EventArgs e)
+        {
+            Stop();
+
+            ExecuteBalanceRelatedAction("Stop", () =>
+            {
+                foreach (var bot in context.GetBots())
+                    bot.Stop();
+            });
+
+            TelegramBot.Instance.OnStopReceived -= OnStopReceived;
         }
 
         private void AppSettings_Reloaded(object sender, EventArgs e)
@@ -65,6 +80,14 @@ namespace SpreadBot.Logic
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
                 this.dataRepository.SubscribeToCurrencyBalance(baseMarket, guid, (bd) => ReportBalance());
+        }
+
+        public void Stop()
+        {
+            this.dataRepository.UnsubscribeToMarketsData(guid);
+            this.dataRepository.UnsubscribeToMarketsData(guid);
+            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
+                this.dataRepository.UnsubscribeToCurrencyBalance(baseMarket, guid);
         }
 
         private void RestorePreviousSession()

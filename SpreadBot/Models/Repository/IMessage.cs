@@ -13,6 +13,12 @@ namespace SpreadBot.Models.Repository
     {
         MarketData,
         BalanceData,
-        OrderData
+        OrderData,
+        Stop
+    }
+
+    public class StopMessage : IMessage
+    {
+        public MessageType MessageType => MessageType.Stop;
     }
 }
