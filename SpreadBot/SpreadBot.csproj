@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Huobi.Net" Version="2.5.5" />
+    <PackageReference Include="Kucoin.Net" Version="4.0.5" />
     <PackageReference Include="Microsoft.AspNet.SignalR.Client" Version="2.4.1" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="5.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="5.0.0" />
