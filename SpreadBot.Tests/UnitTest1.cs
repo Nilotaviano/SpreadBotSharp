@@ -76,6 +76,12 @@ namespace SpreadBot.Tests
                 .Setup(e => e.GetClosedOrdersData(It.IsAny<string>()))
                 .ReturnsAsync(new ApiRestResponse<BittrexApiOrderData.Order[]> { Data = new BittrexApiOrderData.Order[0] });
             mockExchange
+                .Setup(e => e.GetOpenOrdersData())
+                .ReturnsAsync(new ApiRestResponse<BittrexApiOrderData.Order[]> { Data = new BittrexApiOrderData.Order[0] });
+            mockExchange
+                .Setup(e => e.GetMarketsData())
+                .ReturnsAsync(new BittrexApiMarketData[0]);
+            mockExchange
                 .Setup(e => e.OnBalance(It.IsAny<Action<BittrexApiBalanceData>>()))
                 .Callback((Action<BittrexApiBalanceData> action) => onBalancecallback = action);
             mockExchange
@@ -102,7 +108,7 @@ namespace SpreadBot.Tests
 
             mockExchange
                 .Setup(e => e.BuyLimit(openingMarketData.Symbol, quantity, bidPrice, null))
-                .ReturnsAsync(new OrderData() { Id = buyOrderId, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN })
+                .ReturnsAsync(new OrderData() { Id = buyOrderId, ClientOrderId = buyOrderId, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN })
                 .Callback(() =>
                 {
                     Thread.Sleep(10);
@@ -127,7 +133,7 @@ namespace SpreadBot.Tests
 
             mockExchange
                 .Setup(e => e.SellLimit(openingMarketData.Symbol, quantity, askPrice, null))
-                .ReturnsAsync(new OrderData() { Id = sellOrderId, Direction = OrderDirection.SELL, Status = OrderStatus.OPEN })
+                .ReturnsAsync(new OrderData() { Id = sellOrderId, ClientOrderId = sellOrderId, Direction = OrderDirection.SELL, Status = OrderStatus.OPEN })
                 .Callback(() =>
                 {
                     Thread.Sleep(10);
