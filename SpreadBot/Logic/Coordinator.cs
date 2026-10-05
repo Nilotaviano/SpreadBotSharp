@@ -280,7 +280,7 @@ namespace SpreadBot.Logic
             } catch (Exception e)
             {
                 Logger.Instance.LogError($"Error while {description}. Exception: {e}");
-                throw e;
+                throw;
             }
             finally
             {

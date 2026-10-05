@@ -27,7 +27,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Bittrex
             _url = url;
             _hubConnection = new HubConnection(_url);
             _hubProxy = _hubConnection.CreateHubProxy("c3");
+#pragma warning disable SYSLIB0014 // Kept for RestSharp 106, which still sends requests through HttpWebRequest
             ServicePointManager.DefaultConnectionLimit = 10;
+#pragma warning restore SYSLIB0014
             _hubConnection.StateChanged += _hubConnection_StateChanged;
             _disconnected = disconnected;
         }

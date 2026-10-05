@@ -50,7 +50,7 @@ namespace SpreadBot
                 }
             }
 
-            Task.Run(() => watcher.Changed += reloadAppSettings);
+            watcher.Changed += reloadAppSettings;
 
             NetProfitRecorder.Instance.AppSettings = appSettings;
 

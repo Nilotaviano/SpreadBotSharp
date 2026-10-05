@@ -22,7 +22,7 @@ namespace SpreadBot.Infrastructure
         public static string Hash(this string input)
         {
             string hash;
-            using (SHA512 sha512 = new SHA512Managed())
+            using (SHA512 sha512 = SHA512.Create())
             {
                 var hashBytes = sha512.ComputeHash(Encoding.UTF8.GetBytes(input));
 
