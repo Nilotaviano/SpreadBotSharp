@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Console app (.NET Core 3.1, C#) that runs a market-making "spread" bot against the **Bittrex v3** API (REST via RestSharp, websocket via the legacy SignalR client, hub `c3`). It scans markets for wide bid/ask spreads, allocates a slice of base-currency balance to a `Bot` per market, buys at bid + 1 satoshi and sells at ask − 1 satoshi. Endpoints are hardcoded in `BittrexClient`; Bittrex Global shut down in Dec 2023, so live runs cannot succeed — work is effectively offline/test-only.
+Console app (.NET 10, C#) that runs a market-making "spread" bot against the **Bittrex v3** API (REST via RestSharp, websocket via the legacy SignalR client, hub `c3`). It scans markets for wide bid/ask spreads, allocates a slice of base-currency balance to a `Bot` per market, buys at bid + 1 satoshi and sells at ask − 1 satoshi. Endpoints are hardcoded in `BittrexClient`; Bittrex Global shut down in Dec 2023, so live runs cannot succeed — work is effectively offline/test-only.
 
 ## Commands
 
@@ -13,10 +13,11 @@ dotnet build SpreadBot.sln
 dotnet test SpreadBot.sln
 dotnet test SpreadBot.Tests --filter "FullyQualifiedName~BasicBotFlowTest"   # single test
 dotnet run --project SpreadBot -- C:\absolute\path\to\appsettings.json
-dotnet publish SpreadBot -p:PublishProfile=FolderProfile                      # self-contained, single-file, trimmed, ubuntu.16.10-x64
+dotnet publish SpreadBot -p:PublishProfile=FolderProfile                      # self-contained, single-file, linux-x64 (untrimmed)
 ```
 
-- Tests are MSTest + Moq and need the .NET Core 3.1 runtime. There is one test (`SpreadBot.Tests/UnitTest1.cs`), and it currently **fails**: the mock `IExchange` has no setup for `GetOpenOrdersData()`, so `DataRepository.FetchOpenOrdersData` throws a NullReferenceException during `StartConsumingData()`.
+- Tests are MSTest 4 + Moq. Besides the end-to-end `BasicBotFlowTest` (`UnitTest1.cs`), characterization tests pin the seams package upgrades can silently break: request hashing/signing, config binding (culture, defaults, hot-reload), websocket payload decoding, the RestSharp URI/body values that are signed, and the `coordinatorContext.json` round-trip.
+- The build is warning-free; keep it that way: `dotnet build SpreadBot.sln --no-incremental -warnaserror`.
 - No linter/formatter config exists.
 
 ## Runtime files and config
@@ -57,6 +58,9 @@ Wiring is manual in `Program.cs` (no DI container): `BittrexClient` → `DataRep
 ## Gotchas
 
 - `SpreadConfiguration` overrides `Equals`/`GetHashCode` over its value fields and is used as a dictionary key (`Coordinator.AllocatedMarketsPerSpreadConfiguration`) and to match profit records. Editing a config's values makes it a *different* configuration (profit tracked separately; the old one is marked inactive). `NetProfitRecorder.SpreadConfigurationNetProfit` duplicates these fields and equality — keep the two in sync when adding fields.
-- Serialization is Newtonsoft.Json everywhere (it arrives transitively via the SignalR client). `System.Text.Json` attributes such as `[JsonIgnore]` on `BotContext.Semaphore` have no effect.
+- Serialization is Newtonsoft.Json everywhere. Use Newtonsoft attributes; `System.Text.Json` attributes are silently ignored.
+- Trimming is off on purpose: Newtonsoft, the config binder and SignalR's `dynamic` handlers need reflection. Don't re-enable `PublishTrimmed`.
+- Don't enable `ImplicitUsings`: several files use `System.Timers.Timer`, which would clash with `System.Threading.Timer`.
+- Package pins are deliberate: RestSharp stays on 106.x (107+ rewrote the API that request signing uses), Telegram.Bot on 15.x, and the SignalR client is the classic ASP.NET one (the Bittrex hub isn't ASP.NET Core SignalR).
 - `BotContext` round-trips through `coordinatorContext.json` for session restore; renaming its public members or constructor parameters breaks restoring an existing file.
 - Prices are `decimal`; use `int.Satoshi()` for tick offsets and `CeilToPrecision(market.Precision)` before sending prices/quantities to the exchange.
