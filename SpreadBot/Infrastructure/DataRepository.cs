@@ -201,10 +201,10 @@ namespace SpreadBot.Infrastructure
             resyncTimer.Start();
             priceAggregatorRefreshTimer?.Start();
 
-            Task.Run(ConsumeBalanceData);
-            Task.Run(ConsumeOrderData);
-            Task.Run(ConsumeMarketSummaryData);
-            Task.Run(ConsumeTickersData);
+            Task.Factory.StartNew(ConsumeBalanceData, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ConsumeOrderData, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ConsumeMarketSummaryData, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ConsumeTickersData, TaskCreationOptions.LongRunning);
         }
 
         private void ResumeConsumingData()

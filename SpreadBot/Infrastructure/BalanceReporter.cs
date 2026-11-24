@@ -34,7 +34,7 @@ namespace SpreadBot.Infrastructure
                 chatId = new Telegram.Bot.Types.ChatId(telegramSettings.ChatId);
 
                 pendingBalanceReportData = new BlockingCollection<BalanceReportData>();
-                Task.Run(ConsumePendingData);
+                Task.Factory.StartNew(ConsumePendingData, TaskCreationOptions.LongRunning);
             }
         }
 
