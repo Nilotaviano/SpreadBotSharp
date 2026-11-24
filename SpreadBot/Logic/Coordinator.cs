@@ -52,7 +52,8 @@ namespace SpreadBot.Logic
             // TODO This may break when restoring bots for different base markets
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
             {
-                availableBalanceForBaseMarket.TryAdd(baseMarket, this.dataRepository.BalancesData[baseMarket].Amount);
+                //Total, not Available: restored bots' open buy orders lock funds that AllocateBot subtracts from this again
+                availableBalanceForBaseMarket.TryAdd(baseMarket, this.dataRepository.BalancesData[baseMarket].Total);
             }
         }
 
@@ -148,7 +149,7 @@ namespace SpreadBot.Logic
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
-                        var existingDust = context.RemoveDustForMarket(market.Symbol);
+                        var existingDust = GetInheritableDust(market);
                         var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
 
                         AllocateBot(bot);
@@ -228,7 +229,42 @@ namespace SpreadBot.Logic
         {
             return context.GetBotCount() < appSettings.MaxNumberOfBots
                 && availableBalanceForBaseMarket.TryGetValue(spreadConfiguration.BaseMarket, out var balance) 
-                && balance > spreadConfiguration.AllocatedAmountOfBaseCurrency;
+                && balance > spreadConfiguration.AllocatedAmountOfBaseCurrency
+                && GetUnallocatedExchangeBalance(spreadConfiguration.BaseMarket) > spreadConfiguration.AllocatedAmountOfBaseCurrency;
+        }
+
+        /// <summary>
+        /// The exchange's available balance minus what running bots hold, so drift in the tracked balance
+        /// (fees, manual trades, withdrawals) can't allocate money that isn't there.
+        /// </summary>
+        private decimal GetUnallocatedExchangeBalance(string baseMarket)
+        {
+            if (!dataRepository.BalancesData.TryGetValue(baseMarket, out var exchangeBalance))
+                return 0;
+
+            //Funds of bots with an open buy order are locked, so the exchange already excludes them from Available
+            var heldByBots = context.GetBots()
+                .Where(b => b.BaseMarket == baseMarket && b.botContext.BotState != BotState.BuyOrderActive)
+                .Sum(b => b.Balance);
+
+            return exchangeBalance.Amount - heldByBots;
+        }
+
+        /// <summary>
+        /// Recorded dust for the market, capped at the coins actually available on the exchange. A bot that finished
+        /// after a failed sell records holdings the exchange may not have, and inheriting them would make every
+        /// later sell on that market fail with insufficient funds.
+        /// </summary>
+        private decimal GetInheritableDust(MarketData market)
+        {
+            var recordedDust = context.RemoveDustForMarket(market.Symbol);
+            var availableCoins = dataRepository.BalancesData.TryGetValue(market.Target, out var balance) ? balance.Amount : 0;
+
+            if (recordedDust <= availableCoins)
+                return recordedDust;
+
+            Logger.Instance.LogError($"Recorded dust {recordedDust}{market.Target} for {market.Symbol} exceeds the {availableCoins}{market.Target} available on the exchange; inheriting only that");
+            return Math.Max(availableCoins, 0);
         }
 
         private void UnallocateBot(Bot bot)
