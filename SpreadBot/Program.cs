@@ -46,13 +46,13 @@ namespace SpreadBot
                 {
                     var updatedAppSettings = JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(appSettingsPath));
 
-                    appSettings.Reload(updatedAppSettings);
-                    Logger.Instance.LogMessage("App Settings reloaded");
-
                     var unwatched = (updatedAppSettings.SpreadConfigurations ?? Enumerable.Empty<SpreadConfiguration>())
                         .Select(c => c.BaseMarket).Distinct().Except(watchedBaseMarkets).ToList();
                     if (unwatched.Count > 0)
                         Logger.Instance.LogError($"Base markets {string.Join(", ", unwatched)} weren't configured at startup, so their markets aren't watched; restart to trade them");
+
+                    appSettings.Reload(updatedAppSettings);
+                    Logger.Instance.LogMessage("App Settings reloaded");
                 }
                 catch (Exception ex)
                 {

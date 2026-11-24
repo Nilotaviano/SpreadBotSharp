@@ -18,7 +18,6 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private const int SignificantDigitsPrecisionMode = 3;
         private const int TickSizePrecisionMode = 4;
         private const decimal DefaultFeeRate = 0.001m;
-        private static readonly TimeSpan StreamRetryDelay = TimeSpan.FromSeconds(5);
         //Covers clock drift and the lookup's own latency on top of the exchange's recvWindow
         private static readonly TimeSpan OrderRequestLifetimeMargin = TimeSpan.FromSeconds(50);
         //Exchanges without a recvWindow don't bound when a delayed request may still be accepted; this is a generous guess
@@ -33,9 +32,15 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private readonly ConcurrentBag<Action<OrderData>> onOrderCallbacks = new ConcurrentBag<Action<OrderData>>();
         private readonly ConcurrentBag<Action> onStreamInterruptedCallbacks = new ConcurrentBag<Action>();
 
-        private Dictionary<string, ccxt.MarketInterface> markets = new Dictionary<string, ccxt.MarketInterface>();
-        //ccxt's typed methods take symbol lists as object lists
-        private List<object> watchedSymbols = new List<object>();
+        private HashSet<string> quoteCurrencies = new HashSet<string>();
+        //Spot markets of the quote currencies, active or not, so a halt or delisting reaches MarketsData as Offline
+        private volatile IReadOnlyList<ccxt.MarketInterface> tradedMarkets = new List<ccxt.MarketInterface>();
+        //The active ones; ccxt's typed methods take symbol lists as object lists
+        private volatile List<object> watchedSymbols = new List<object>();
+
+        internal TimeSpan StreamRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
+        //How long a stream that failed gets to subscribe again before it reports the interruption, so updates missed meanwhile are resynced
+        internal TimeSpan ResubscribeGrace { get; init; } = TimeSpan.FromSeconds(2);
 
         public CcxtExchange(string exchangeId, string apiKey, string apiSecret, bool useSandbox)
             : this(CreateExchange(exchangeId, apiKey, apiSecret, useSandbox))
@@ -66,7 +71,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                     //Resyncs fetch every open order at once; the higher request weight is fine at that frequency
                     ["warnOnFetchOpenOrdersWithoutSymbol"] = false,
                     //Binance rejects requests whose timestamp drifts from its clock
-                    ["adjustForTimeDifference"] = true
+                    ["adjustForTimeDifference"] = true,
+                    //Resyncs reload the markets; Binance would also load its futures markets, which the bot never trades
+                    ["fetchMarkets"] = new Dictionary<string, object> { ["types"] = new List<object> { "spot" } }
                 }
             };
 
@@ -94,20 +101,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             if (Convert.ToInt32(exchange.precisionMode) == SignificantDigitsPrecisionMode)
                 throw new NotSupportedException($"{exchange.id} gives price precision as significant digits, which has no fixed price tick");
 
-            var quotes = new HashSet<string>(quoteCurrencies);
+            this.quoteCurrencies = new HashSet<string>(quoteCurrencies);
 
-            markets = await Call(() => exchange.LoadMarkets());
-            watchedSymbols = markets.Values
-                .Where(m => m.spot && m.active != false && quotes.Contains(m.quote))
-                .Select(m => (object)m.symbol)
-                .ToList();
+            await LoadMarkets(reload: false);
 
             //The highest fee among the traded markets, so buys always leave room for it
-            var takerFees = watchedSymbols.Select(s => markets[(string)s].taker).Where(fee => fee.HasValue).Select(fee => fee.Value).ToList();
+            var takerFees = tradedMarkets.Where(m => m.active != false).Select(m => m.taker).Where(fee => fee.HasValue).Select(fee => fee.Value).ToList();
             if (takerFees.Count > 0)
                 FeeRate = (decimal)takerFees.Max();
 
-            Logger.Instance.LogMessage($"Loaded {markets.Count} markets from {exchange.id}; watching {watchedSymbols.Count} with quote {string.Join(",", quotes)}");
+            Logger.Instance.LogMessage($"Loaded {tradedMarkets.Count} markets from {exchange.id} with quote {string.Join(",", this.quoteCurrencies)}; watching the {watchedSymbols.Count} active ones");
 
             StartStream("tickers", async () =>
             {
@@ -140,10 +143,33 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             return ToBalanceData(await Call(() => exchange.FetchBalance())).ToList();
         }
 
-        public Task<IReadOnlyList<MarketData>> GetMarkets()
+        //Status, tick and minimum size change (halts, delistings, filter updates), so every call reloads them
+        public async Task<IReadOnlyList<MarketData>> GetMarkets()
         {
-            IReadOnlyList<MarketData> result = watchedSymbols.Select(s => ToMarketData(markets[(string)s])).ToList();
-            return Task.FromResult(result);
+            try
+            {
+                await LoadMarkets(reload: true);
+            }
+            //Failing would fail the whole resync, balances and orders included
+            catch (ApiException e)
+            {
+                Logger.Instance.LogError($"Reloading markets failed, keeping the ones loaded before: {e.ApiErrorType} {e.Message}");
+            }
+
+            return tradedMarkets.Select(ToMarketData).ToList();
+        }
+
+        //The typed LoadMarkets can't reload
+        private async Task LoadMarkets(bool reload)
+        {
+            var loaded = await Call(() => exchange.loadMarkets(reload));
+            var traded = loaded.Values
+                .Select(market => new ccxt.MarketInterface(market))
+                .Where(m => m.spot && quoteCurrencies.Contains(m.quote))
+                .ToList();
+
+            tradedMarkets = traded;
+            watchedSymbols = traded.Where(m => m.active != false).Select(m => (object)m.symbol).ToList();
         }
 
         public async Task<IReadOnlyList<MarketData>> GetTickers()
@@ -275,15 +301,24 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 {
                     try
                     {
-                        await receive();
+                        var receiving = receive();
 
+                        //The order and balance streams may next deliver much later, so report the interruption once the stream had time to
+                        //subscribe again: a resync from then on catches what it missed
                         if (interrupted)
                         {
-                            interrupted = false;
-                            Logger.Instance.LogMessage($"{name} stream recovered");
-                            foreach (var callback in onStreamInterruptedCallbacks)
-                                callback();
+                            await Task.WhenAny(receiving, Task.Delay(ResubscribeGrace));
+
+                            if (!receiving.IsFaulted)
+                            {
+                                interrupted = false;
+                                Logger.Instance.LogMessage($"{name} stream recovered");
+                                foreach (var callback in onStreamInterruptedCallbacks)
+                                    callback();
+                            }
                         }
+
+                        await receiving;
                     }
                     catch (Exception e) when (!streams.IsCancellationRequested)
                     {
@@ -416,12 +451,15 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             };
         }
 
-        private decimal PriceTick(double precision)
+        //No tick rather than a zero one: a merge would let a zero overwrite a good tick, and the strategies can't move prices by it
+        private decimal? PriceTick(double precision)
         {
             //Tick-size mode gives the tick itself; the other modes give a number of decimal places
-            return Convert.ToInt32(exchange.precisionMode) == TickSizePrecisionMode
-                ? (decimal)precision
-                : 1m / (decimal)Math.Pow(10, precision);
+            var tick = Convert.ToInt32(exchange.precisionMode) == TickSizePrecisionMode
+                ? ToDecimal(precision)
+                : ToDecimal(1 / Math.Pow(10, precision));
+
+            return tick > 0 ? tick : null;
         }
 
         internal static IEnumerable<BalanceData> ToBalanceData(ccxt.Balances balances)

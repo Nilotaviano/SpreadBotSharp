@@ -67,6 +67,34 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void ResyncRequestedWhileOneRuns_RunsOnceMoreAfterIt()
+        {
+            // A stream may recover after the running resync took its snapshot; dropping its request would leave its gap until the next periodic resync
+            var exchange = new MockExchange();
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            repository.StartConsumingData();
+
+            using var release = new ManualResetEventSlim();
+            var snapshots = 0;
+            exchange.Mock.Setup(e => e.GetOpenOrders()).Returns(() => System.Threading.Tasks.Task.Run<IReadOnlyList<OrderData>>(() =>
+            {
+                Interlocked.Increment(ref snapshots);
+                release.Wait();
+                return new List<OrderData>();
+            }));
+
+            exchange.OnStreamInterrupted();
+            WaitUntil(() => Volatile.Read(ref snapshots) == 1, "the first resync is running");
+            exchange.OnStreamInterrupted();
+            exchange.OnStreamInterrupted();
+            release.Set();
+
+            WaitUntil(() => Volatile.Read(ref snapshots) == 2, "the requests made meanwhile get one more resync");
+            WaitForResyncToFinish(exchange, repository);
+            Assert.AreEqual(2, Volatile.Read(ref snapshots), "requests made during one run share the next");
+        }
+
+        [TestMethod]
         public void StreamInterruption_FetchesATrackedOrderThatNoUpdateEverMentioned()
         {
             // The bot placed the order through REST; the stream went down before it reported anything

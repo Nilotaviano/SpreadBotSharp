@@ -13,7 +13,8 @@ namespace SpreadBot.Infrastructure
     public class DataRepository
     {
         private readonly Timer resyncTimer;
-        private int resyncInProgress;
+        //Resyncs requested and not yet covered by a run; only the request that finds none runs them
+        private int pendingResyncs;
 
         //I know it's not a Semaphore, but it works like one
         private readonly System.Threading.ManualResetEvent consumeDataSemaphore = new System.Threading.ManualResetEvent(true);
@@ -30,7 +31,7 @@ namespace SpreadBot.Infrastructure
 
             Exchange = exchange;
             resyncTimer = new Timer(appSettings.ResyncIntervalMs);
-            resyncTimer.Elapsed += (sender, e) => Resync();
+            resyncTimer.Elapsed += (sender, e) => RequestResync();
             resyncTimer.AutoReset = false;
         }
 
@@ -312,17 +313,34 @@ namespace SpreadBot.Infrastructure
             };
         }
 
+        /// <summary>
+        /// One resync runs at a time. A request made while one runs (e.g. a stream recovering after the running one took its
+        /// snapshot) gets one more run after it; requests made during the same run share it.
+        /// </summary>
         private void RequestResync()
         {
             resyncTimer.Stop();
-            Task.Run(Resync);
+
+            //Counted here rather than in the task, so a running resync sees the request before it finishes
+            if (System.Threading.Interlocked.Increment(ref pendingResyncs) == 1)
+                Task.Run(RunPendingResyncs);
         }
 
-        private void Resync()
+        private void RunPendingResyncs()
         {
-            if (System.Threading.Interlocked.Exchange(ref resyncInProgress, 1) == 1)
-                return;
+            int covered;
+            do
+            {
+                covered = System.Threading.Volatile.Read(ref pendingResyncs);
+                ResyncOnce();
+            }
+            while (System.Threading.Interlocked.Add(ref pendingResyncs, -covered) != 0);
 
+            resyncTimer.Start();
+        }
+
+        private void ResyncOnce()
+        {
             try
             {
                 Logger.Instance.LogMessage("Resyncing data");
@@ -341,8 +359,6 @@ namespace SpreadBot.Infrastructure
             finally
             {
                 consumeDataSemaphore.Set();
-                System.Threading.Interlocked.Exchange(ref resyncInProgress, 0);
-                resyncTimer.Start();
             }
         }
     }
