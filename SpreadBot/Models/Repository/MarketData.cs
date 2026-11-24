@@ -29,7 +29,9 @@ namespace SpreadBot.Models.Repository
         public string Notice { get; set; }
 
         public string BaseMarket => Symbol.Split('-')[1];
-        public string Target => Symbol.Split('-')[0];
+        public string Target => TargetOf(Symbol);
+
+        public static string TargetOf(string symbol) => symbol.Split('-')[0];
         public decimal SpreadPercentage => AskRate > 0 && BidRate > 0 ? (AskRate.Value - BidRate.Value) / AskRate.Value * 100 : 0; //Formula source = https://www.calculatorsoup.com/calculators/financial/bid-ask-calculator.php
 
         public AggregatorQuote AggregatorQuote { get; set; }

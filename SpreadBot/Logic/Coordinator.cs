@@ -252,13 +252,18 @@ namespace SpreadBot.Logic
         private decimal GetInheritableDust(MarketData market)
         {
             var recordedDust = context.RemoveDustForMarket(market.Symbol);
-            var inheritable = balanceLedger.UnclaimedCoins(market.Target);
+
+            //Coins recorded as dust on the coin's other markets are theirs to inherit
+            var dustOfOtherMarkets = context.GetDustPerMarket()
+                .Where(dust => dust.Key != market.Symbol && MarketData.TargetOf(dust.Key) == market.Target)
+                .Sum(dust => dust.Value);
+            var inheritable = Math.Max(balanceLedger.UnclaimedCoins(market.Target) - dustOfOtherMarkets, 0);
 
             if (recordedDust <= inheritable)
                 return recordedDust;
 
-            Logger.Instance.LogError($"Recorded dust {recordedDust}{market.Target} for {market.Symbol} exceeds the {inheritable}{market.Target} unclaimed on the exchange; inheriting only that and keeping the rest recorded");
-            context.AddDustForMarket(market.Symbol, recordedDust - inheritable);
+            //Kept recorded, coins that aren't on the exchange would be inherited again and again and take other markets' real dust
+            Logger.Instance.LogUnexpectedError($"Recorded dust {recordedDust}{market.Target} for {market.Symbol} exceeds the {inheritable}{market.Target} unclaimed on the exchange; inheriting only that and dropping the rest");
             return inheritable;
         }
 

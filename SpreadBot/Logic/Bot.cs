@@ -242,8 +242,9 @@ namespace SpreadBot.Logic
 
         /// <summary>
         /// A sell was rejected for insufficient funds: compare HeldAmount with the exchange. Within the tolerance
-        /// (fees or rounding the fill didn't report), sell what the exchange holds; beyond it, stop the bot rather
-        /// than guess where the coins went.
+        /// (fees or rounding the fill didn't report), sell what the exchange holds. Beyond it, retry: the coins may
+        /// not be settled yet (e.g. a sell placed right after a cancel). After repeated rejections, finish, selling
+        /// only what the exchange shows; the rest stays held, so it is recorded as dust instead of written off.
         /// </summary>
         private async Task ReconcileHeldAmountWithExchange()
         {
@@ -256,18 +257,19 @@ namespace SpreadBot.Logic
             {
                 LogUnexpectedError($"Sell rejected for insufficient funds {consecutiveInsufficientFundsRejections} times in a row while holding {HeldAmount}{currency}; finishing");
 
+                decimal onExchange;
                 try
                 {
-                    botContext.HeldAmount = Math.Min(HeldAmount, await GetUnclaimedCoinsFromExchange(currency));
+                    onExchange = await GetUnclaimedCoinsFromExchange(currency);
                 }
                 catch (Exception e)
                 {
-                    //Finishing market-sells HeldAmount, which may include other bots' coins until it's checked
+                    //Finishing market-sells the held coins, which may include other bots' coins until it's checked
                     LogError($"Could not check the exchange balance before finishing; retrying on the next rejection: {e}");
                     return;
                 }
 
-                await FinishWork();
+                await FinishWork(maxCoinsToSell: onExchange);
                 return;
             }
 
@@ -284,10 +286,7 @@ namespace SpreadBot.Logic
             }
             else
             {
-                //Only what the exchange holds can be cleaned up or recorded as dust
-                LogUnexpectedError($"Exchange shows {unclaimed}{currency} unclaimed but the bot holds {HeldAmount}{currency}, beyond the {tolerance:P0} tolerance; finishing with the unclaimed amount");
-                botContext.HeldAmount = unclaimed;
-                await FinishWork();
+                LogError($"Exchange shows {unclaimed}{currency} unclaimed but the bot holds {HeldAmount}{currency}, beyond the {tolerance:P0} tolerance; retrying");
             }
         }
 
@@ -398,7 +397,10 @@ namespace SpreadBot.Logic
             }
         }
 
-        private async Task FinishWork()
+        private Task FinishWork() => FinishWork(maxCoinsToSell: null);
+
+        /// <param name="maxCoinsToSell">Market-sells at most this many of the held coins; the rest stay held and the Coordinator records them as dust</param>
+        private async Task FinishWork(decimal? maxCoinsToSell)
         {
             if (botContext.BotState == BotState.FinishedWork)
                 return;
@@ -411,8 +413,9 @@ namespace SpreadBot.Logic
             //Each step runs even if an earlier one fails, so the allocation is released and profit recorded
             await RunFinishStep("cleaning dust", async () =>
             {
-                if (HeldAmount > 0)
-                    await CleanDust();
+                var coinsToSell = Math.Min(HeldAmount, maxCoinsToSell ?? HeldAmount);
+                if (coinsToSell > 0)
+                    await CleanDust(coinsToSell);
             });
             await RunFinishStep("unallocating", () =>
             {
@@ -440,10 +443,10 @@ namespace SpreadBot.Logic
             }
         }
 
-        private async Task CleanDust(bool retry = true)
+        private async Task CleanDust(decimal coinsToSell, bool retry = true)
         {
             //Check if dust is worth at least the fee it would cost to clean
-            bool dustIsWorthCleaning = HeldAmount * LastTradeRate > 2 * exchange.FeeRate * botContext.spreadConfiguration.MinimumNegotiatedAmount;
+            bool dustIsWorthCleaning = coinsToSell * LastTradeRate > 2 * exchange.FeeRate * botContext.spreadConfiguration.MinimumNegotiatedAmount;
 
             if (!dustIsWorthCleaning)
                 return;
@@ -451,11 +454,11 @@ namespace SpreadBot.Logic
             OrderData sellOrder = null;
             try
             {
-                sellOrder = await exchange.SellMarket(MarketSymbol, HeldAmount.CeilToPrecision(botContext.LatestMarketData.Precision));
+                sellOrder = await exchange.SellMarket(MarketSymbol, coinsToSell.CeilToPrecision(botContext.LatestMarketData.Precision));
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.RetryLater && retry) //Try just once more. TODO: Investigate if any more ApiErrorTypes should go here
             {
-                await CleanDust(false);
+                await CleanDust(coinsToSell, false);
             }
             catch (Exception e)
             {

@@ -91,6 +91,11 @@ namespace SpreadBot.Infrastructure
             return existingDust;
         }
 
+        public IEnumerable<KeyValuePair<string, decimal>> GetDustPerMarket()
+        {
+            return DustPerMarket.ToArray();
+        }
+
         public void AddBot(Bot bot)
         {
             AllocatedBotsByGuid[bot.Guid] = bot;

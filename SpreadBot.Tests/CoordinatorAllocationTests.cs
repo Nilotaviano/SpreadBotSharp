@@ -197,7 +197,22 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(1, bots.Count);
             Assert.AreEqual(2m, bots[0].HeldAmount);
-            context.Verify(c => c.AddDustForMarket("NMR-BTC", 3m), Times.Once, "the excess stays recorded");
+            context.Verify(c => c.AddDustForMarket("NMR-BTC", It.IsAny<decimal>()), Times.Never, "the excess isn't on the exchange, so it is dropped");
+        }
+
+        [TestMethod]
+        public void InheritedDust_LeavesTheCoinsRecordedOnTheCoinsOtherMarkets()
+        {
+            // 2 NMR are on the exchange, and they are NMR-ETH's recorded dust
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("NMR", 2, 2) }, "NMR-BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots, dust: 3);
+            context.Setup(c => c.GetDustPerMarket()).Returns(new Dictionary<string, decimal> { ["NMR-ETH"] = 2, ["XYZ-BTC"] = 7 });
+
+            new Coordinator(Settings(Configuration(0.3m)), repository, context.Object).Start();
+
+            Assert.AreEqual(1, bots.Count);
+            Assert.AreEqual(0m, bots[0].HeldAmount);
         }
 
         [TestMethod]

@@ -38,6 +38,11 @@ namespace SpreadBot.Infrastructure
         decimal RemoveDustForMarket(string marketSymbol);
 
         /// <summary>
+        /// The recorded dust of every market
+        /// </summary>
+        IEnumerable<KeyValuePair<string, decimal>> GetDustPerMarket();
+
+        /// <summary>
         /// Gets the number of bots stored
         /// </summary>
         int GetBotCount();
