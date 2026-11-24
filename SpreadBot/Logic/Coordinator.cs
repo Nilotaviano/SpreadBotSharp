@@ -29,7 +29,7 @@ namespace SpreadBot.Logic
             this.appSettings = appSettings;
             this.dataRepository = dataRepository;
             this.context = context;
-            this.guid = new Guid();
+            this.guid = Guid.NewGuid();
 
             availableBalanceForBaseMarket = new ConcurrentDictionary<string, decimal>();
 
@@ -255,11 +255,11 @@ namespace SpreadBot.Logic
             });
         }
 
-        private static IComparer<(decimal, decimal)> GetMarketComparer()
+        internal static IComparer<(decimal, decimal)> GetMarketComparer()
         {
             return Comparer<(decimal, decimal)>.Create((key1, key2) =>
             {
-                return (key2.Item1 * key2.Item2).CompareTo(key1.Item1 * key2.Item2);
+                return (key2.Item1 * key2.Item2).CompareTo(key1.Item1 * key1.Item2);
                 //// Descending order
                 //var result = key2.Item1.CompareTo(key1.Item1);
                 //if (result == 0)
