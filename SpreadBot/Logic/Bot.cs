@@ -321,8 +321,8 @@ namespace SpreadBot.Logic
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
         {
-            //Cleared when the order's state is next applied (SetCurrentOrderData). A request that fails may still have been
-            //carried out (e.g. a cancel that timed out), so a failure leaves it set
+            //Cleared once the request's answer is applied, or the order's state is next applied (SetCurrentOrderData). A request
+            //that fails may still have been carried out (e.g. a cancel that timed out), so a failure leaves it set
             orderRequestInFlight = true;
 
             var orderData = await func();
@@ -334,17 +334,22 @@ namespace SpreadBot.Logic
             }
 
             consecutiveInsufficientFundsRejections = 0;
-            SetCurrentOrderData(orderData);
+
+            //A new order becomes the current one; updates to the current order follow ProcessOrderData's rules like stream updates
+            if (orderData.Id != botContext.CurrentOrderData?.Id)
+                SetCurrentOrderData(orderData);
+
             await ProcessOrderData(orderData);
+            orderRequestInFlight = false;
         }
 
         //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
-            if (orderData.Id != botContext.CurrentOrderData?.Id)
+            if (orderData.Id == null || orderData.Id != botContext.CurrentOrderData?.Id)
                 return;
 
-            switch (orderData?.Status)
+            switch (orderData.Status)
             {
                 case OrderStatus.OPEN:
                     //Keep partial fills current, BalanceLedger counts them before the order closes; a late update with fewer fills is stale
@@ -359,9 +364,14 @@ namespace SpreadBot.Logic
                     break;
                 case OrderStatus.CLOSED:
                     //Book the fill before dropping the order, so BalanceLedger never sees neither
-                    UpdateContext(orderData);
-
-                    SetCurrentOrderData(null);
+                    try
+                    {
+                        UpdateContext(orderData);
+                    }
+                    finally
+                    {
+                        SetCurrentOrderData(null);
+                    }
 
                     if (botContext.HeldAmount * botContext.LatestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {

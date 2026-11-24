@@ -7,6 +7,7 @@ using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 
 namespace SpreadBot.Tests
@@ -189,6 +190,42 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
             CollectionAssert.DoesNotContain(observedFills.ToArray(), 3m, "the stale update with fewer fills was applied");
+        }
+
+        [TestMethod]
+        public void CancelResponse_WithFewerFills_DoesNotReplaceTheStreamsNewerFill()
+        {
+            const string buyOrderId = "buy-1";
+            var exchange = new MockExchange();
+            exchange.WithMarkets(Symbol);
+            //A wide spread below the buy limit: nothing to cancel until the spread collapses
+            exchange.WithTickers(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m));
+            exchange.Mock
+                .Setup(e => e.CancelOrder(buyOrderId, Symbol))
+                .ReturnsAsync(new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, FillQuantity = 3 });
+
+            var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 60000 });
+            dataRepository.StartConsumingData();
+
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumSpreadPercentage = 1 };
+            var context = new BotContext(configuration, new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 0)
+            {
+                Balance = 0.002m,
+                CurrentOrderData = new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m }
+            };
+            var observedFills = new System.Collections.Concurrent.ConcurrentQueue<decimal>();
+            context.ContextChanged += (_, _) => observedFills.Enqueue(context.CurrentOrderData?.FillQuantity ?? -1);
+            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+
+            exchange.OnOrder(new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m, FillQuantity = 5 });
+            WaitUntil(() => context.CurrentOrderData.FillQuantity == 5, "the stream's partial fill is applied");
+
+            // The spread collapsed, so the strategy cancels; the cancel response is older than the stream's update
+            exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010001m, bid: 0.0001m));
+            WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.CancelOrder)) && context.SemaphoreCurrentCount == 1, "the cancel response is processed");
+
+            Assert.AreEqual(5m, context.CurrentOrderData.FillQuantity);
+            CollectionAssert.DoesNotContain(observedFills.ToArray(), 3m, "the stale cancel response was applied");
         }
 
         [TestMethod]
