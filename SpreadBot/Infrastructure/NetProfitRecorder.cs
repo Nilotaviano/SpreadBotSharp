@@ -25,7 +25,7 @@ namespace SpreadBot.Infrastructure
             pendingData = new BlockingCollection<NetProfit>();
             InitializeProfitCache();
 
-            Task.Factory.StartNew(ConsumePendingData, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ConsumePendingData, System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
         public static NetProfitRecorder Instance { get; } = new NetProfitRecorder();

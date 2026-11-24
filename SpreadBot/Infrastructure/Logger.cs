@@ -16,7 +16,7 @@ namespace SpreadBot.Infrastructure
         {
             pendingLogs = new BlockingCollection<Log>();
 
-            Task.Factory.StartNew(ConsumePendingLogs, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ConsumePendingLogs, System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
         public static Logger Instance

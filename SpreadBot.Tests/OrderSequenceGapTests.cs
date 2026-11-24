@@ -1,10 +1,12 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Models;
 using System;
+using SpreadBot.Infrastructure.Exchanges;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 
 namespace SpreadBot.Tests
@@ -42,7 +44,7 @@ namespace SpreadBot.Tests
             Assert.IsTrue(WaitUntil(() => dataRepository.OrdersData.ContainsKey("order-1")), "first message was not consumed");
 
             exchange.OnOrder(OrderMessage(3, "order-3"));
-            Assert.IsTrue(WaitUntil(() => exchange.Mock.Invocations.Count > 0), "sequence gap did not trigger a resync");
+            Assert.IsTrue(WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(IExchange.GetOpenOrdersData))), "sequence gap did not trigger a resync");
             exchange.Mock.Verify(e => e.GetBalanceData(), Times.Once);
 
             exchange.OnOrder(OrderMessage(4, "order-4"));
