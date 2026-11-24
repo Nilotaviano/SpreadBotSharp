@@ -9,6 +9,7 @@ using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -124,13 +125,11 @@ namespace SpreadBot.Tests
             Assert.AreEqual(0m, ledger.ClaimedByOtherBots("NMR"), "the sold coins are gone");
         }
 
-        [TestMethod]
-        public void UnallocatedBaseBalance_CountsABuyWhoseCancelIsInFlightAsUnlocked()
+        /// <summary>
+        /// A started bot with an open 0.3 BTC buy, on an exchange with 1 BTC available, and a ledger that counts it.
+        /// </summary>
+        private static (Bot bot, BotContext context, BalanceLedger ledger) BotWithAnOpenBuy(MockExchange exchange)
         {
-            // The exchange frees a cancelled buy's funds before the bot sees the cancel's answer
-            var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
-            var cancel = new TaskCompletionSource<OrderData>();
-            exchange.Mock.Setup(e => e.CancelOrder("buy-1")).Returns(cancel.Task);
             var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
             repository.StartConsumingData();
 
@@ -149,14 +148,43 @@ namespace SpreadBot.Tests
             bots.Add(bot);
             bot.Start();
 
+            return (bot, botContext, ledger);
+        }
+
+        // The bid moved well above the buy limit, so the strategy cancels the buy
+        private static void MoveTheBidAboveTheBuy(MockExchange exchange) => exchange.OnTickers(new BittrexApiTickersData
+        {
+            Sequence = 1,
+            Deltas = new[] { new BittrexApiTickersData.Ticker { Symbol = "NMR-BTC", AskRate = 0.00010101m, BidRate = 0.00009999m } }
+        });
+
+        [TestMethod]
+        public void UnallocatedBaseBalance_KeepsABuyWhoseCancelFailedCountedAsUnlocked()
+        {
+            // A cancel that failed without an answer may still have been carried out
+            var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
+            exchange.Mock.Setup(e => e.CancelOrder("buy-1")).ThrowsAsync(new ApiException(ApiErrorType.Throttled, "request timed out"));
+            var (bot, botContext, ledger) = BotWithAnOpenBuy(exchange);
+
+            MoveTheBidAboveTheBuy(exchange);
+            WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.CancelOrder)) && botContext.SemaphoreCurrentCount == 1, "the failed cancel is handled");
+
+            Assert.IsTrue(bot.OrderRequestInFlight);
+            Assert.AreEqual(0.7m, ledger.UnallocatedBaseBalance("BTC"));
+        }
+
+        [TestMethod]
+        public void UnallocatedBaseBalance_CountsABuyWhoseCancelIsInFlightAsUnlocked()
+        {
+            // The exchange frees a cancelled buy's funds before the bot sees the cancel's answer
+            var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
+            var cancel = new TaskCompletionSource<OrderData>();
+            exchange.Mock.Setup(e => e.CancelOrder("buy-1")).Returns(cancel.Task);
+            var (bot, botContext, ledger) = BotWithAnOpenBuy(exchange);
+
             Assert.AreEqual(1m, ledger.UnallocatedBaseBalance("BTC"), "the open buy's funds are locked, so all of Available is free");
 
-            // The bid moved well above the buy limit, so the strategy cancels the buy
-            exchange.OnTickers(new BittrexApiTickersData
-            {
-                Sequence = 1,
-                Deltas = new[] { new BittrexApiTickersData.Ticker { Symbol = "NMR-BTC", AskRate = 0.00010101m, BidRate = 0.00009999m } }
-            });
+            MoveTheBidAboveTheBuy(exchange);
             WaitUntil(() => bot.OrderRequestInFlight, "the cancel is sent");
 
             Assert.AreEqual(0.7m, ledger.UnallocatedBaseBalance("BTC"), "the cancel may already have returned the funds to Available");

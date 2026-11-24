@@ -56,7 +56,8 @@ namespace SpreadBot.Logic
         public decimal LastTradeRate => botContext.LatestMarketData.LastTradeRate.GetValueOrDefault();
 
         /// <summary>
-        /// An order request (place, cancel, lookup) is out and its answer not yet applied: the exchange may already have moved the order's funds.
+        /// An order request (place, cancel, lookup) was sent and the order's state hasn't been applied since: it is still out, or it
+        /// failed without saying whether it was carried out. Either way the exchange may already have moved the order's funds.
         /// </summary>
         public bool OrderRequestInFlight => orderRequestInFlight;
 
@@ -79,6 +80,7 @@ namespace SpreadBot.Logic
 
 
             botContext.CurrentOrderData = value;
+            orderRequestInFlight = false;
         }
 
         public async void Start()
@@ -317,25 +319,21 @@ namespace SpreadBot.Logic
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
         {
+            //Cleared when the order's state is next applied (SetCurrentOrderData). A request that fails may still have been
+            //carried out (e.g. a cancel that timed out), so a failure leaves it set
             orderRequestInFlight = true;
-            try
-            {
-                var orderData = await func();
 
-                if (orderData == null)
-                {
-                    LogUnexpectedError("Exchange returned no order data; keeping the current order");
-                    return;
-                }
+            var orderData = await func();
 
-                consecutiveInsufficientFundsRejections = 0;
-                SetCurrentOrderData(orderData);
-                await ProcessOrderData(orderData);
-            }
-            finally
+            if (orderData == null)
             {
-                orderRequestInFlight = false;
+                LogUnexpectedError("Exchange returned no order data; keeping the current order");
+                return;
             }
+
+            consecutiveInsufficientFundsRejections = 0;
+            SetCurrentOrderData(orderData);
+            await ProcessOrderData(orderData);
         }
 
         //TODO: Refactor/clean this method

@@ -71,40 +71,75 @@ namespace SpreadBot.Tests
             });
         }
 
+        private static (Bot bot, BotContext context) BotToSave(BotState state)
+        {
+            var repository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 600000 });
+            var botContext = new BotContext(new SpreadConfiguration { BaseMarket = "BTC" }, new MarketData { Symbol = "NMR-BTC" }, state, 10);
+            return (new Bot(repository, botContext, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)), botContext);
+        }
+
+        private static PreviousSessionContext WaitForSave()
+        {
+            var stopwatch = Stopwatch.StartNew();
+            while (!File.Exists(SessionFile))
+            {
+                if (stopwatch.ElapsedMilliseconds > 2000)
+                    Assert.Fail("Timed out waiting for the save");
+                Thread.Sleep(10);
+            }
+
+            return JsonConvert.DeserializeObject<PreviousSessionContext>(File.ReadAllText(SessionFile));
+        }
+
         [TestMethod]
         public void Save_WaitsForABotToFinishItsChange()
         {
             InTemporaryDirectory(directory =>
             {
-                var repository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 600000 });
-                var botContext = new BotContext(new SpreadConfiguration { BaseMarket = "BTC" }, new MarketData { Symbol = "NMR-BTC" }, BotState.Bought, 10);
-                var bot = new Bot(repository, botContext, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+                var (bot, botContext) = BotToSave(BotState.Bought);
                 var context = new FileCoordinatorContext();
 
                 // Halfway through a change, as the bot would be while processing a message: its sell is placed but not yet its current order
                 botContext.Semaphore.Wait();
-                context.AddBot(bot);
-                botContext.BotState = BotState.SellOrderActive;
-                Thread.Sleep(1500); // past the 1 s save debounce
-
-                Assert.IsFalse(File.Exists(SessionFile), "the save must wait for the bot to finish its change");
-
-                botContext.CurrentOrderData = new OrderData { Id = "sell-1", ClientOrderId = "sell-1", Direction = OrderDirection.SELL, Status = OrderStatus.OPEN };
-                botContext.Semaphore.Release();
-
-                var stopwatch = Stopwatch.StartNew();
-                while (!File.Exists(SessionFile))
+                try
                 {
-                    if (stopwatch.ElapsedMilliseconds > 2000)
-                        Assert.Fail("Timed out waiting for the save");
-                    Thread.Sleep(10);
+                    context.AddBot(bot);
+                    botContext.BotState = BotState.SellOrderActive;
+                    Thread.Sleep(1500); // past the 1 s save debounce
+
+                    Assert.IsFalse(File.Exists(SessionFile), "the save must wait for the bot to finish its change");
+
+                    botContext.CurrentOrderData = new OrderData { Id = "sell-1", ClientOrderId = "sell-1", Direction = OrderDirection.SELL, Status = OrderStatus.OPEN };
+                }
+                finally
+                {
+                    botContext.Semaphore.Release();
                 }
 
-                var saved = JsonConvert.DeserializeObject<PreviousSessionContext>(File.ReadAllText(SessionFile)).BotContexts.Single();
-                Assert.AreEqual(BotState.SellOrderActive, saved.BotState);
-                Assert.AreEqual("sell-1", saved.CurrentOrderData?.Id);
+                try
+                {
+                    var saved = WaitForSave().BotContexts.Single();
+                    Assert.AreEqual(BotState.SellOrderActive, saved.BotState);
+                    Assert.AreEqual("sell-1", saved.CurrentOrderData?.Id);
+                }
+                finally
+                {
+                    Thread.Sleep(1500); // the order change requested another save; let it land before the directory is removed
+                }
+            });
+        }
 
-                Thread.Sleep(1500); // the order change requested another save; let it land before the directory is removed
+        [TestMethod]
+        public void Save_LeavesOutABotThatFinished()
+        {
+            InTemporaryDirectory(directory =>
+            {
+                var (bot, _) = BotToSave(BotState.FinishedWork);
+                var context = new FileCoordinatorContext();
+
+                context.AddBot(bot);
+
+                Assert.AreEqual(0, WaitForSave().BotContexts.Count, "its coins are already recorded as dust; restoring it would record them again");
             });
         }
 

@@ -171,7 +171,9 @@ namespace SpreadBot.Infrastructure
                     bot.botContext.Semaphore.Wait();
                     try
                     {
-                        botContexts.Add(JToken.FromObject(bot.botContext, serializer));
+                        //Finished while this save waited: it is already unallocated and its coins recorded as dust, which a restore would add again
+                        if (bot.botContext.BotState != BotState.FinishedWork)
+                            botContexts.Add(JToken.FromObject(bot.botContext, serializer));
                     }
                     finally
                     {
