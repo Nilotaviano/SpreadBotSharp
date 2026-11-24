@@ -5,6 +5,7 @@ using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
 
@@ -198,6 +199,9 @@ namespace SpreadBot.Logic
                 case ApiErrorType.DustTrade when botContext.BotState == BotState.Buying:
                     await FinishWork();
                     break;
+                case ApiErrorType.InsufficientFunds when botContext.BotState == BotState.Bought:
+                    await ReconcileHeldAmountWithExchange();
+                    break;
                 case ApiErrorType.InsufficientFunds:
                     //Too many bots running?
                     await FinishWork();
@@ -225,6 +229,35 @@ namespace SpreadBot.Logic
                     LogUnexpectedError($"{e.ApiErrorType}: {e}");
                     break;
             };
+        }
+
+        /// <summary>
+        /// A sell was rejected for insufficient funds: compare HeldAmount with the exchange. Within the tolerance
+        /// (fees or rounding the fill didn't report), sell what the exchange holds; beyond it, stop the bot rather
+        /// than guess where the coins went.
+        /// </summary>
+        private async Task ReconcileHeldAmountWithExchange()
+        {
+            const decimal tolerance = 0.02m;
+
+            var currency = botContext.LatestMarketData.Target;
+            var balances = await exchange.GetBalanceData();
+            var available = balances.Balances?.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
+
+            if (available >= HeldAmount)
+            {
+                LogError($"Sell rejected for insufficient funds, but the exchange shows {available}{currency} available for {HeldAmount}{currency} held; retrying");
+            }
+            else if (available >= HeldAmount * (1 - tolerance))
+            {
+                LogError($"Exchange shows {available}{currency} available but the bot holds {HeldAmount}{currency}; selling the available amount");
+                botContext.HeldAmount = available;
+            }
+            else
+            {
+                LogUnexpectedError($"Exchange shows {available}{currency} available but the bot holds {HeldAmount}{currency}, beyond the {tolerance:P0} tolerance; finishing");
+                await FinishWork();
+            }
         }
 
         private async Task ProcessMarketData(MarketData marketData)
