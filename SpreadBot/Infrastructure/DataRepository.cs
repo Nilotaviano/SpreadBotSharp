@@ -338,11 +338,11 @@ namespace SpreadBot.Infrastructure
                 }
                 while (System.Threading.Interlocked.Add(ref pendingResyncs, -covered) != 0);
             }
+            //Only the logger can throw here, and nothing observes this task. Left above zero, the count would make every later request
+            //wait for a run that never comes; requests it drops are covered by the timer's next resync
             catch
             {
-                //Left above zero, the count would make every later request wait for a run that never comes
                 System.Threading.Interlocked.Exchange(ref pendingResyncs, 0);
-                throw;
             }
             finally
             {

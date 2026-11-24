@@ -44,6 +44,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         internal TimeSpan StreamRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
         //How long a stream that failed gets to subscribe again before it reports the interruption, so updates missed meanwhile are resynced
         internal TimeSpan ResubscribeGrace { get; init; } = TimeSpan.FromSeconds(2);
+        internal TimeSpan MarketsReloadInterval { get; init; } = TimeSpan.FromHours(1);
+        private DateTime marketsLoadedAt;
 
         public CcxtExchange(string exchangeId, string apiKey, string apiSecret, bool useSandbox)
             : this(CreateExchange(exchangeId, apiKey, apiSecret, useSandbox))
@@ -107,6 +109,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             this.quoteCurrencies = new HashSet<string>(quoteCurrencies);
 
             await LoadMarkets(reload: false);
+            marketsLoadedAt = DateTime.UtcNow;
 
             //The highest fee among the traded markets, so buys always leave room for it
             var takerFees = tradedMarkets.Where(m => m.active != false).Select(m => m.taker).Where(fee => fee.HasValue).Select(fee => fee.Value).ToList();
@@ -146,9 +149,16 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             return ToBalanceData(await Call(() => exchange.FetchBalance())).ToList();
         }
 
-        //Status, tick and minimum size change (halts, delistings, filter updates), so every call reloads them
+        /// <summary>
+        /// Status, tick and minimum size change (halts, delistings, filter updates), so the markets are reloaded, but at most once
+        /// per <see cref="MarketsReloadInterval"/>: ccxt's own requests await the load in progress, so a reload stalls them.
+        /// </summary>
         public async Task<IReadOnlyList<MarketData>> GetMarkets()
         {
+            if (DateTime.UtcNow - marketsLoadedAt < MarketsReloadInterval)
+                return tradedMarkets.Select(ToMarketData).ToList();
+
+            marketsLoadedAt = DateTime.UtcNow;
             var before = tradedMarkets;
             var lastLoad = exchange.marketsLoading;
 
@@ -159,8 +169,11 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             //Failing would fail the whole resync, balances and orders included
             catch (Exception e)
             {
-                //ccxt keeps the failed load, and its methods await it before most requests: they'd all fail until a reload succeeds
+                //ccxt keeps the failed load, and its methods await it before most requests: they'd all fail until a reload succeeds.
+                //A reload that listed nothing also replaced ccxt's markets, so those are put back too
                 exchange.marketsLoading = lastLoad;
+                if (lastLoad != null && lastLoad.IsCompletedSuccessfully)
+                    exchange.setMarkets(lastLoad.Result);
                 Logger.Instance.LogError($"Reloading markets failed, keeping the ones loaded before: {e.GetType().Name}: {e.Message}");
             }
 
@@ -182,10 +195,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 .ToList();
 
             if (traded.Count == 0 && tradedMarkets.Count > 0)
-            {
-                Logger.Instance.LogError($"Reloading markets listed none with quote {string.Join(",", quoteCurrencies)}; keeping the ones loaded before");
-                return;
-            }
+                throw new ApiException(ApiErrorType.RetryLater, $"The reload listed no markets with quote {string.Join(",", quoteCurrencies)}");
 
             tradedMarkets = traded;
             watchedSymbols = traded.Where(m => m.active != false).Select(m => (object)m.symbol).ToList();
@@ -370,7 +380,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                         {
                             await Task.WhenAny(receiving, Task.Delay(ResubscribeGrace, streams.Token));
 
-                            if (!receiving.IsFaulted && !streams.IsCancellationRequested)
+                            if (!receiving.IsFaulted && !receiving.IsCanceled && !streams.IsCancellationRequested)
                             {
                                 interrupted = false;
                                 //Only an update proves the subscription is live, so it reports once more
