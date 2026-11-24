@@ -35,17 +35,25 @@ namespace SpreadBot.Infrastructure
                 contextSemaphore.Wait();
                 try
                 {
-                    var savedData = JsonConvert.DeserializeObject<PreviousSessionContext>(File.ReadAllText(FILE_NAME));
+                    //A file that can't be read (e.g. it is locked) stops startup rather than skip a valid session
+                    var json = File.ReadAllText(FILE_NAME);
 
-                    return savedData;
-                }
-                //Only a file that can't be parsed is set aside, since the next save would overwrite the only record of the previous
-                //session's positions; any other failure (e.g. the file is locked) propagates and stops startup rather than skip a valid session
-                catch (JsonException e)
-                {
-                    var preservedFile = $"{FILE_NAME}.unreadable-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
-                    Logger.Instance.LogUnexpectedError($"Could not parse coordinator context file; moving it to {preservedFile} and starting without the previous session. Exception: {e}");
-                    File.Move(FILE_NAME, preservedFile);
+                    //A file that can't be turned into bots is set aside: the next save would overwrite the only record of the previous session's positions
+                    try
+                    {
+                        var savedData = JsonConvert.DeserializeObject<PreviousSessionContext>(json);
+
+                        if (savedData?.BotContexts?.Any(c => c?.spreadConfiguration == null || c.LatestMarketData?.Symbol == null) == true)
+                            throw new InvalidDataException("A saved bot has no configuration or market");
+
+                        return savedData;
+                    }
+                    catch (Exception e)
+                    {
+                        var preservedFile = $"{FILE_NAME}.unreadable-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+                        Logger.Instance.LogUnexpectedError($"Could not restore the coordinator context file; moving it to {preservedFile} and starting without the previous session. Exception: {e}");
+                        File.Move(FILE_NAME, preservedFile);
+                    }
                 }
                 finally
                 {

@@ -30,17 +30,36 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public void UnparsableSessionFile_IsMovedAsideInsteadOfOverwritten()
+        [DataRow("{ not json")]
+        [DataRow(@"{ ""BotContexts"": [null] }")]
+        [DataRow(@"{ ""BotContexts"": [{}] }")] // e.g. a renamed BotContext member: the constructor gets no configuration
+        [DataRow(@"{ ""BotContexts"": [{ ""spreadConfiguration"": { ""BaseMarket"": ""BTC"" } }] }")]
+        public void SessionFileThatCannotBeRestored_IsMovedAsideInsteadOfOverwritten(string content)
         {
             InTemporaryDirectory(directory =>
             {
-                File.WriteAllText(SessionFile, "{ not json");
+                File.WriteAllText(SessionFile, content);
 
                 Assert.IsNull(new FileCoordinatorContext().GetPreviousSessionContext());
 
-                Assert.IsFalse(File.Exists(SessionFile), "the next save must not overwrite the unparsable file");
+                Assert.IsFalse(File.Exists(SessionFile), "the next save must not overwrite the file");
                 var preserved = Directory.GetFiles(directory, $"{SessionFile}.unreadable-*").Single();
-                Assert.AreEqual("{ not json", File.ReadAllText(preserved));
+                Assert.AreEqual(content, File.ReadAllText(preserved));
+            });
+        }
+
+        [TestMethod]
+        public void ValidSessionFile_IsRestoredAndLeftInPlace()
+        {
+            InTemporaryDirectory(directory =>
+            {
+                const string content = @"{ ""BotContexts"": [{ ""spreadConfiguration"": { ""BaseMarket"": ""BTC"" }, ""LatestMarketData"": { ""Symbol"": ""NMR/BTC"" } }], ""DustPerMarket"": {} }";
+                File.WriteAllText(SessionFile, content);
+
+                var session = new FileCoordinatorContext().GetPreviousSessionContext();
+
+                Assert.AreEqual("NMR/BTC", session.BotContexts.Single().LatestMarketData.Symbol);
+                Assert.AreEqual(content, File.ReadAllText(SessionFile));
             });
         }
 
