@@ -1,5 +1,6 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SpreadBot.Infrastructure;
+using System.IO;
 
 namespace SpreadBot.Tests
 {
@@ -28,6 +29,44 @@ namespace SpreadBot.Tests
             Assert.AreEqual(
                 "b42af09057bac1e2d41708e48a902e09b5ff7f12ab428a4fe86653c73dd248fb82f948a549f7b791a5b41915ee4d1ec3935357e4e2317250d0372afa2ebeeb3a",
                 "The quick brown fox jumps over the lazy dog".Sign("key"));
+        }
+
+        [TestMethod]
+        public void WriteAllTextAtomic_ReplacesExistingFileAndLeavesNoTempFile()
+        {
+            var directory = Directory.CreateTempSubdirectory("spreadbot-tests-").FullName;
+            try
+            {
+                var path = Path.Combine(directory, "context.json");
+                File.WriteAllText(path, "old contents that are longer than the new ones");
+
+                Extensions.WriteAllTextAtomic(path, "{\"new\":true}");
+
+                Assert.AreEqual("{\"new\":true}", File.ReadAllText(path));
+                CollectionAssert.AreEqual(new[] { path }, Directory.GetFiles(directory));
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        [TestMethod]
+        public void WriteAllTextAtomic_CreatesMissingFile()
+        {
+            var directory = Directory.CreateTempSubdirectory("spreadbot-tests-").FullName;
+            try
+            {
+                var path = Path.Combine(directory, "profit.json");
+
+                Extensions.WriteAllTextAtomic(path, "{}");
+
+                Assert.AreEqual("{}", File.ReadAllText(path));
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
         }
     }
 }

@@ -85,10 +85,10 @@ namespace SpreadBot.Infrastructure
                     netProfitPerMarket[log.Market] = marketProfit + (log.Profit);
 
                     //Write to files
-                    File.WriteAllText(PROFIT_PER_CONFIGURATION_FILE_PATH,
+                    Extensions.WriteAllTextAtomic(PROFIT_PER_CONFIGURATION_FILE_PATH,
                         JsonConvert.SerializeObject(netProfitPerSpreadConfiguration, Formatting.Indented));
 
-                    File.WriteAllText(PROFIT_PER_MARKET_FILE_PATH,
+                    Extensions.WriteAllTextAtomic(PROFIT_PER_MARKET_FILE_PATH,
                         JsonConvert.SerializeObject(netProfitPerMarket, Formatting.Indented));
                 }
                 catch (Exception e)

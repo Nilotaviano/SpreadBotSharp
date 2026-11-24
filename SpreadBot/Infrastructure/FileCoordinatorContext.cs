@@ -150,7 +150,7 @@ namespace SpreadBot.Infrastructure
                     DustPerMarket = new Dictionary<string, decimal>(this.DustPerMarket)
                 };
 
-                File.WriteAllText(FILE_NAME, JsonConvert.SerializeObject(savedData, Formatting.Indented));
+                Extensions.WriteAllTextAtomic(FILE_NAME, JsonConvert.SerializeObject(savedData, Formatting.Indented));
             } catch (Exception e)
             {
                 Logger.Instance.LogError($"Could not save coordinator context. Exception: {e}");

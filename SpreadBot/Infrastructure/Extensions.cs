@@ -56,6 +56,25 @@ namespace SpreadBot.Infrastructure
                 return limit;
         }
 
+        /// <summary>
+        /// Writes to a temporary file in the same directory, flushes it to disk, then renames it over <paramref name="path"/>,
+        /// so a crash mid-write leaves either the previous file or the new one, never a truncated file.
+        /// </summary>
+        public static void WriteAllTextAtomic(string path, string contents)
+        {
+            var tempPath = path + ".tmp";
+
+            using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(contents);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(tempPath, path, overwrite: true);
+        }
+
         public static string ToLocalFilePath(this string value)
         {
             return Path.Combine(Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName), value);
