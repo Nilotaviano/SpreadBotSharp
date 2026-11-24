@@ -328,15 +328,26 @@ namespace SpreadBot.Infrastructure
 
         private void RunPendingResyncs()
         {
-            int covered;
-            do
+            try
             {
-                covered = System.Threading.Volatile.Read(ref pendingResyncs);
-                ResyncOnce();
+                int covered;
+                do
+                {
+                    covered = System.Threading.Volatile.Read(ref pendingResyncs);
+                    ResyncOnce();
+                }
+                while (System.Threading.Interlocked.Add(ref pendingResyncs, -covered) != 0);
             }
-            while (System.Threading.Interlocked.Add(ref pendingResyncs, -covered) != 0);
-
-            resyncTimer.Start();
+            catch
+            {
+                //Left above zero, the count would make every later request wait for a run that never comes
+                System.Threading.Interlocked.Exchange(ref pendingResyncs, 0);
+                throw;
+            }
+            finally
+            {
+                resyncTimer.Start();
+            }
         }
 
         private void ResyncOnce()

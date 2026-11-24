@@ -5,6 +5,7 @@ using SpreadBot.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Tests
@@ -230,13 +231,52 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public async Task GetOrder_ClosedWithFillsTheTradesDoNotCoverYet_IsRetriedLater()
+        public async Task GetOrderByClientId_CancelledWithPartialFills_TakesTheFeesFromItsTrades()
+        {
+            // The lookup of an order whose placement was unknown, and a cancel that raced fills, both close it from REST
+            var answer = FilledWithoutFees(4);
+            answer.status = "canceled";
+            var exchange = Exchange();
+            exchange.Setup(e => e.FetchOrder(null, Symbol, It.IsAny<IDictionary<string, object>>())).ReturnsAsync(answer);
+            exchange
+                .Setup(e => e.FetchOrderTrades("42", Symbol, It.IsAny<long?>(), It.IsAny<long?>(), It.IsAny<IDictionary<string, object>>()))
+                .ReturnsAsync(new List<ccxt.Trade>
+                {
+                    new ccxt.Trade { order = "42", symbol = Symbol, amount = 4, fees = new List<ccxt.Fee> { new ccxt.Fee { cost = 0.004, currency = "NMR" }, new ccxt.Fee { cost = 0.0000002, currency = "BTC" } } }
+                });
+
+            var order = await new CcxtExchange(exchange.Object).GetOrderByClientId("client", Symbol);
+
+            Assert.AreEqual(OrderStatus.CLOSED, order.Status);
+            Assert.AreEqual(0.004m, order.CoinCommission);
+            Assert.AreEqual(0.0000002m, order.Commission);
+        }
+
+        [TestMethod]
+        public async Task GetOrder_FilledInMoreTradesThanOneLookupReturns_BooksTheFeesItShows()
+        {
+            // Retrying would never show more, so the close would never be booked
+            var exchange = Exchange();
+            exchange.Setup(e => e.FetchOrder("42", Symbol, It.IsAny<IDictionary<string, object>>())).ReturnsAsync(FilledWithoutFees(2000));
+            exchange
+                .Setup(e => e.FetchOrderTrades("42", Symbol, It.IsAny<long?>(), 1000, It.IsAny<IDictionary<string, object>>()))
+                .ReturnsAsync(Enumerable.Range(0, 1000).Select(_ => Trade(1, 0.001, "NMR")).ToList());
+
+            var order = await new CcxtExchange(exchange.Object).GetOrder("42", Symbol);
+
+            Assert.AreEqual(1m, order.CoinCommission);
+        }
+
+        [TestMethod]
+        [DataRow(0)]
+        [DataRow(1)]
+        public async Task GetOrder_ClosedWithFillsTheTradesDoNotCoverYet_IsRetriedLater(int tradesSoFar)
         {
             var exchange = Exchange();
             exchange.Setup(e => e.FetchOrder("42", Symbol, It.IsAny<IDictionary<string, object>>())).ReturnsAsync(FilledWithoutFees(10));
             exchange
                 .Setup(e => e.FetchOrderTrades("42", Symbol, It.IsAny<long?>(), It.IsAny<long?>(), It.IsAny<IDictionary<string, object>>()))
-                .ReturnsAsync(new List<ccxt.Trade> { Trade(4, 0.004, "NMR") });
+                .ReturnsAsync(Enumerable.Range(0, tradesSoFar).Select(_ => Trade(4, 0.004, "NMR")).ToList());
 
             var error = await Assert.ThrowsExactlyAsync<ApiException>(() => new CcxtExchange(exchange.Object).GetOrder("42", Symbol));
 

@@ -18,6 +18,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private const int SignificantDigitsPrecisionMode = 3;
         private const int TickSizePrecisionMode = 4;
         private const decimal DefaultFeeRate = 0.001m;
+        //Binance's myTrades returns at most 1000
+        private const int MaxTradesPerLookup = 1000;
+        private const decimal AmountTolerance = 0.000000001m;
         //Covers clock drift and the lookup's own latency on top of the exchange's recvWindow
         private static readonly TimeSpan OrderRequestLifetimeMargin = TimeSpan.FromSeconds(50);
         //Exchanges without a recvWindow don't bound when a delayed request may still be accepted; this is a generous guess
@@ -146,17 +149,27 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         //Status, tick and minimum size change (halts, delistings, filter updates), so every call reloads them
         public async Task<IReadOnlyList<MarketData>> GetMarkets()
         {
+            var before = tradedMarkets;
+            var lastLoad = exchange.marketsLoading;
+
             try
             {
                 await LoadMarkets(reload: true);
             }
             //Failing would fail the whole resync, balances and orders included
-            catch (ApiException e)
+            catch (Exception e)
             {
-                Logger.Instance.LogError($"Reloading markets failed, keeping the ones loaded before: {e.ApiErrorType} {e.Message}");
+                //ccxt keeps the failed load, and its methods await it before most requests: they'd all fail until a reload succeeds
+                exchange.marketsLoading = lastLoad;
+                Logger.Instance.LogError($"Reloading markets failed, keeping the ones loaded before: {e.GetType().Name}: {e.Message}");
             }
 
-            return tradedMarkets.Select(ToMarketData).ToList();
+            var reloaded = tradedMarkets;
+            //A market the reload no longer lists (delisted) would otherwise keep its last status
+            var gone = before.Select(m => m.symbol).Except(reloaded.Select(m => m.symbol))
+                .Select(symbol => new MarketData { Symbol = symbol, Status = EMarketStatus.Offline });
+
+            return reloaded.Select(ToMarketData).Concat(gone).ToList();
         }
 
         //The typed LoadMarkets can't reload
@@ -167,6 +180,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 .Select(market => new ccxt.MarketInterface(market))
                 .Where(m => m.spot && quoteCurrencies.Contains(m.quote))
                 .ToList();
+
+            if (traded.Count == 0 && tradedMarkets.Count > 0)
+            {
+                Logger.Instance.LogError($"Reloading markets listed none with quote {string.Join(",", quoteCurrencies)}; keeping the ones loaded before");
+                return;
+            }
 
             tradedMarkets = traded;
             watchedSymbols = traded.Where(m => m.active != false).Select(m => (object)m.symbol).ToList();
@@ -204,11 +223,18 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             if (order.status == "open" || order.status == null || !(order.filled > 0) || Fees(order).Any(IsKnown))
                 return ToOrderData(order);
 
-            var trades = await Call(() => exchange.FetchOrderTrades(order.id, order.symbol));
+            var trades = await Call(() => exchange.FetchOrderTrades(order.id, order.symbol, null, MaxTradesPerLookup));
             var traded = trades.Sum(t => ToDecimal(t.amount) ?? 0);
             var filled = ToDecimal(order.filled) ?? 0;
-            if (traded < filled)
-                throw new ApiException(ApiErrorType.RetryLater, $"Order {order.id} on {order.symbol} filled {filled}, but its trades show {traded} so far, so its fees aren't known yet");
+            //Each amount crossed double -> decimal on its own, so their sum may miss the fill by a rounding error
+            if (filled - traded > filled * AmountTolerance)
+            {
+                //Retrying won't show more trades than one lookup returns; their fees are as close as it gets
+                if (trades.Count >= MaxTradesPerLookup)
+                    Logger.Instance.LogError($"Order {order.id} on {order.symbol} filled {filled} in more than {MaxTradesPerLookup} trades; booking the fees of the {traded} they show");
+                else
+                    throw new ApiException(ApiErrorType.RetryLater, $"Order {order.id} on {order.symbol} filled {filled}, but its trades show {traded} so far, so its fees aren't known yet");
+            }
 
             order.fees = trades.SelectMany(trade => trade.fees?.Count > 0 ? trade.fees : trade.fee.HasValue ? new List<ccxt.Fee> { trade.fee.Value } : new List<ccxt.Fee>()).ToList();
             order.fee = null;
@@ -323,6 +349,14 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             Task.Factory.StartNew(async () =>
             {
                 var interrupted = false;
+                var reportOnFirstUpdate = false;
+
+                void reportInterruption(string reason)
+                {
+                    Logger.Instance.LogMessage($"{name} stream {reason}");
+                    foreach (var callback in onStreamInterruptedCallbacks)
+                        callback();
+                }
 
                 while (!streams.IsCancellationRequested)
                 {
@@ -334,22 +368,29 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                         //subscribe again: a resync from then on catches what it missed
                         if (interrupted)
                         {
-                            await Task.WhenAny(receiving, Task.Delay(ResubscribeGrace));
+                            await Task.WhenAny(receiving, Task.Delay(ResubscribeGrace, streams.Token));
 
-                            if (!receiving.IsFaulted)
+                            if (!receiving.IsFaulted && !streams.IsCancellationRequested)
                             {
                                 interrupted = false;
-                                Logger.Instance.LogMessage($"{name} stream recovered");
-                                foreach (var callback in onStreamInterruptedCallbacks)
-                                    callback();
+                                //Only an update proves the subscription is live, so it reports once more
+                                reportOnFirstUpdate = !receiving.IsCompleted;
+                                reportInterruption("recovered");
                             }
                         }
 
                         await receiving;
+
+                        if (reportOnFirstUpdate)
+                        {
+                            reportOnFirstUpdate = false;
+                            reportInterruption("delivered its first update since recovering");
+                        }
                     }
                     catch (Exception e) when (!streams.IsCancellationRequested)
                     {
                         interrupted = true;
+                        reportOnFirstUpdate = false;
                         Logger.Instance.LogError($"{name} stream failed, retrying in {StreamRetryDelay.TotalSeconds}s: {e.Message}");
 
                         try

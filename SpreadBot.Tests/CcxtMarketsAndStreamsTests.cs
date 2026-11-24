@@ -88,6 +88,97 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task GetMarkets_AFailedReload_LeavesCcxtsLastGoodLoadForItsOwnCalls()
+        {
+            // ccxt awaits marketsLoading before most requests; left faulted, every request would fail until a reload succeeds
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(false, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
+            using var adapter = new CcxtExchange(exchange.Object);
+            await adapter.Setup(new[] { "BTC" });
+            var lastGood = Markets(Market("NMR/BTC"));
+            exchange.Object.marketsLoading = lastGood;
+            exchange
+                .Setup(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>()))
+                .Returns(() =>
+                {
+                    var failed = Task.FromException<IDictionary<string, object>>(new ccxt.RequestTimeout("binance timed out"));
+                    exchange.Object.marketsLoading = failed;
+                    return failed;
+                });
+
+            await adapter.GetMarkets();
+
+            Assert.AreSame(lastGood, exchange.Object.marketsLoading);
+        }
+
+        [TestMethod]
+        public async Task GetMarkets_ReportsAMarketTheReloadNoLongerListsAsOffline()
+        {
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(false, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC"), Market("ETH/BTC")));
+            exchange.Setup(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("ETH/BTC")));
+            using var adapter = new CcxtExchange(exchange.Object);
+            await adapter.Setup(new[] { "BTC" });
+
+            var markets = (await adapter.GetMarkets()).ToDictionary(m => m.Symbol);
+
+            Assert.AreEqual(EMarketStatus.Offline, markets["NMR/BTC"].Status);
+            Assert.AreEqual(EMarketStatus.Online, markets["ETH/BTC"].Status);
+        }
+
+        [TestMethod]
+        public async Task GetMarkets_AReloadListingNoMarketsKeepsTheOnesLoadedBefore()
+        {
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(false, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
+            exchange.Setup(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>())).Returns(Markets());
+            using var adapter = new CcxtExchange(exchange.Object);
+            await adapter.Setup(new[] { "BTC" });
+
+            var market = (await adapter.GetMarkets()).Single();
+
+            Assert.AreEqual("NMR/BTC", market.Symbol);
+            Assert.AreEqual(EMarketStatus.Online, market.Status);
+        }
+
+        [TestMethod]
+        public async Task GetTickers_AfterAReload_LeavesOutInactiveMarkets()
+        {
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(false, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC"), Market("ETH/BTC")));
+            exchange.Setup(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC", active: false), Market("ETH/BTC")));
+            IList<object> requested = null;
+            exchange
+                .Setup(e => e.FetchTickers(It.IsAny<IList<object>>(), It.IsAny<IDictionary<string, object>>()))
+                .Callback((IList<object> symbols, IDictionary<string, object> _) => requested = symbols)
+                .ReturnsAsync(new ccxt.Tickers { tickers = new Dictionary<string, ccxt.Ticker>() });
+            using var adapter = new CcxtExchange(exchange.Object);
+            await adapter.Setup(new[] { "BTC" });
+
+            await adapter.GetMarkets();
+            await adapter.GetTickers();
+
+            CollectionAssert.AreEqual(new object[] { "ETH/BTC" }, requested.ToArray());
+        }
+
+        [TestMethod]
+        public async Task PriceTick_InDecimalPlacesMode_IsOneUnitOfTheLastPlace()
+        {
+            var exchange = Exchange();
+            exchange.Object.precisionMode = 2;
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(It.IsAny<bool?>(), It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC", tick: 8)));
+            using var adapter = new CcxtExchange(exchange.Object);
+            await adapter.Setup(new[] { "BTC" });
+
+            Assert.AreEqual(0.00000001m, (await adapter.GetMarkets()).Single().PriceTick);
+        }
+
+        [TestMethod]
         [DataRow(0.0)]
         [DataRow(double.NaN)]
         public async Task MarketWithoutAUsableTick_HasNone(double tick)
@@ -122,6 +213,31 @@ namespace SpreadBot.Tests
             await adapter.Setup(new[] { "BTC" });
 
             WaitUntil(() => Volatile.Read(ref interruptions) == 1, "the recovered order stream reports the interruption");
+        }
+
+        [TestMethod]
+        public async Task StreamRecoveredOnlyByTheGrace_ReportsAgainOnItsFirstUpdate()
+        {
+            // A pending watch isn't proof the subscription is live; its first update is, and updates before it may have been missed
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(It.IsAny<bool?>(), It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
+            var firstUpdate = new TaskCompletionSource<List<ccxt.Order>>();
+            exchange
+                .SetupSequence(e => e.WatchOrders(It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<long?>(), It.IsAny<IDictionary<string, object>>()))
+                .ThrowsAsync(new ccxt.NetworkError("binance connection closed"))
+                .Returns(firstUpdate.Task)
+                .Returns(new TaskCompletionSource<List<ccxt.Order>>().Task);
+            using var adapter = new CcxtExchange(exchange.Object) { StreamRetryDelay = TimeSpan.FromMilliseconds(10), ResubscribeGrace = TimeSpan.FromMilliseconds(50) };
+            var interruptions = 0;
+            adapter.OnStreamInterrupted(() => Interlocked.Increment(ref interruptions));
+
+            await adapter.Setup(new[] { "BTC" });
+            WaitUntil(() => Volatile.Read(ref interruptions) == 1, "the grace reports the recovery");
+
+            firstUpdate.SetResult(new List<ccxt.Order>());
+
+            WaitUntil(() => Volatile.Read(ref interruptions) == 2, "the first update reports it again");
         }
 
         [TestMethod]

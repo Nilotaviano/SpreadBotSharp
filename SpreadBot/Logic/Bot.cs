@@ -240,7 +240,17 @@ namespace SpreadBot.Logic
                     //Nevermind the above, the WS message may be lost
                     var currentOrderId = botContext.CurrentOrderData?.Id;
                     if (currentOrderId != null)
-                        await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrder(currentOrderId, MarketSymbol));
+                    {
+                        try
+                        {
+                            await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrder(currentOrderId, MarketSymbol));
+                        }
+                        //e.g. its trades don't show its fees yet; the next cancel or resync fetches it again
+                        catch (ApiException lookupError)
+                        {
+                            LogError($"Fetching order {currentOrderId}, which is no longer open, failed: {lookupError.ApiErrorType} {lookupError.Message}");
+                        }
+                    }
                     else
                         LogMessage("ORDER_NOT_OPEN with no current order: it was already closed and processed");
                     break;
