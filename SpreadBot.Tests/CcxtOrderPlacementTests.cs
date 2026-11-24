@@ -160,6 +160,21 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task AcknowledgementThatCannotBeMapped_ReportsAnUnknownState()
+        {
+            var acknowledgement = Order("open");
+            acknowledgement.timestamp = long.MaxValue; // out of DateTimeOffset's range
+            var exchange = Exchange();
+            exchange
+                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
+                .ReturnsAsync(acknowledgement);
+
+            var error = await Assert.ThrowsExactlyAsync<OrderStateUnknownException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
+
+            Assert.AreEqual(OrderStatus.UNKNOWN, error.Order.Status);
+        }
+
+        [TestMethod]
         public void OrderRequestLifetime_IsTheRecvWindowPlusAMargin()
         {
             // ccxt's Binance signs requests with a 10 s recvWindow

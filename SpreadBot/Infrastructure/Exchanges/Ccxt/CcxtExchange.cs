@@ -45,7 +45,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         {
             this.exchange = exchange;
 
-            //ccxt's C# fetch never applies its timeout option, so requests would wait for HttpClient's 100 s default
+            //ccxt's C# fetch (4.5.94) never applies its timeout option (10 s by default), so requests would wait for HttpClient's 100 s default
             exchange.httpClient.Timeout = TimeSpan.FromMilliseconds(Convert.ToDouble(exchange.timeout));
         }
 
@@ -220,7 +220,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             {
                 throw ToApiException(e);
             }
-            //ccxt wraps only HttpRequestException; a timeout, a broken response stream or a response it can't parse escapes as is
+            //ccxt's fetch wraps only HttpRequestException/WebException/HttpListenerException; a timeout, a broken response stream
+            //or a response ccxt can't parse escapes as is
             catch (Exception e)
             {
                 throw new OrderStateUnknownException(sent, $"Creating {side} {type} order {clientOrderId} on {marketSymbol} failed without an answer: {e.GetType().Name}: {e.Message}");
@@ -229,7 +230,15 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             if (order.status == null || order.id == null)
                 throw new OrderStateUnknownException(sent, $"Order {clientOrderId} on {marketSymbol} was acknowledged without a status or id (id: {order.id}, status: {order.status})");
 
-            return ToOrderData(order);
+            try
+            {
+                return ToOrderData(order);
+            }
+            //The exchange accepted it: failing as a plain error would make the caller place it again
+            catch (Exception e)
+            {
+                throw new OrderStateUnknownException(sent, $"Order {clientOrderId} on {marketSymbol} was acknowledged with an answer that can't be mapped: {e.GetType().Name}: {e.Message}");
+            }
         }
 
         //Binance allows up to 36 characters from [.A-Za-z0-9:/_-]
@@ -302,7 +311,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             {
                 throw ToApiException(e);
             }
-            //ccxt wraps only HttpRequestException; a timeout or a broken response stream is what its RequestTimeout/NetworkError would be
+            //ccxt's fetch wraps only HttpRequestException/WebException/HttpListenerException; a timeout or a broken response stream
+            //is what its RequestTimeout/NetworkError would be
             catch (Exception e) when (e is OperationCanceledException || e is IOException)
             {
                 throw new ApiException(ApiErrorType.RetryLater, $"{e.GetType().Name}: {e.Message}");
