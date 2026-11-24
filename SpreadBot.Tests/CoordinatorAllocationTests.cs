@@ -89,6 +89,21 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void DoesNotAllocate_AMarketWithoutAPriceTick()
+        {
+            var exchange = new MockExchange(Balance("BTC", 1, 1));
+            exchange.Mock.Setup(e => e.GetMarkets()).ReturnsAsync(new List<MarketData> { new MarketData { Symbol = "NMR/BTC", Status = EMarketStatus.Online } });
+            exchange.WithTickers(MockExchange.Ticker("NMR/BTC", ask: 0.00010101m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            repository.StartConsumingData();
+            var bots = new List<Bot>();
+
+            new Coordinator(Settings(Configuration(0.3m)), repository, InMemoryContext(bots).Object).Start();
+
+            Assert.AreEqual(0, bots.Count);
+        }
+
+        [TestMethod]
         public void BotSavedWhileFinishing_IsNotRestoredAndItsCoinsBecomeDust()
         {
             var (_, repository) = StartedRepository(0, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");

@@ -37,6 +37,9 @@ namespace SpreadBot
             watcher.Filter = Path.GetFileName(appSettingsPath);
             watcher.EnableRaisingEvents = true;
 
+            //The exchange watches the markets of these base markets from Setup on; a base market added later needs a restart
+            var watchedBaseMarkets = appSettings.SpreadConfigurations.Select(c => c.BaseMarket).Distinct().ToList();
+
             void reloadAppSettings(object sender, FileSystemEventArgs e)
             {
                 try
@@ -45,6 +48,11 @@ namespace SpreadBot
 
                     appSettings.Reload(updatedAppSettings);
                     Logger.Instance.LogMessage("App Settings reloaded");
+
+                    var unwatched = (updatedAppSettings.SpreadConfigurations ?? Enumerable.Empty<SpreadConfiguration>())
+                        .Select(c => c.BaseMarket).Distinct().Except(watchedBaseMarkets).ToList();
+                    if (unwatched.Count > 0)
+                        Logger.Instance.LogError($"Base markets {string.Join(", ", unwatched)} weren't configured at startup, so their markets aren't watched; restart to trade them");
                 }
                 catch (Exception ex)
                 {
@@ -57,7 +65,7 @@ namespace SpreadBot
             NetProfitRecorder.Instance.AppSettings = appSettings;
 
             var exchange = new CcxtExchange(appSettings.ExchangeId, appSettings.ApiKey, appSettings.ApiSecret, appSettings.UseSandbox);
-            await exchange.Setup(appSettings.SpreadConfigurations.Select(c => c.BaseMarket).Distinct());
+            await exchange.Setup(watchedBaseMarkets);
 
             var dataRepository = new DataRepository(exchange, appSettings);
             dataRepository.StartConsumingData();

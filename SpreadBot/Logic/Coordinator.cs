@@ -198,7 +198,8 @@ namespace SpreadBot.Logic
 
         private bool IsViableMarket(MarketData market)
         {
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online;
+            //The strategies can't quote a market without a tick, so its bot would hold a slot and its balance forever
+            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && market.PriceTick > 0;
         }
 
         private void ReportBalance()
