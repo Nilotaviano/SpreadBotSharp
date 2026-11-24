@@ -16,12 +16,12 @@ namespace SpreadBot.Logic
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
         private readonly ICoordinatorContext context;
+        private readonly BalanceLedger balanceLedger;
         private readonly Guid guid;
-        private ConcurrentDictionary<string, decimal> availableBalanceForBaseMarket;
         private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
-        private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
-        private readonly object evaluateMarketsLock = new object();
+        //Allocation decisions read the bots and balances, so allocating and unallocating must not interleave
+        private readonly object allocationLock = new object();
 
         public ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfiguration { get; } = new ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>>();
 
@@ -30,9 +30,8 @@ namespace SpreadBot.Logic
             this.appSettings = appSettings;
             this.dataRepository = dataRepository;
             this.context = context;
+            this.balanceLedger = new BalanceLedger(dataRepository, context);
             this.guid = Guid.NewGuid();
-
-            availableBalanceForBaseMarket = new ConcurrentDictionary<string, decimal>();
 
             this.appSettings.Reloaded += AppSettings_Reloaded;
 
@@ -49,14 +48,6 @@ namespace SpreadBot.Logic
             configurationsByBaseMarket?.Clear();
 
             configurationsByBaseMarket = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
-
-            // TODO This may break when restoring bots for different base markets
-            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-            {
-                //Total, not Available: restored bots' open buy orders lock funds that AllocateBot subtracts from this again
-                var exchangeTotal = this.dataRepository.BalancesData.TryGetValue(baseMarket, out var balance) ? balance.Total : 0;
-                availableBalanceForBaseMarket.TryAdd(baseMarket, exchangeTotal);
-            }
         }
 
         public void Start()
@@ -85,7 +76,7 @@ namespace SpreadBot.Logic
             {
                 foreach (var botContext in previousSession.BotContexts)
                 {
-                    var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory);
+                    var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory, balanceLedger);
 
                     var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(bot.botContext.spreadConfiguration, key => new ConcurrentDictionary<string, bool>());
 
@@ -105,7 +96,7 @@ namespace SpreadBot.Logic
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
             //Summaries and tickers are consumed on separate threads; evaluating concurrently could grant the same balance twice
-            lock (evaluateMarketsLock)
+            lock (allocationLock)
                 EvaluateMarketsSerialized(marketDeltas);
         }
 
@@ -159,7 +150,7 @@ namespace SpreadBot.Logic
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
                         var existingDust = GetInheritableDust(market);
-                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
+                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory, balanceLedger);
 
                         AllocateBot(bot);
                     }
@@ -172,18 +163,13 @@ namespace SpreadBot.Logic
 
         private void AllocateBot(Bot bot)
         {
-            ExecuteBalanceRelatedAction($"allocating bot {bot.Guid}", () =>
+            lock (allocationLock)
             {
                 context.AddBot(bot);
-                availableBalanceForBaseMarket.AddOrUpdate(
-                    bot.BaseMarket,
-                    bot.Balance * -1,
-                    (b, oldValue) => oldValue - bot.Balance
-                );
+                Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Unallocated balance: {balanceLedger.UnallocatedBaseBalance(bot.BaseMarket)}{bot.BaseMarket}");
+            }
 
-                Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
-                bot.Start();
-            });
+            bot.Start();
         }
 
         private bool IsViableMarket(MarketData market)
@@ -193,14 +179,8 @@ namespace SpreadBot.Logic
 
         private void ReportBalance()
         {
-            ExecuteBalanceRelatedAction("reporting balance", () =>
-            {
-                foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                {
-                    decimal balanceForBaseMarket = context.GetBots().Where(b => b.BaseMarket == baseMarket).Aggregate(availableBalanceForBaseMarket[baseMarket], (value, bot) => value + bot.Balance + (bot.HeldAmount * bot.LastTradeRate));
-                    BalanceReporter.Instance.ReportBalance(balanceForBaseMarket, baseMarket);
-                }
-            });
+            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
+                BalanceReporter.Instance.ReportBalance(balanceLedger.TotalValue(baseMarket), baseMarket);
         }
 
         internal static (decimal, decimal) GetMarketOrderKey(MarketData marketData)
@@ -237,26 +217,7 @@ namespace SpreadBot.Logic
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
             return context.GetBotCount() < appSettings.MaxNumberOfBots
-                && availableBalanceForBaseMarket.TryGetValue(spreadConfiguration.BaseMarket, out var balance) 
-                && balance > spreadConfiguration.AllocatedAmountOfBaseCurrency
-                && GetUnallocatedExchangeBalance(spreadConfiguration.BaseMarket) > spreadConfiguration.AllocatedAmountOfBaseCurrency;
-        }
-
-        /// <summary>
-        /// The exchange's available balance minus what running bots hold, so drift in the tracked balance
-        /// (fees, manual trades, withdrawals) can't allocate money that isn't there.
-        /// </summary>
-        private decimal GetUnallocatedExchangeBalance(string baseMarket)
-        {
-            if (!dataRepository.BalancesData.TryGetValue(baseMarket, out var exchangeBalance))
-                return 0;
-
-            //Funds of bots with an open buy order are locked, so the exchange already excludes them from Available
-            var heldByBots = context.GetBots()
-                .Where(b => b.BaseMarket == baseMarket && b.botContext.BotState != BotState.BuyOrderActive)
-                .Sum(b => b.Balance);
-
-            return exchangeBalance.Amount - heldByBots;
+                && balanceLedger.UnallocatedBaseBalance(spreadConfiguration.BaseMarket) > spreadConfiguration.AllocatedAmountOfBaseCurrency;
         }
 
         /// <summary>
@@ -267,13 +228,7 @@ namespace SpreadBot.Logic
         private decimal GetInheritableDust(MarketData market)
         {
             var recordedDust = context.RemoveDustForMarket(market.Symbol);
-            var availableCoins = dataRepository.BalancesData.TryGetValue(market.Target, out var balance) ? balance.Amount : 0;
-
-            //Coins of other bots on the same coin are part of Available unless locked in their sell order
-            var heldByOtherBots = context.GetBots()
-                .Where(b => b.botContext.LatestMarketData.Target == market.Target && b.botContext.BotState != BotState.SellOrderActive)
-                .Sum(b => b.HeldAmount);
-            var inheritable = Math.Max(availableCoins - heldByOtherBots, 0);
+            var inheritable = balanceLedger.UnclaimedCoins(market.Target);
 
             if (recordedDust <= inheritable)
                 return recordedDust;
@@ -285,7 +240,7 @@ namespace SpreadBot.Logic
 
         private void UnallocateBot(Bot bot)
         {
-            ExecuteBalanceRelatedAction($"unallocating bot {bot.Guid}", () =>
+            lock (allocationLock)
             {
                 bool removeAllocatedBot = context.RemoveBot(bot.Guid);
                 bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfiguration[bot.botContext.spreadConfiguration].TryRemove(bot.MarketSymbol, out _);
@@ -299,12 +254,11 @@ namespace SpreadBot.Logic
                 Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
                 Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.GetHashCode()}");
 
-                availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
-                Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
+                Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}");
 
                 if (bot.HeldAmount > 0)
                     context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
-            });
+            }
         }
 
         internal static IComparer<(decimal, decimal)> GetMarketComparer()
@@ -318,27 +272,6 @@ namespace SpreadBot.Logic
                 //    return key2.Item2.CompareTo(key1.Item2);
                 //return result;
             });
-        }
-
-        private void ExecuteBalanceRelatedAction(string description, Action action)
-        {
-            balanceSemaphore.Wait();
-
-            try
-            {
-                Logger.Instance.LogMessage($"Lock acquired for {description}");
-
-                action();
-            } catch (Exception e)
-            {
-                Logger.Instance.LogError($"Error while {description}. Exception: {e}");
-                throw;
-            }
-            finally
-            {
-                balanceSemaphore.Release();
-                Logger.Instance.LogMessage($"Lock released after {description}");
-            }
         }
 
         public void Dispose()

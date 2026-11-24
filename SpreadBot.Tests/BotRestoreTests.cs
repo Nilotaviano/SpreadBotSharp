@@ -69,7 +69,7 @@ namespace SpreadBot.Tests
             dataRepository.StartConsumingData();
 
             var context = RestoredContextWithOpenSellOrder();
-            var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory());
+            var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
             bot.Start();
 
             exchange.Mock.Verify(e => e.GetOrderData(SellOrderId), Times.Once);
@@ -120,7 +120,7 @@ namespace SpreadBot.Tests
             dataRepository.StartConsumingData();
 
             var context = RestoredContextWithOpenSellOrder();
-            var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory());
+            var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
             bot.Start();
 
             WaitUntil(() => context.BotState == BotState.Buying && context.SemaphoreCurrentCount == 1, "the sell fill is processed");
@@ -140,7 +140,7 @@ namespace SpreadBot.Tests
             Assert.IsNull(context.BuyFilledAt);
 
             var before = DateTime.UtcNow;
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory()).Start();
+            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
             var after = DateTime.UtcNow;
 
             Assert.IsTrue(context.BuyFilledAt >= before && context.BuyFilledAt <= after);
@@ -153,7 +153,7 @@ namespace SpreadBot.Tests
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.001m };
             var market = new MarketData { Symbol = Symbol, Precision = 8 };
 
-            var bot = new Bot(dataRepository, configuration, market, 20, _ => { }, new BotStrategiesFactory());
+            var bot = new Bot(dataRepository, configuration, market, 20, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
             bot.Start();
 
             Assert.AreEqual(BotState.Buying, bot.botContext.BotState);

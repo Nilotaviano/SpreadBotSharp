@@ -18,6 +18,7 @@ namespace SpreadBot.Logic
         private readonly Action<Bot> unallocateBotCallback;
 
         private readonly DataRepository dataRepository;
+        private readonly BalanceLedger balanceLedger;
         private IExchange exchange => dataRepository.Exchange;
 
         private readonly IBotStrategy botStrategy;
@@ -28,9 +29,10 @@ namespace SpreadBot.Logic
         private int consecutiveInsufficientFundsRejections;
 
 
-        public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
+        public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, BalanceLedger balanceLedger)
         {
             this.dataRepository = dataRepository;
+            this.balanceLedger = balanceLedger;
             this.botContext = context;
             this.unallocateBotCallback = unallocateBotCallback;
             botStrategy = botStrategiesFactory.GetStrategy();
@@ -40,8 +42,8 @@ namespace SpreadBot.Logic
             processingMessageTimeExceededTimer.AutoReset = false;
         }
 
-        public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
-            : this(dataRepository, new BotContext(spreadConfiguration, marketData, BotState.Buying, existingDust), unallocateBotCallback, botStrategiesFactory)
+        public Bot(DataRepository dataRepository, SpreadConfiguration spreadConfiguration, MarketData marketData, decimal existingDust, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, BalanceLedger balanceLedger)
+            : this(dataRepository, new BotContext(spreadConfiguration, marketData, BotState.Buying, existingDust), unallocateBotCallback, botStrategiesFactory, balanceLedger)
         { }
 
         public Guid Guid => botContext.Guid;
@@ -248,33 +250,54 @@ namespace SpreadBot.Logic
             const decimal tolerance = 0.02m;
 
             consecutiveInsufficientFundsRejections++;
-
             var currency = botContext.LatestMarketData.Target;
-            var balances = await exchange.GetBalanceData();
-            var available = balances.Balances?.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
 
             if (consecutiveInsufficientFundsRejections >= MaxConsecutiveInsufficientFundsRejections)
             {
-                LogUnexpectedError($"Sell rejected for insufficient funds {consecutiveInsufficientFundsRejections} times in a row (exchange shows {available}{currency} available for {HeldAmount}{currency} held); finishing");
-                botContext.HeldAmount = Math.Min(HeldAmount, Math.Max(available, 0));
+                LogUnexpectedError($"Sell rejected for insufficient funds {consecutiveInsufficientFundsRejections} times in a row while holding {HeldAmount}{currency}; finishing");
+
+                try
+                {
+                    botContext.HeldAmount = Math.Min(HeldAmount, await GetUnclaimedCoinsFromExchange(currency));
+                }
+                catch (Exception e)
+                {
+                    LogError($"Could not check the exchange balance before finishing: {e}");
+                }
+
                 await FinishWork();
+                return;
             }
-            else if (available >= HeldAmount)
+
+            var unclaimed = await GetUnclaimedCoinsFromExchange(currency);
+
+            if (unclaimed >= HeldAmount)
             {
-                LogError($"Sell rejected for insufficient funds, but the exchange shows {available}{currency} available for {HeldAmount}{currency} held; retrying");
+                LogError($"Sell rejected for insufficient funds, but the exchange shows {unclaimed}{currency} unclaimed for {HeldAmount}{currency} held; retrying");
             }
-            else if (available >= HeldAmount * (1 - tolerance))
+            else if (unclaimed >= HeldAmount * (1 - tolerance))
             {
-                LogError($"Exchange shows {available}{currency} available but the bot holds {HeldAmount}{currency}; selling the available amount");
-                botContext.HeldAmount = available;
+                LogError($"Exchange shows {unclaimed}{currency} unclaimed but the bot holds {HeldAmount}{currency}; selling the unclaimed amount");
+                botContext.HeldAmount = unclaimed;
             }
             else
             {
                 //Only what the exchange holds can be cleaned up or recorded as dust
-                LogUnexpectedError($"Exchange shows {available}{currency} available but the bot holds {HeldAmount}{currency}, beyond the {tolerance:P0} tolerance; finishing with the available amount");
-                botContext.HeldAmount = Math.Max(available, 0);
+                LogUnexpectedError($"Exchange shows {unclaimed}{currency} unclaimed but the bot holds {HeldAmount}{currency}, beyond the {tolerance:P0} tolerance; finishing with the unclaimed amount");
+                botContext.HeldAmount = unclaimed;
                 await FinishWork();
             }
+        }
+
+        /// <summary>
+        /// Coins available on the exchange (fresh from REST) minus those other bots hold, so this bot never claims their coins.
+        /// </summary>
+        private async Task<decimal> GetUnclaimedCoinsFromExchange(string currency)
+        {
+            var balances = await exchange.GetBalanceData();
+            var available = balances.Balances?.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
+
+            return Math.Max(available - balanceLedger.CoinsHeldByOtherBots(currency, this), 0);
         }
 
         private async Task ProcessMarketData(MarketData marketData)

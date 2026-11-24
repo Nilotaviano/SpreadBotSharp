@@ -128,6 +128,29 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void Allocates_AfterADepositArrives()
+        {
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 0.1m, 0.1m) }, "NMR-BTC");
+            var bots = new List<Bot>();
+            new Coordinator(Settings(Configuration(0.3m)), repository, InMemoryContext(bots).Object).Start();
+            Assert.AreEqual(0, bots.Count, "0.1 BTC can't cover a 0.3 BTC allocation");
+
+            exchange.OnBalance(new BittrexApiBalanceData
+            {
+                Sequence = 2,
+                Delta = new BittrexApiBalanceData.Balance { CurrencySymbol = "BTC", Total = 1m, Available = 1m }
+            });
+            WaitUntil(() => repository.BalancesData["BTC"].Amount == 1m, "the deposit is applied");
+
+            exchange.OnTickers(new BittrexApiTickersData
+            {
+                Sequence = 1,
+                Deltas = new[] { new BittrexApiTickersData.Ticker { Symbol = "NMR-BTC", AskRate = 0.00010101m, BidRate = 0.00009999m, LastTradeRate = 0.0001m } }
+            });
+            WaitUntil(() => bots.Count == 1, "the market is re-evaluated with the new balance");
+        }
+
+        [TestMethod]
         public void InheritedDust_IsCappedAtTheCoinsAvailableOnTheExchange()
         {
             var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("NMR", 2, 2) }, "NMR-BTC");

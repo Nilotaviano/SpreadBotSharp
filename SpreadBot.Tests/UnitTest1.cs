@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges;
@@ -210,7 +210,7 @@ namespace SpreadBot.Tests
                 }
             });
 
-            var bot = new Bot(datarepository, spreadConfiguration, openingMarketData, 0, (bot) => { }, new BotStrategiesFactory());
+            var bot = new Bot(datarepository, spreadConfiguration, openingMarketData, 0, (bot) => { }, new BotStrategiesFactory(), TestLedger.Empty(datarepository));
             bot.Start();
 
             Assert.IsTrue(summariesEvent.WaitOne(TimeSpan.FromSeconds(5)), "summary not delivered");

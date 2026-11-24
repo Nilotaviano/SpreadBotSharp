@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -38,16 +38,21 @@ Wiring is manual in `Program.cs` (no DI container): `BittrexClient` → `DataRep
 **Data flow (`Infrastructure/DataRepository.cs`)** — the hub everything subscribes to.
 - Exchange websocket callbacks (`OnBalance/OnSummaries/OnTickers/OnOrder`) push into one `BlockingCollection` per stream; each is drained by its own background task, which applies sequence checks, merges into the `BalancesData` / `MarketsData` / `OrdersData` caches, and invokes subscribers **synchronously on that consumer thread**.
 - Market updates are partial deltas (summaries vs. tickers vs. market metadata vs. CoinMarketCap quotes); `MergeMarketData` null-coalesces field by field. A new `MarketData` field must be added there or it gets dropped on merge.
-- Order messages require strictly consecutive sequence numbers (gaps are dropped); a REST resync every `ResyncIntervalMs` pauses all consumers (`ManualResetEvent`), refetches everything, resets `lastOrderSequence`, then resumes.
+- Order messages require strictly consecutive sequence numbers: stale/duplicate ones are skipped, and a gap triggers an immediate resync (otherwise every later order message would fail the check). A REST resync — on that trigger or every `ResyncIntervalMs` — pauses all consumers (`ManualResetEvent`), refetches everything, resets `lastOrderSequence`, then resumes; only one runs at a time.
+- Consumer loops run on dedicated threads (`TaskCreationOptions.LongRunning`); don't start blocking loops with `Task.Run`, they pin thread-pool threads.
 - Subscriptions are keyed by `Guid` per handler (market symbol / currency / client order id). Subscribing fires the callback immediately if cached data exists.
 
-**Coordinator (`Logic/Coordinator.cs`)** — subscribes to all market deltas; for each viable market (online, no notice; sorted by `GetMarketComparer`) and each `SpreadConfiguration` for that base market, checks spread/volume/price/pump/tokenized-security filters and available balance, then creates a `Bot` with `AllocatedAmountOfBaseCurrency`. Tracks available balance per base market; allocation/unallocation/balance reporting are serialized by a `SemaphoreQueue`. On unallocation it reclaims the bot's balance and records leftover held coins as "dust" for that market, which the next bot on that market inherits.
+**Coordinator (`Logic/Coordinator.cs`)** — subscribes to all market deltas; for each viable market (online, no notice; sorted by `GetMarketComparer`) and each `SpreadConfiguration` for that base market, checks spread/volume/price/pump/tokenized-security filters and available balance, then creates a `Bot` with `AllocatedAmountOfBaseCurrency`. Evaluation, allocation and unallocation are serialized by one lock (summaries and tickers arrive on different threads). On unallocation it records leftover held coins as "dust" for that market, which the next bot on that market inherits, capped at the coins no other bot claims.
+
+**BalanceLedger (`Logic/BalanceLedger.cs`)** — the only place that decides how much money is free. Exchange balances (`BalanceData.Amount` = Available, `Total`) are the source of truth; bots' `Balance`/`HeldAmount` say which part is theirs. Bots with an open buy order are excluded from the base-currency sum, and bots with an open sell order from the coin sum, because the exchange already excludes locked funds from Available. Used for allocation, inherited dust, balance reporting, and a bot's reconcile after a rejected sell.
 
 **Bot (`Logic/Bot.cs`)** — one per allocated market, state in `BotContext` (`Buying → BuyOrderActive → Bought → SellOrderActive → … → FinishedWork`).
 - `ProcessMessage` is `async void` and serialized per bot by `BotContext.Semaphore` (FIFO `SemaphoreQueue`); a 1-minute timer logs if processing hangs.
 - Market data goes to the strategy; **order-state transitions live in `Bot.ProcessOrderData`** (OPEN → `*OrderActive`; CLOSED → update balance/held amount, then `Bought` / `Buying` / `FinishWork` depending on `MinimumNegotiatedAmount`).
 - `ApiException`s are handled per `ApiErrorType` in `ProcessMessage`. Bittrex error codes → `ApiErrorType` mapping is in `BittrexClient` (the `switch` on the error code).
-- `FinishWork` unsubscribes, market-sells leftover holdings if worth more than `2 × FeeRate × MinimumNegotiatedAmount`, calls back to the Coordinator to unallocate, and records profit.
+- `FinishWork` is idempotent: it unsubscribes, market-sells leftover holdings if worth more than `2 × FeeRate × MinimumNegotiatedAmount`, calls back to the Coordinator to unallocate, and records profit; each step runs even if an earlier one fails. Messages queued behind it see `FinishedWork` and return.
+- `Start` and `ProcessMessage` are `async void` entry points: keep all their work inside the `Task`-returning `StartAsync` / `ProcessMessageAsync`, which sit behind a catch-all — anything escaping an `async void` terminates the process.
+- A sell rejected with `INSUFFICIENT_FUNDS` reconciles `HeldAmount` against a fresh REST balance (minus other bots' coins): within 2% it sells what's there, beyond that or after 3 consecutive rejections it finishes.
 
 **Strategies (`Logic/BotStrategies`)** — `BotStrategiesFactory` always returns `SpreadStrategy`, which dispatches on `BotState` to an `IBotStateStrategy` (`Spread*StateStrategy`). State strategies only react to market data and place/cancel orders through the `executeOrderFunction` callback (which updates `CurrentOrderData` and feeds the result back into `ProcessOrderData`). Sell price is floored at `BoughtPrice × (1 + MinimumProfitPercentage)` until `MinutesForLoss` has elapsed since the buy filled.
 

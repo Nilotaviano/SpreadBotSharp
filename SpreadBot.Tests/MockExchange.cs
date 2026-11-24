@@ -1,6 +1,8 @@
-using Moq;
+﻿using Moq;
+using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
+using SpreadBot.Logic;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
@@ -37,5 +39,14 @@ namespace SpreadBot.Tests
         }
 
         public IExchange Object => Mock.Object;
+    }
+
+    internal static class TestLedger
+    {
+        /// <summary>
+        /// A ledger with no other running bots.
+        /// </summary>
+        public static BalanceLedger Empty(DataRepository dataRepository) =>
+            new BalanceLedger(dataRepository, new Mock<ICoordinatorContext>().Object);
     }
 }

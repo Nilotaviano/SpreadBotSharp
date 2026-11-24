@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
@@ -52,7 +52,7 @@ namespace SpreadBot.Tests
                 }
             };
 
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory()).Start();
+            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
 
             // Bid moved well above our buy limit, so the strategy cancels; the exchange says the order is no longer open
             exchange.OnTickers(new BittrexApiTickersData
