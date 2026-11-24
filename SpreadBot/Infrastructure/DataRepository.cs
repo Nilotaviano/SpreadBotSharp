@@ -164,7 +164,7 @@ namespace SpreadBot.Infrastructure
             Exchange.OnOrder(pendingOrderMessages.Add);
             Exchange.OnStreamInterrupted(RequestResync);
 
-            FetchAllData().Wait();
+            FetchAllData(Exchange.GetMarkets().Result).Wait();
 
             resyncTimer.Start();
 
@@ -238,11 +238,10 @@ namespace SpreadBot.Infrastructure
                 handler?.Invoke(data);
         }
 
-        private async Task FetchAllData()
+        /// <param name="markets">Fetched by the caller first: a markets reload stalls the exchange's other requests, which would fail
+        /// with it, and it can take a request timeout, which mustn't keep the consumers paused</param>
+        private async Task FetchAllData(IReadOnlyList<MarketData> markets)
         {
-            //First: a markets reload stalls the exchange's other requests, which would fail with it
-            var markets = await Exchange.GetMarkets();
-
             var balances = Exchange.GetBalances();
             var tickers = Exchange.GetTickers();
             var openOrders = Exchange.GetOpenOrders();
@@ -367,10 +366,12 @@ namespace SpreadBot.Infrastructure
             {
                 Logger.Instance.LogMessage("Resyncing data");
 
+                var markets = Exchange.GetMarkets().Result;
+
                 //Pauses all consumers that call WaitOne()
                 consumeDataSemaphore.Reset();
 
-                FetchAllData().Wait();
+                FetchAllData(markets).Wait();
 
                 Logger.Instance.LogMessage("Resync completed");
             }

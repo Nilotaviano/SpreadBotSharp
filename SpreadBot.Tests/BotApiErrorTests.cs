@@ -19,7 +19,9 @@ namespace SpreadBot.Tests
         private const string BuyOrderId = "buy-1";
 
         [TestMethod]
-        public void OrderNotOpen_WhenFollowUpLookupFails_IsLoggedInsteadOfCrashing()
+        [DataRow(ApiErrorType.RetryLater)] // e.g. its trades don't show its fees yet: caught in the arm
+        [DataRow(ApiErrorType.UnknownError)] // reaches ProcessMessageAsync's handler
+        public void OrderNotOpen_WhenFollowUpLookupFails_IsLoggedInsteadOfCrashing(ApiErrorType lookupError)
         {
             var exchange = new MockExchange();
             exchange.WithMarkets(Symbol);
@@ -28,7 +30,7 @@ namespace SpreadBot.Tests
                 .ThrowsAsync(new ApiException(ApiErrorType.OrderNotOpen, "ORDER_NOT_OPEN"));
             exchange.Mock
                 .Setup(e => e.GetOrder(BuyOrderId, Symbol))
-                .ThrowsAsync(new ApiException(ApiErrorType.UnknownError, "exchange unavailable"));
+                .ThrowsAsync(new ApiException(lookupError, "exchange unavailable"));
 
             var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 60000 });
             dataRepository.StartConsumingData();
