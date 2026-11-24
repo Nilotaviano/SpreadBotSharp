@@ -97,6 +97,27 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void AllocationFailingPartway_StillStartsTheBotsAlreadyAllocated()
+        {
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA-BTC", "BBB-BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots);
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bot =>
+            {
+                if (bots.Count == 1)
+                    throw new InvalidOperationException("the second allocation fails");
+                bots.Add(bot);
+            });
+
+            Assert.ThrowsExactly<InvalidOperationException>(() => new Coordinator(Settings(Configuration(0.3m)), repository, context.Object).Start());
+
+            Assert.AreEqual(1, bots.Count);
+            var symbol = bots[0].MarketSymbol;
+            WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.BuyLimit) && (string)i.Arguments[0] == symbol),
+                "the allocated bot starts and places its buy");
+        }
+
+        [TestMethod]
         public void DoesNotAllocate_WhenExchangeBalanceDroppedBelowTheTrackedBalance()
         {
             var (exchange, repository) = StartedRepository(0, new[] { Balance("BTC", 1, 1) }, "NMR-BTC");

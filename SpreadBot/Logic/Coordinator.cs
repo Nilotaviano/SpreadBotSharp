@@ -98,23 +98,27 @@ namespace SpreadBot.Logic
         /// <param name="marketDeltas">Markets that were updated</param>
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
-            //Summaries and tickers are consumed on separate threads; evaluating concurrently could grant the same balance twice
-            List<Bot> allocatedBots;
-
-            lock (allocationLock)
-                allocatedBots = EvaluateMarketsSerialized(marketDeltas);
-
-            //Started outside the lock so nothing a bot does on start can block allocation
-            foreach (var bot in allocatedBots)
-                bot.Start();
-        }
-
-        private List<Bot> EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas)
-        {
             var allocatedBots = new List<Bot>();
 
+            try
+            {
+                //Summaries and tickers are consumed on separate threads; evaluating concurrently could grant the same balance twice
+                lock (allocationLock)
+                    EvaluateMarketsSerialized(marketDeltas, allocatedBots);
+            }
+            finally
+            {
+                //Started outside the lock so nothing a bot does on start can block allocation, and even if a later
+                //market failed: an allocated bot that never starts would hold its balance and market forever
+                foreach (var bot in allocatedBots)
+                    bot.Start();
+            }
+        }
+
+        private void EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas, List<Bot> allocatedBots)
+        {
             if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
-                return allocatedBots;
+                return;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
 
@@ -171,8 +175,6 @@ namespace SpreadBot.Logic
                         break;
                 }
             }
-
-            return allocatedBots;
         }
 
         private void AllocateBot(Bot bot)

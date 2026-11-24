@@ -381,8 +381,12 @@ namespace SpreadBot.Logic
                 case OrderDirection.BUY:
                     botContext.HeldAmount += orderData.FillQuantity;
                     botContext.Balance -= orderData.Proceeds + orderData.Commission;
-                    botContext.BoughtPrice = orderData.Limit;
-                    botContext.BuyFilledAt = DateTime.UtcNow;
+                    //A buy cancelled without fills bought nothing: the price and the loss timer stay those of the coins already held
+                    if (orderData.FillQuantity > 0)
+                    {
+                        botContext.BoughtPrice = orderData.Limit;
+                        botContext.BuyFilledAt = DateTime.UtcNow;
+                    }
                     break;
                 case OrderDirection.SELL:
                     botContext.HeldAmount -= orderData.FillQuantity;
