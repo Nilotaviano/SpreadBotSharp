@@ -58,6 +58,8 @@ namespace SpreadBot.Infrastructure
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>> SpecificMarketHandlers { get; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>>();
         // key: client order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
         private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
+        // key: client order id, value: the subscribed order — what a resync needs (id and symbol) to fetch it even if no update was ever received
+        private ConcurrentDictionary<string, OrderData> TrackedOrders { get; } = new ConcurrentDictionary<string, OrderData>();
 
         public void SubscribeToMarketsData(Guid handlerGuid, Action<IEnumerable<MarketData>> evaluateMarkets)
         {
@@ -94,16 +96,19 @@ namespace SpreadBot.Infrastructure
         }
 
         /// <summary>
-        /// Subscribe to a specific order by its client order id
+        /// Subscribe to a specific order; resyncs keep fetching it until it closes or is unsubscribed
         /// </summary>
-        public void SubscribeToOrderData(string clientOrderId, Guid handlerGuid, Action<OrderData> callback)
+        public void SubscribeToOrderData(OrderData order, Guid handlerGuid, Action<OrderData> callback)
         {
+            var clientOrderId = order.ClientOrderId;
+            TrackedOrders[clientOrderId] = order;
+
             var handlers = OrderHandlers.GetOrAdd(clientOrderId, _ => new ConcurrentDictionary<Guid, Action<OrderData>>());
             handlers[handlerGuid] = callback;
 
             //If there is already data for the order, fire callback
-            if (OrdersData.TryGetValue(clientOrderId, out var order))
-                callback(order);
+            if (OrdersData.TryGetValue(clientOrderId, out var cached))
+                callback(cached);
         }
 
         public void UnsubscribeToMarketsData(Guid handlerGuid)
@@ -130,7 +135,10 @@ namespace SpreadBot.Infrastructure
                 handlers.Remove(handlerGuid, out _);
 
                 if (handlers.Count == 0)
+                {
                     OrderHandlers.Remove(clientOrderId, out _);
+                    TrackedOrders.Remove(clientOrderId, out _);
+                }
             }
 
             OrdersData.Remove(clientOrderId, out _);
@@ -238,6 +246,10 @@ namespace SpreadBot.Infrastructure
                 UpdateOrderData(order);
 
             await FetchTrackedOrdersNoLongerOpen(openOrders.Result);
+
+            var untracked = openOrders.Result.Where(o => !TrackedOrders.ContainsKey(o.ClientOrderId)).ToList();
+            if (untracked.Count > 0)
+                Logger.Instance.LogError($"Open orders no bot tracks (placed manually, or left by a failed placement): {string.Join(", ", untracked.Select(o => $"{o.MarketSymbol} {o.Direction} {o.Id}"))}");
         }
 
         /// <summary>
@@ -247,8 +259,9 @@ namespace SpreadBot.Infrastructure
         private async Task FetchTrackedOrdersNoLongerOpen(IReadOnlyList<OrderData> openOrders)
         {
             var openIds = new HashSet<string>(openOrders.Select(o => o.ClientOrderId));
-            var missing = OrdersData.Values
-                .Where(o => o.Status == OrderStatus.OPEN && !openIds.Contains(o.ClientOrderId) && OrderHandlers.ContainsKey(o.ClientOrderId))
+            var missing = TrackedOrders.Values
+                .Where(o => !openIds.Contains(o.ClientOrderId))
+                .Where(o => !OrdersData.TryGetValue(o.ClientOrderId, out var known) || known.Status != OrderStatus.CLOSED)
                 .ToList();
 
             foreach (var order in missing)

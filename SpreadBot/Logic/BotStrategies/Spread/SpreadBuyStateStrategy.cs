@@ -16,6 +16,10 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             if (botContext.LatestMarketData.SpreadPercentage >= botContext.spreadConfiguration.MinimumSpreadPercentage)
             {
                 decimal bidPrice = (botContext.LatestMarketData.BidRate.Value + tick).CeilToTick(tick);
+
+                //With a one-tick spread, improving the bid would cross the ask and the post-only order would be rejected; join the bid instead
+                if (botContext.LatestMarketData.AskRate.HasValue && bidPrice >= botContext.LatestMarketData.AskRate.Value)
+                    bidPrice = botContext.LatestMarketData.BidRate.Value;
                 //The exchange rounds the amount down to its step size
                 decimal amount = botContext.Balance * (1 - dataRepository.Exchange.FeeRate) / bidPrice;
 

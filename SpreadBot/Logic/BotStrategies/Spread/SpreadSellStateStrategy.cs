@@ -14,6 +14,10 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
             decimal askPrice = botContext.LatestMarketData.AskRate.Value - tick;
 
+            //With a one-tick spread, improving the ask would cross the bid and the post-only order would be rejected; join the ask instead
+            if (botContext.LatestMarketData.BidRate.HasValue && askPrice <= botContext.LatestMarketData.BidRate.Value)
+                askPrice = botContext.LatestMarketData.AskRate.Value;
+
             bool canSellAtLoss = botContext.CanSellAtLoss(DateTime.UtcNow);
             if (!canSellAtLoss)
                 askPrice = Math.Max(botContext.BoughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToTick(tick);

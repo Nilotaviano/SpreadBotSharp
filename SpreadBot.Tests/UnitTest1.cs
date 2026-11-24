@@ -110,12 +110,12 @@ namespace SpreadBot.Tests
                 if (data.QuoteVolume.HasValue && data.AskRate.HasValue)
                     marketEvent.Set();
             });
-            datarepository.SubscribeToOrderData(buyOrderId, testGuid, (data) =>
+            datarepository.SubscribeToOrderData(new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = symbol }, testGuid, (data) =>
             {
                 if (data.Direction == OrderDirection.BUY)
                     buyEvent.Set();
             });
-            datarepository.SubscribeToOrderData(sellOrderId, testGuid, (data) =>
+            datarepository.SubscribeToOrderData(new OrderData { Id = sellOrderId, ClientOrderId = sellOrderId, MarketSymbol = symbol }, testGuid, (data) =>
             {
                 if (data.Direction == OrderDirection.SELL)
                     sellEvent.Set();

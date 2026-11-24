@@ -70,7 +70,7 @@ namespace SpreadBot.Logic
 
                 if (value?.Status == OrderStatus.OPEN)
                 {
-                    dataRepository.SubscribeToOrderData(value.ClientOrderId, Guid, ProcessMessage);
+                    dataRepository.SubscribeToOrderData(value, Guid, ProcessMessage);
                 }
             }
             if (value?.Status == OrderStatus.CLOSED)
@@ -110,7 +110,7 @@ namespace SpreadBot.Logic
                 var isCached = dataRepository.OrdersData.ContainsKey(clientOrderId);
 
                 //Replays the cached order state, if any, and keeps delivering updates until the order closes
-                dataRepository.SubscribeToOrderData(clientOrderId, Guid, ProcessMessage);
+                dataRepository.SubscribeToOrderData(botContext.CurrentOrderData, Guid, ProcessMessage);
 
                 if (!isCached)
                 {
