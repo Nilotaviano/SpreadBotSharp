@@ -48,14 +48,16 @@ namespace SpreadBot.Tests
 
             exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m, last: 0.0001m));
 
+            var placement = state == BotState.Bought ? nameof(exchange.Object.SellLimit) : nameof(exchange.Object.BuyLimit);
             var stopwatch = Stopwatch.StartNew();
-            while (exchange.Mock.Invocations.Count(i => i.Method.Name is nameof(exchange.Object.BuyLimit) or nameof(exchange.Object.SellLimit)) == 0 || context.SemaphoreCurrentCount != 1)
+            while (exchange.Mock.Invocations.Count(i => i.Method.Name == placement) == 0 || context.SemaphoreCurrentCount != 1)
             {
                 if (stopwatch.ElapsedMilliseconds > 2000)
-                    Assert.Fail("Timed out waiting for the rejected placement to be handled");
+                    Assert.Fail($"Timed out waiting for the rejected {placement} to be handled");
                 Thread.Sleep(10);
             }
 
+            Assert.AreEqual(1, exchange.Mock.Invocations.Count(i => i.Method.Name is nameof(exchange.Object.BuyLimit) or nameof(exchange.Object.SellLimit)), $"only the {placement} {state} places");
             Assert.AreEqual(expectedState, context.BotState);
             Assert.AreEqual(expectFinished, finished);
         }
