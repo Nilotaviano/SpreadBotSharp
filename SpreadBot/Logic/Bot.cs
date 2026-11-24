@@ -246,7 +246,7 @@ namespace SpreadBot.Logic
                             await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrder(currentOrderId, MarketSymbol));
                         }
                         //e.g. its trades don't show its fees yet; the next cancel or resync fetches it again
-                        catch (ApiException lookupError) when (lookupError.ApiErrorType == ApiErrorType.RetryLater)
+                        catch (ApiException lookupError) when (lookupError.ApiErrorType is ApiErrorType.RetryLater or ApiErrorType.Throttled or ApiErrorType.MarketOffline)
                         {
                             LogError($"Fetching order {currentOrderId}, which is no longer open, failed: {lookupError.ApiErrorType} {lookupError.Message}");
                         }

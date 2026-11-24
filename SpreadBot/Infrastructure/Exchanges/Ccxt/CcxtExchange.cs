@@ -45,7 +45,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         //How long a stream that failed gets to subscribe again before it reports the interruption, so updates missed meanwhile are resynced
         internal TimeSpan ResubscribeGrace { get; init; } = TimeSpan.FromSeconds(2);
         internal TimeSpan MarketsReloadInterval { get; init; } = TimeSpan.FromHours(1);
-        private DateTime marketsLoadedAt;
+        internal TimeSpan MarketsReloadRetryDelay { get; init; } = TimeSpan.FromMinutes(5);
+        //Only GetMarkets uses it after Setup, and only resyncs call GetMarkets, one at a time
+        private DateTime nextMarketsReload;
 
         public CcxtExchange(string exchangeId, string apiKey, string apiSecret, bool useSandbox)
             : this(CreateExchange(exchangeId, apiKey, apiSecret, useSandbox))
@@ -109,7 +111,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             this.quoteCurrencies = new HashSet<string>(quoteCurrencies);
 
             await LoadMarkets(reload: false);
-            marketsLoadedAt = DateTime.UtcNow;
+            nextMarketsReload = DateTime.UtcNow + MarketsReloadInterval;
 
             //The highest fee among the traded markets, so buys always leave room for it
             var takerFees = tradedMarkets.Where(m => m.active != false).Select(m => m.taker).Where(fee => fee.HasValue).Select(fee => fee.Value).ToList();
@@ -155,26 +157,24 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         /// </summary>
         public async Task<IReadOnlyList<MarketData>> GetMarkets()
         {
-            if (DateTime.UtcNow - marketsLoadedAt < MarketsReloadInterval)
+            if (DateTime.UtcNow < nextMarketsReload)
                 return tradedMarkets.Select(ToMarketData).ToList();
 
-            marketsLoadedAt = DateTime.UtcNow;
             var before = tradedMarkets;
             var lastLoad = exchange.marketsLoading;
+            var lastCurrencies = exchange.currencies;
 
             try
             {
                 await LoadMarkets(reload: true);
+                nextMarketsReload = DateTime.UtcNow + MarketsReloadInterval;
             }
             //Failing would fail the whole resync, balances and orders included
             catch (Exception e)
             {
-                //ccxt keeps the failed load, and its methods await it before most requests: they'd all fail until a reload succeeds.
-                //A reload that listed nothing also replaced ccxt's markets, so those are put back too
-                exchange.marketsLoading = lastLoad;
-                if (lastLoad != null && lastLoad.IsCompletedSuccessfully)
-                    exchange.setMarkets(lastLoad.Result);
+                nextMarketsReload = DateTime.UtcNow + MarketsReloadRetryDelay;
                 Logger.Instance.LogError($"Reloading markets failed, keeping the ones loaded before: {e.GetType().Name}: {e.Message}");
+                RestoreCcxtMarkets(lastLoad, lastCurrencies);
             }
 
             var reloaded = tradedMarkets;
@@ -183,6 +183,24 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 .Select(symbol => new MarketData { Symbol = symbol, Status = EMarketStatus.Offline });
 
             return reloaded.Select(ToMarketData).Concat(gone).ToList();
+        }
+
+        /// <summary>
+        /// ccxt keeps a failed load, and its methods await it before most requests: they'd all fail until a reload succeeds. A reload
+        /// that listed nothing also replaced ccxt's markets, so those are put back too.
+        /// </summary>
+        private void RestoreCcxtMarkets(Task<IDictionary<string, object>> lastLoad, object lastCurrencies)
+        {
+            try
+            {
+                exchange.marketsLoading = lastLoad;
+                if (lastLoad != null && lastLoad.IsCompletedSuccessfully)
+                    exchange.setMarkets(lastLoad.Result, lastCurrencies);
+            }
+            catch (Exception e)
+            {
+                Logger.Instance.LogUnexpectedError($"Could not put back the markets loaded before: {e}");
+            }
         }
 
         //The typed LoadMarkets can't reload

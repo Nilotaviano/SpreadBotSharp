@@ -240,17 +240,19 @@ namespace SpreadBot.Infrastructure
 
         private async Task FetchAllData()
         {
+            //First: a markets reload stalls the exchange's other requests, which would fail with it
+            var markets = await Exchange.GetMarkets();
+
             var balances = Exchange.GetBalances();
-            var markets = Exchange.GetMarkets();
             var tickers = Exchange.GetTickers();
             var openOrders = Exchange.GetOpenOrders();
 
-            await Task.WhenAll(balances, markets, tickers, openOrders);
+            await Task.WhenAll(balances, tickers, openOrders);
 
             foreach (var balance in balances.Result)
                 UpdateBalanceData(balance);
 
-            UpdateMarketData(markets.Result);
+            UpdateMarketData(markets);
             UpdateMarketData(tickers.Result);
 
             foreach (var order in openOrders.Result)
@@ -340,9 +342,18 @@ namespace SpreadBot.Infrastructure
             }
             //Only the logger can throw here, and nothing observes this task. Left above zero, the count would make every later request
             //wait for a run that never comes; requests it drops are covered by the timer's next resync
-            catch
+            catch (Exception e)
             {
                 System.Threading.Interlocked.Exchange(ref pendingResyncs, 0);
+
+                try
+                {
+                    Logger.Instance.LogUnexpectedError($"Resyncs stopped unexpectedly; the next one waits for the timer: {e}");
+                }
+                catch
+                {
+                    //The logger is what failed
+                }
             }
             finally
             {

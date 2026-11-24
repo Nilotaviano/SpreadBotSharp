@@ -73,10 +73,48 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task GetMarkets_AfterAFailedReload_RetriesSoonerThanTheInterval()
+        {
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.setMarkets(It.IsAny<object>(), It.IsAny<object>())).Returns((IDictionary<string, object>)null);
+            exchange.Setup(e => e.loadMarkets(false, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
+            exchange
+                .SetupSequence(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>()))
+                .Returns(Task.FromException<IDictionary<string, object>>(new ccxt.RequestTimeout("binance timed out")))
+                .Returns(Markets(Market("NMR/BTC", active: false)));
+            using var adapter = new CcxtExchange(exchange.Object) { MarketsReloadInterval = TimeSpan.Zero, MarketsReloadRetryDelay = TimeSpan.Zero };
+            await adapter.Setup(new[] { "BTC" });
+
+            await adapter.GetMarkets();
+            var market = (await adapter.GetMarkets()).Single();
+
+            Assert.AreEqual(EMarketStatus.Offline, market.Status);
+        }
+
+        [TestMethod]
+        public async Task GetMarkets_AfterAFailedReload_WaitsForTheRetryDelay()
+        {
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.setMarkets(It.IsAny<object>(), It.IsAny<object>())).Returns((IDictionary<string, object>)null);
+            exchange.Setup(e => e.loadMarkets(false, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
+            exchange.Setup(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>())).ThrowsAsync(new ccxt.RequestTimeout("binance timed out"));
+            using var adapter = new CcxtExchange(exchange.Object) { MarketsReloadInterval = TimeSpan.Zero, MarketsReloadRetryDelay = TimeSpan.FromMinutes(5) };
+            await adapter.Setup(new[] { "BTC" });
+
+            await adapter.GetMarkets();
+            await adapter.GetMarkets();
+
+            exchange.Verify(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>()), Times.Once);
+        }
+
+        [TestMethod]
         public async Task GetMarkets_KeepsTheLoadedMarketsWhenTheReloadFails()
         {
             var exchange = Exchange();
             WithIdleStreams(exchange);
+            exchange.Setup(e => e.setMarkets(It.IsAny<object>(), It.IsAny<object>())).Returns((IDictionary<string, object>)null);
             exchange.Setup(e => e.loadMarkets(false, It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
             exchange.Setup(e => e.loadMarkets(true, It.IsAny<IDictionary<string, object>>())).ThrowsAsync(new ccxt.RequestTimeout("binance timed out"));
             using var adapter = new CcxtExchange(exchange.Object) { MarketsReloadInterval = TimeSpan.Zero };
