@@ -46,11 +46,15 @@ namespace SpreadBot.Tests
             };
         }
 
-        private static void WaitUntil(Func<bool> condition)
+        private static void WaitUntil(Func<bool> condition, string description)
         {
             var stopwatch = Stopwatch.StartNew();
-            while (!condition() && stopwatch.ElapsedMilliseconds < 2000)
+            while (!condition())
+            {
+                if (stopwatch.ElapsedMilliseconds > 2000)
+                    Assert.Fail($"Timed out waiting until {description}");
                 Thread.Sleep(10);
+            }
         }
 
         [TestMethod]
@@ -87,7 +91,7 @@ namespace SpreadBot.Tests
                 }
             });
 
-            WaitUntil(() => context.BotState == BotState.Buying);
+            WaitUntil(() => context.BotState == BotState.Buying && context.SemaphoreCurrentCount == 1, "the sell fill is processed");
 
             Assert.AreEqual(BotState.Buying, context.BotState);
             Assert.AreEqual(0m, context.HeldAmount);
@@ -119,7 +123,7 @@ namespace SpreadBot.Tests
             var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory());
             bot.Start();
 
-            WaitUntil(() => context.BotState == BotState.Buying);
+            WaitUntil(() => context.BotState == BotState.Buying && context.SemaphoreCurrentCount == 1, "the sell fill is processed");
 
             Assert.AreEqual(BotState.Buying, context.BotState);
             Assert.AreEqual(0m, context.HeldAmount);
@@ -135,9 +139,25 @@ namespace SpreadBot.Tests
             context.BotState = BotState.Bought;
             Assert.IsNull(context.BuyFilledAt);
 
+            var before = DateTime.UtcNow;
             new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory()).Start();
+            var after = DateTime.UtcNow;
 
-            Assert.IsNotNull(context.BuyFilledAt);
+            Assert.IsTrue(context.BuyFilledAt >= before && context.BuyFilledAt <= after);
+        }
+
+        [TestMethod]
+        public void Start_NewBotInheritingDust_HasNoFillTimeUntilItBuys()
+        {
+            var dataRepository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 60000 });
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.001m };
+            var market = new MarketData { Symbol = Symbol, Precision = 8 };
+
+            var bot = new Bot(dataRepository, configuration, market, 20, _ => { }, new BotStrategiesFactory());
+            bot.Start();
+
+            Assert.AreEqual(BotState.Buying, bot.botContext.BotState);
+            Assert.IsNull(bot.botContext.BuyFilledAt);
         }
     }
 }

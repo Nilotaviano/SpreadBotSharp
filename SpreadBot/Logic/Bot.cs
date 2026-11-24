@@ -72,18 +72,19 @@ namespace SpreadBot.Logic
         {
             LogMessage($"started on {MarketSymbol}");
 
-            //A restored context can hold coins with no recorded fill time (older file format); start the loss timer now
-            if (botContext.HeldAmount > 0 && botContext.BuyFilledAt == null)
+            //A context restored in a sell state may have no fill time; start the loss timer now so the sell floor can still drop
+            if ((botContext.BotState == BotState.Bought || botContext.BotState == BotState.SellOrderActive) && botContext.BuyFilledAt == null)
                 botContext.BuyFilledAt = DateTime.UtcNow;
 
             if (botContext.CurrentOrderData != null)
             {
                 var clientOrderId = botContext.CurrentOrderData.ClientOrderId;
+                var isCached = dataRepository.OrdersData.ContainsKey(clientOrderId);
 
                 //Replays the cached order state, if any, and keeps delivering updates until the order closes
                 dataRepository.SubscribeToOrderData(clientOrderId, Guid, ProcessMessage);
 
-                if (!dataRepository.OrdersData.ContainsKey(clientOrderId))
+                if (!isCached)
                 {
                     try
                     {
@@ -137,39 +138,14 @@ namespace SpreadBot.Logic
                 {
                     LogError($"ApiException {e.ApiErrorType} context:{Environment.NewLine}{e}{Environment.NewLine}BotContext:{JsonConvert.SerializeObject(botContext, Formatting.Indented)}Message:{JsonConvert.SerializeObject(message, Formatting.Indented)}");
 
-                    //TODO: Clean up/refactor
-                    switch (e.ApiErrorType)
+                    try
                     {
-                        case ApiErrorType.DustTrade when botContext.BotState == BotState.Bought:
-                            //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
-                            botContext.BotState = BotState.Buying;
-                            break;
-                        case ApiErrorType.DustTrade when botContext.BotState == BotState.Buying:
-                            await FinishWork();
-                            break;
-                        case ApiErrorType.InsufficientFunds:
-                            //Too many bots running?
-                            await FinishWork();
-                            break;
-                        case ApiErrorType.MarketOffline when botContext.BotState == BotState.Buying:
-                            await FinishWork();
-                            break;
-                        case ApiErrorType.OrderNotOpen:
-                            //Bot tried to cancel an order that has just been executed (I'm assuming)
-                            //Closed order data will be received soon, so no need to do anything here
-                            //Nevermind the above, the WS message may be lost
-                            await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.Id));
-                            break;
-                        case ApiErrorType.MarketOffline:
-                        case ApiErrorType.Throttled:
-                            //Do nothing, try again on the next cycle
-                            LogError($"{e.ApiErrorType}: {e}");
-                            break;
-                        default:
-                            //TODO: Log all of the bot's state/properties/fields
-                            LogUnexpectedError($"{e.ApiErrorType}: {e}");
-                            break;
-                    };
+                        await HandleApiException(e);
+                    }
+                    catch (Exception handlingException)
+                    {
+                        LogUnexpectedError($"Error while handling {e.ApiErrorType}: {handlingException}");
+                    }
                 }
                 catch (Exception e)
                 {
@@ -183,6 +159,45 @@ namespace SpreadBot.Logic
                         processingMessageTimeExceededTimer.Stop();
                 }
             }
+        }
+
+        private async Task HandleApiException(ApiException e)
+        {
+            //TODO: Clean up/refactor
+            switch (e.ApiErrorType)
+            {
+                case ApiErrorType.DustTrade when botContext.BotState == BotState.Bought:
+                    //The bot is trying to sell too little of a coin, so we switch to Buy state to accumulate more
+                    botContext.BotState = BotState.Buying;
+                    break;
+                case ApiErrorType.DustTrade when botContext.BotState == BotState.Buying:
+                    await FinishWork();
+                    break;
+                case ApiErrorType.InsufficientFunds:
+                    //Too many bots running?
+                    await FinishWork();
+                    break;
+                case ApiErrorType.MarketOffline when botContext.BotState == BotState.Buying:
+                    await FinishWork();
+                    break;
+                case ApiErrorType.OrderNotOpen:
+                    //Bot tried to cancel an order that has just been executed (I'm assuming)
+                    //Closed order data will be received soon, so no need to do anything here
+                    //Nevermind the above, the WS message may be lost
+                    var currentOrderId = botContext.CurrentOrderData?.Id;
+                    if (currentOrderId != null)
+                        await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrderData(currentOrderId));
+                    break;
+                case ApiErrorType.MarketOffline:
+                case ApiErrorType.Throttled:
+                    //Do nothing, try again on the next cycle
+                    LogError($"{e.ApiErrorType}: {e}");
+                    break;
+                default:
+                    //TODO: Log all of the bot's state/properties/fields
+                    LogUnexpectedError($"{e.ApiErrorType}: {e}");
+                    break;
+            };
         }
 
         private async Task ProcessMarketData(MarketData marketData)
@@ -209,10 +224,10 @@ namespace SpreadBot.Logic
         //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
-            if (orderData == null || orderData.Id != botContext.CurrentOrderData?.Id)
+            if (orderData.Id != botContext.CurrentOrderData?.Id)
                 return;
 
-            switch (orderData.Status)
+            switch (orderData?.Status)
             {
                 case OrderStatus.OPEN:
                     botContext.BotState = (orderData?.Direction) switch
