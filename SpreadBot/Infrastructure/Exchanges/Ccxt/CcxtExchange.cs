@@ -210,8 +210,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             {
                 order = await exchange.CreateOrder(marketSymbol, type, side, (double)quantity, limit.HasValue ? (double)limit.Value : (double?)null, parameters);
             }
-            //Rate limits and timestamp rejections refuse the request itself. Any other failed operation (network errors, unreadable
-            //responses, Binance's -1000/-1001/-1006 "execution status unknown") may have happened after the exchange accepted it
+            //Rate limits (RateLimitExceeded, DDoSProtection) and timestamp rejections (InvalidNonce) refuse the request itself. Any other
+            //failed operation (network errors, unreadable responses, Binance's -1000/-1001/-1006 "execution status unknown") may have
+            //happened after the exchange accepted it
             catch (ccxt.OperationFailed e) when (e is not ccxt.RateLimitExceeded && e is not ccxt.DDoSProtection && e is not ccxt.InvalidNonce)
             {
                 throw new OrderStateUnknownException(sent, $"Creating {side} {type} order {clientOrderId} on {marketSymbol} failed without an answer: {e.Message}");

@@ -251,10 +251,13 @@ namespace SpreadBot.Tests
             // Adopting it would unsubscribe the client order id, so the order's later updates would never reach the bot
             var exchange = Exchange();
             exchange.Mock.Setup(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>())).ThrowsAsync(UnknownPlacement(DateTime.UtcNow));
-            var context = StartBuyingBot(exchange);
+            var context = StartBuyingBot(exchange, out var dataRepository);
 
             ProcessTicker(exchange, context, 1);
             exchange.OnOrder(Reported("42", UnknownClientOrderId, OrderStatus.UNDEFINED));
+            WaitUntil(() => dataRepository.OrdersData.TryGetValue(UnknownClientOrderId, out var cached) && cached.Status == OrderStatus.UNDEFINED && context.SemaphoreCurrentCount == 1, "the report without a status is processed");
+            Assert.AreEqual(OrderStatus.UNKNOWN, context.CurrentOrderData?.Status);
+
             exchange.OnOrder(Reported("42", UnknownClientOrderId, OrderStatus.OPEN));
 
             WaitUntil(() => context.BotState == BotState.BuyOrderActive && context.SemaphoreCurrentCount == 1, "the report with a status is adopted");
