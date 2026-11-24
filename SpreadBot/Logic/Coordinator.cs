@@ -78,6 +78,16 @@ namespace SpreadBot.Logic
             {
                 foreach (var botContext in previousSession.BotContexts)
                 {
+                    //Saved while finishing: a restored bot would ignore every message and never unallocate, so do its unallocation here
+                    if (botContext.BotState == BotState.FinishedWork)
+                    {
+                        if (botContext.HeldAmount > 0)
+                            context.AddDustForMarket(botContext.LatestMarketData.Symbol, botContext.HeldAmount);
+
+                        Logger.Instance.LogError($"A bot on {botContext.LatestMarketData.Symbol} was saved while finishing; not restoring it. Its {botContext.HeldAmount}{botContext.LatestMarketData.Target} are recorded as dust and its profit may not have been recorded");
+                        continue;
+                    }
+
                     var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory, balanceLedger);
 
                     var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(bot.botContext.spreadConfiguration, key => new ConcurrentDictionary<string, bool>());

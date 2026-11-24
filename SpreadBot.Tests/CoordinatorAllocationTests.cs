@@ -97,6 +97,20 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void BotSavedWhileFinishing_IsNotRestoredAndItsCoinsBecomeDust()
+        {
+            var (_, repository) = StartedRepository(0, new[] { Balance("BTC", 1, 1) }, "NMR-BTC");
+            var bots = new List<Bot>();
+            var finishing = new BotContext(Configuration(0.3m), new MarketData { Symbol = "NMR-BTC", Precision = 8 }, BotState.FinishedWork, 2);
+            var context = InMemoryContext(bots, previousSession: new PreviousSessionContext { BotContexts = new List<BotContext> { finishing } });
+
+            new Coordinator(Settings(Configuration(0.3m), restore: true), repository, context.Object).Start();
+
+            Assert.AreEqual(0, bots.Count, "a restored finished bot would ignore every message and never release its allocation");
+            context.Verify(c => c.AddDustForMarket("NMR-BTC", 2m), Times.Once);
+        }
+
+        [TestMethod]
         public void AllocationFailingPartway_StillStartsTheBotsAlreadyAllocated()
         {
             var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA-BTC", "BBB-BTC");

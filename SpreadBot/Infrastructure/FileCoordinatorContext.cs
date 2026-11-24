@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Linq;
 using SpreadBot.Logic;
 using SpreadBot.Logic.BotStrategies;
@@ -43,8 +44,8 @@ namespace SpreadBot.Infrastructure
                     {
                         var savedData = JsonConvert.DeserializeObject<PreviousSessionContext>(json);
 
-                        if (savedData?.BotContexts?.Any(c => c?.spreadConfiguration == null || c.LatestMarketData?.Symbol == null) == true)
-                            throw new InvalidDataException("A saved bot has no configuration or market");
+                        if (savedData?.BotContexts?.Any(c => c?.spreadConfiguration == null || c.LatestMarketData?.Symbol == null || c.CurrentOrderData is { ClientOrderId: null }) == true)
+                            throw new InvalidDataException("A saved bot has no configuration, no market, or an order without a client order id");
 
                         return savedData;
                     }
@@ -156,13 +157,30 @@ namespace SpreadBot.Infrastructure
             contextSemaphore.Wait();
             try
             {
-                var savedData = new PreviousSessionContext
+                var serializer = JsonSerializer.CreateDefault();
+                var botContexts = new JArray();
+
+                foreach (var bot in AllocatedBotsByGuid.Values)
                 {
-                    BotContexts = new List<BotContext>(AllocatedBotsByGuid.Values.Select(b => b.botContext)),
-                    DustPerMarket = new Dictionary<string, decimal>(this.DustPerMarket)
+                    //Under the bot's own semaphore, so a save never catches a bot halfway through a change (e.g. SellOrderActive without its order)
+                    bot.botContext.Semaphore.Wait();
+                    try
+                    {
+                        botContexts.Add(JToken.FromObject(bot.botContext, serializer));
+                    }
+                    finally
+                    {
+                        bot.botContext.Semaphore.Release();
+                    }
+                }
+
+                var savedData = new JObject
+                {
+                    [nameof(PreviousSessionContext.BotContexts)] = botContexts,
+                    [nameof(PreviousSessionContext.DustPerMarket)] = JToken.FromObject(new Dictionary<string, decimal>(this.DustPerMarket), serializer)
                 };
 
-                Extensions.WriteAllTextAtomic(FILE_NAME, JsonConvert.SerializeObject(savedData, Formatting.Indented));
+                Extensions.WriteAllTextAtomic(FILE_NAME, savedData.ToString(Formatting.Indented));
             } catch (Exception e)
             {
                 Logger.Instance.LogError($"Could not save coordinator context. Exception: {e}");

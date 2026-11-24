@@ -1,8 +1,15 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Newtonsoft.Json;
 using SpreadBot.Infrastructure;
+using SpreadBot.Logic;
+using SpreadBot.Logic.BotStrategies;
+using SpreadBot.Models;
+using SpreadBot.Models.Repository;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 
 namespace SpreadBot.Tests
 {
@@ -34,6 +41,7 @@ namespace SpreadBot.Tests
         [DataRow(@"{ ""BotContexts"": [null] }")]
         [DataRow(@"{ ""BotContexts"": [{}] }")] // e.g. a renamed BotContext member: the constructor gets no configuration
         [DataRow(@"{ ""BotContexts"": [{ ""spreadConfiguration"": { ""BaseMarket"": ""BTC"" } }] }")]
+        [DataRow(@"{ ""BotContexts"": [{ ""spreadConfiguration"": { ""BaseMarket"": ""BTC"" }, ""LatestMarketData"": { ""Symbol"": ""NMR-BTC"" }, ""CurrentOrderData"": { ""Id"": ""1"" } }] }")]
         public void SessionFileThatCannotBeRestored_IsMovedAsideInsteadOfOverwritten(string content)
         {
             InTemporaryDirectory(directory =>
@@ -60,6 +68,43 @@ namespace SpreadBot.Tests
 
                 Assert.AreEqual("NMR/BTC", session.BotContexts.Single().LatestMarketData.Symbol);
                 Assert.AreEqual(content, File.ReadAllText(SessionFile));
+            });
+        }
+
+        [TestMethod]
+        public void Save_WaitsForABotToFinishItsChange()
+        {
+            InTemporaryDirectory(directory =>
+            {
+                var repository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 600000 });
+                var botContext = new BotContext(new SpreadConfiguration { BaseMarket = "BTC" }, new MarketData { Symbol = "NMR-BTC" }, BotState.Bought, 10);
+                var bot = new Bot(repository, botContext, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+                var context = new FileCoordinatorContext();
+
+                // Halfway through a change, as the bot would be while processing a message: its sell is placed but not yet its current order
+                botContext.Semaphore.Wait();
+                context.AddBot(bot);
+                botContext.BotState = BotState.SellOrderActive;
+                Thread.Sleep(1500); // past the 1 s save debounce
+
+                Assert.IsFalse(File.Exists(SessionFile), "the save must wait for the bot to finish its change");
+
+                botContext.CurrentOrderData = new OrderData { Id = "sell-1", ClientOrderId = "sell-1", Direction = OrderDirection.SELL, Status = OrderStatus.OPEN };
+                botContext.Semaphore.Release();
+
+                var stopwatch = Stopwatch.StartNew();
+                while (!File.Exists(SessionFile))
+                {
+                    if (stopwatch.ElapsedMilliseconds > 2000)
+                        Assert.Fail("Timed out waiting for the save");
+                    Thread.Sleep(10);
+                }
+
+                var saved = JsonConvert.DeserializeObject<PreviousSessionContext>(File.ReadAllText(SessionFile)).BotContexts.Single();
+                Assert.AreEqual(BotState.SellOrderActive, saved.BotState);
+                Assert.AreEqual("sell-1", saved.CurrentOrderData?.Id);
+
+                Thread.Sleep(1500); // the order change requested another save; let it land before the directory is removed
             });
         }
 
