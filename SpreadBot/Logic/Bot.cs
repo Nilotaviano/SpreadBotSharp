@@ -28,6 +28,8 @@ namespace SpreadBot.Logic
         private const int MaxConsecutiveInsufficientFundsRejections = 3;
         private int consecutiveInsufficientFundsRejections;
 
+        private volatile bool orderRequestInFlight;
+
 
         public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, BalanceLedger balanceLedger)
         {
@@ -52,6 +54,11 @@ namespace SpreadBot.Logic
         public decimal Balance => botContext.Balance;
         public decimal HeldAmount => botContext.HeldAmount;
         public decimal LastTradeRate => botContext.LatestMarketData.LastTradeRate.GetValueOrDefault();
+
+        /// <summary>
+        /// An order request (place, cancel, lookup) is out and its answer not yet applied: the exchange may already have moved the order's funds.
+        /// </summary>
+        public bool OrderRequestInFlight => orderRequestInFlight;
 
         private void SetCurrentOrderData(OrderData value)
         {
@@ -298,7 +305,7 @@ namespace SpreadBot.Logic
             var balances = await exchange.GetBalanceData();
             var available = balances.Balances?.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
 
-            return Math.Max(available - balanceLedger.CoinsHeldByOtherBots(currency, this), 0);
+            return Math.Max(available - balanceLedger.ClaimedByOtherBots(currency, this), 0);
         }
 
         private async Task ProcessMarketData(MarketData marketData)
@@ -310,17 +317,25 @@ namespace SpreadBot.Logic
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
         {
-            var orderData = await func();
-
-            if (orderData == null)
+            orderRequestInFlight = true;
+            try
             {
-                LogUnexpectedError("Exchange returned no order data; keeping the current order");
-                return;
-            }
+                var orderData = await func();
 
-            consecutiveInsufficientFundsRejections = 0;
-            SetCurrentOrderData(orderData);
-            await ProcessOrderData(orderData);
+                if (orderData == null)
+                {
+                    LogUnexpectedError("Exchange returned no order data; keeping the current order");
+                    return;
+                }
+
+                consecutiveInsufficientFundsRejections = 0;
+                SetCurrentOrderData(orderData);
+                await ProcessOrderData(orderData);
+            }
+            finally
+            {
+                orderRequestInFlight = false;
+            }
         }
 
         //TODO: Refactor/clean this method
