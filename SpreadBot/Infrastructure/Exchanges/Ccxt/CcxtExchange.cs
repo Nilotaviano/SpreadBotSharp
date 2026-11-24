@@ -3,6 +3,7 @@ using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,6 +37,19 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private List<object> watchedSymbols = new List<object>();
 
         public CcxtExchange(string exchangeId, string apiKey, string apiSecret, bool useSandbox)
+            : this(CreateExchange(exchangeId, apiKey, apiSecret, useSandbox))
+        {
+        }
+
+        internal CcxtExchange(ccxt.Exchange exchange)
+        {
+            this.exchange = exchange;
+
+            //ccxt's C# fetch never applies its timeout option, so requests would wait for HttpClient's 100 s default
+            exchange.httpClient.Timeout = TimeSpan.FromMilliseconds(Convert.ToDouble(exchange.timeout));
+        }
+
+        private static ccxt.Exchange CreateExchange(string exchangeId, string apiKey, string apiSecret, bool useSandbox)
         {
             var type = Type.GetType($"ccxt.pro.{exchangeId}, ccxt")
                 ?? throw new ArgumentException($"CCXT has no websocket-capable exchange '{exchangeId}'", nameof(exchangeId));
@@ -55,15 +69,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 }
             };
 
-            exchange = (ccxt.Exchange)Activator.CreateInstance(type, config);
+            var exchange = (ccxt.Exchange)Activator.CreateInstance(type, config);
 
             if (useSandbox)
                 exchange.setSandboxMode(true);
-        }
 
-        internal CcxtExchange(ccxt.Exchange exchange)
-        {
-            this.exchange = exchange;
+            return exchange;
         }
 
         public bool IsSetup { get; private set; }
@@ -209,6 +220,11 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             {
                 throw ToApiException(e);
             }
+            //ccxt wraps only HttpRequestException; a timeout, a broken response stream or a response it can't parse escapes as is
+            catch (Exception e)
+            {
+                throw new OrderStateUnknownException(sent, $"Creating {side} {type} order {clientOrderId} on {marketSymbol} failed without an answer: {e.GetType().Name}: {e.Message}");
+            }
 
             if (order.status == null || order.id == null)
                 throw new OrderStateUnknownException(sent, $"Order {clientOrderId} on {marketSymbol} was acknowledged without a status or id (id: {order.id}, status: {order.status})");
@@ -285,6 +301,11 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             catch (ccxt.BaseError e)
             {
                 throw ToApiException(e);
+            }
+            //ccxt wraps only HttpRequestException; a timeout or a broken response stream is what its RequestTimeout/NetworkError would be
+            catch (Exception e) when (e is OperationCanceledException || e is IOException)
+            {
+                throw new ApiException(ApiErrorType.RetryLater, $"{e.GetType().Name}: {e.Message}");
             }
         }
 

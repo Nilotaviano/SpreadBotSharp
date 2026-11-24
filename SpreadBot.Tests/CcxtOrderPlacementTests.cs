@@ -4,6 +4,7 @@ using SpreadBot.Infrastructure.Exchanges.Ccxt;
 using SpreadBot.Models;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Tests
@@ -80,6 +81,48 @@ namespace SpreadBot.Tests
             var error = await Assert.ThrowsExactlyAsync<OrderStateUnknownException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
 
             Assert.AreEqual(OrderStatus.UNKNOWN, error.Order.Status);
+        }
+
+        [TestMethod]
+        [DataRow(typeof(TaskCanceledException))] // HttpClient's timeout, which ccxt doesn't wrap
+        [DataRow(typeof(IOException))]
+        [DataRow(typeof(InvalidCastException))] // a response ccxt fails to parse
+        public async Task CreateFailingOutsideCcxtsErrors_ReportsAnUnknownState(Type exceptionType)
+        {
+            var exchange = Exchange();
+            exchange
+                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
+                .ThrowsAsync((Exception)Activator.CreateInstance(exceptionType));
+
+            var error = await Assert.ThrowsExactlyAsync<OrderStateUnknownException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
+
+            Assert.AreEqual(OrderStatus.UNKNOWN, error.Order.Status);
+        }
+
+        [TestMethod]
+        [DataRow(typeof(TaskCanceledException))]
+        [DataRow(typeof(IOException))]
+        public async Task RequestFailingInTransportOutsideCcxtsErrors_IsRetriedLater(Type exceptionType)
+        {
+            var exchange = Exchange();
+            exchange
+                .Setup(e => e.FetchOrder(null, Symbol, It.IsAny<IDictionary<string, object>>()))
+                .ThrowsAsync((Exception)Activator.CreateInstance(exceptionType));
+
+            var error = await Assert.ThrowsExactlyAsync<ApiException>(() => new CcxtExchange(exchange.Object).GetOrderByClientId("client", Symbol));
+
+            Assert.AreEqual(ApiErrorType.RetryLater, error.ApiErrorType);
+        }
+
+        [TestMethod]
+        public void Requests_TimeOutAfterCcxtsTimeoutOption()
+        {
+            var ccxtExchange = Exchange().Object;
+            ccxtExchange.timeout = 2500;
+
+            _ = new CcxtExchange(ccxtExchange);
+
+            Assert.AreEqual(TimeSpan.FromMilliseconds(2500), ccxtExchange.httpClient.Timeout);
         }
 
         [TestMethod]
