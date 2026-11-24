@@ -1,7 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
-using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Logic;
 using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
@@ -47,9 +46,9 @@ namespace SpreadBot.Tests
         public void UnallocatedBaseBalance_SkipsFundsLockedInOpenBuyOrders()
         {
             var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1.5m });
-            bots.Add(RunningBot(repository, ledger, "NMR-BTC", balance: 0.3m, held: 0));
-            bots.Add(RunningBot(repository, ledger, "XYZ-BTC", balance: 0.5m, held: 0, OpenOrder(OrderDirection.BUY)));
-            bots.Add(RunningBot(repository, ledger, "ABC-ETH", balance: 0.2m, held: 0));
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.3m, held: 0));
+            bots.Add(RunningBot(repository, ledger, "XYZ/BTC", balance: 0.5m, held: 0, OpenOrder(OrderDirection.BUY)));
+            bots.Add(RunningBot(repository, ledger, "ABC/ETH", balance: 0.2m, held: 0));
 
             Assert.AreEqual(0.7m, ledger.UnallocatedBaseBalance("BTC"));
         }
@@ -59,7 +58,7 @@ namespace SpreadBot.Tests
         {
             // 0.05 BTC of proceeds (minus 0.001 fee) reached Available before the sell closes and the bot books them
             var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
-            bots.Add(RunningBot(repository, ledger, "NMR-BTC", balance: 0.01m, held: 10m, OpenOrder(OrderDirection.SELL, fillQuantity: 5m, proceeds: 0.05m, commission: 0.001m)));
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.01m, held: 10m, OpenOrder(OrderDirection.SELL, fillQuantity: 5m, proceeds: 0.05m, commission: 0.001m)));
 
             Assert.AreEqual(1m - 0.01m - 0.049m, ledger.UnallocatedBaseBalance("BTC"));
         }
@@ -68,10 +67,10 @@ namespace SpreadBot.Tests
         public void ClaimedByOtherBots_SkipsTheAskingBotAndCoinsLockedInSellOrders()
         {
             var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "NMR", Amount = 8m, Total = 18m });
-            var asking = RunningBot(repository, ledger, "NMR-BTC", balance: 0, held: 3m);
+            var asking = RunningBot(repository, ledger, "NMR/BTC", balance: 0, held: 3m);
             bots.Add(asking);
-            bots.Add(RunningBot(repository, ledger, "NMR-ETH", balance: 0, held: 5m));
-            bots.Add(RunningBot(repository, ledger, "NMR-USDT", balance: 0, held: 10m, OpenOrder(OrderDirection.SELL)));
+            bots.Add(RunningBot(repository, ledger, "NMR/ETH", balance: 0, held: 5m));
+            bots.Add(RunningBot(repository, ledger, "NMR/USDT", balance: 0, held: 10m, OpenOrder(OrderDirection.SELL)));
 
             Assert.AreEqual(5m, ledger.ClaimedByOtherBots("NMR", asking));
             Assert.AreEqual(0m, ledger.UnclaimedCoins("NMR"));
@@ -81,7 +80,7 @@ namespace SpreadBot.Tests
         public void ClaimedByOtherBots_CountsCoinsFromAPartiallyFilledBuy()
         {
             var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "NMR", Amount = 6m, Total = 6m });
-            bots.Add(RunningBot(repository, ledger, "NMR-BTC", balance: 0.3m, held: 1m, OpenOrder(OrderDirection.BUY, fillQuantity: 4m)));
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.3m, held: 1m, OpenOrder(OrderDirection.BUY, fillQuantity: 4m)));
 
             Assert.AreEqual(5m, ledger.ClaimedByOtherBots("NMR"));
             Assert.AreEqual(1m, ledger.UnclaimedCoins("NMR"));
@@ -92,8 +91,8 @@ namespace SpreadBot.Tests
         {
             // 5 ETH were bought by a BTC-base bot; 2 ETH are the funds of an ETH-base bot
             var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "ETH", Amount = 9m, Total = 9m });
-            bots.Add(RunningBot(repository, ledger, "ETH-BTC", balance: 0.3m, held: 5m));
-            bots.Add(RunningBot(repository, ledger, "NMR-ETH", balance: 2m, held: 0));
+            bots.Add(RunningBot(repository, ledger, "ETH/BTC", balance: 0.3m, held: 5m));
+            bots.Add(RunningBot(repository, ledger, "NMR/ETH", balance: 2m, held: 0));
 
             Assert.AreEqual(7m, ledger.ClaimedByOtherBots("ETH"));
             Assert.AreEqual(2m, ledger.UnallocatedBaseBalance("ETH"));
@@ -105,7 +104,7 @@ namespace SpreadBot.Tests
         {
             // 0.5 of the 1 BTC were bought by a USDT-base bot: they're worth counting toward USDT, not BTC
             var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
-            bots.Add(RunningBot(repository, ledger, "BTC-USDT", balance: 10m, held: 0.5m));
+            bots.Add(RunningBot(repository, ledger, "BTC/USDT", balance: 10m, held: 0.5m));
 
             Assert.AreEqual(0.5m, ledger.TotalValue("BTC"));
         }
@@ -118,7 +117,7 @@ namespace SpreadBot.Tests
                 new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m },
                 new BalanceData { CurrencyAbbreviation = "NMR", Amount = 0m, Total = 0m });
             var sell = new OrderData { Id = "sell-1", ClientOrderId = "sell-1", Direction = OrderDirection.SELL, Status = OrderStatus.OPEN };
-            bots.Add(RunningBot(repository, ledger, "NMR-BTC", balance: 0.01m, held: 10m, sell));
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.01m, held: 10m, sell));
             repository.OrdersData["sell-1"] = new OrderData { Id = "sell-1", ClientOrderId = "sell-1", Direction = OrderDirection.SELL, Status = OrderStatus.CLOSED, FillQuantity = 10m, Proceeds = 0.05m, Commission = 0.001m };
 
             Assert.AreEqual(1m - 0.01m - 0.049m, ledger.UnallocatedBaseBalance("BTC"));
@@ -139,10 +138,10 @@ namespace SpreadBot.Tests
             var ledger = new BalanceLedger(repository, coordinatorContext.Object);
 
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.3m, MinimumNegotiatedAmount = 0.001m, MinimumSpreadPercentage = 1 };
-            var botContext = new BotContext(configuration, new MarketData { Symbol = "NMR-BTC", Precision = 8 }, BotState.BuyOrderActive, 0)
+            var botContext = new BotContext(configuration, new MarketData { Symbol = "NMR/BTC", PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 0)
             {
                 Balance = 0.3m,
-                CurrentOrderData = new OrderData { Id = "buy-1", ClientOrderId = "buy-1", Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.00009000m }
+                CurrentOrderData = new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.00009000m }
             };
             var bot = new Bot(repository, botContext, _ => { }, new BotStrategiesFactory(), ledger);
             bots.Add(bot);
@@ -152,18 +151,15 @@ namespace SpreadBot.Tests
         }
 
         // The bid moved well above the buy limit, so the strategy cancels the buy
-        private static void MoveTheBidAboveTheBuy(MockExchange exchange) => exchange.OnTickers(new BittrexApiTickersData
-        {
-            Sequence = 1,
-            Deltas = new[] { new BittrexApiTickersData.Ticker { Symbol = "NMR-BTC", AskRate = 0.00010101m, BidRate = 0.00009999m } }
-        });
+        private static void MoveTheBidAboveTheBuy(MockExchange exchange) =>
+            exchange.PushTicker(MockExchange.Ticker("NMR/BTC", ask: 0.00010101m, bid: 0.00009999m));
 
         [TestMethod]
         public void UnallocatedBaseBalance_KeepsABuyWhoseCancelFailedCountedAsUnlocked()
         {
             // A cancel that failed without an answer may still have been carried out
             var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
-            exchange.Mock.Setup(e => e.CancelOrder("buy-1")).ThrowsAsync(new ApiException(ApiErrorType.Throttled, "request timed out"));
+            exchange.Mock.Setup(e => e.CancelOrder("buy-1", "NMR/BTC")).ThrowsAsync(new ApiException(ApiErrorType.Throttled, "request timed out"));
             var (bot, botContext, ledger) = BotWithAnOpenBuy(exchange);
 
             MoveTheBidAboveTheBuy(exchange);
@@ -179,7 +175,7 @@ namespace SpreadBot.Tests
             // The exchange frees a cancelled buy's funds before the bot sees the cancel's answer
             var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
             var cancel = new TaskCompletionSource<OrderData>();
-            exchange.Mock.Setup(e => e.CancelOrder("buy-1")).Returns(cancel.Task);
+            exchange.Mock.Setup(e => e.CancelOrder("buy-1", "NMR/BTC")).Returns(cancel.Task);
             var (bot, botContext, ledger) = BotWithAnOpenBuy(exchange);
 
             Assert.AreEqual(1m, ledger.UnallocatedBaseBalance("BTC"), "the open buy's funds are locked, so all of Available is free");
@@ -189,7 +185,7 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(0.7m, ledger.UnallocatedBaseBalance("BTC"), "the cancel may already have returned the funds to Available");
 
-            cancel.SetResult(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.00009000m });
+            cancel.SetResult(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.00009000m });
             WaitUntil(() => !bot.OrderRequestInFlight && botContext.CurrentOrderData == null && botContext.SemaphoreCurrentCount == 1, "the cancel is booked");
 
             Assert.AreEqual(0.7m, ledger.UnallocatedBaseBalance("BTC"));
@@ -210,8 +206,8 @@ namespace SpreadBot.Tests
         public void TotalValue_CountsCoinsOwnedThroughPartialFills()
         {
             var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 0.5m, Total = 1m });
-            bots.Add(RunningBot(repository, ledger, "NMR-BTC", balance: 0.3m, held: 1m, OpenOrder(OrderDirection.BUY, fillQuantity: 4m)));
-            bots.Add(RunningBot(repository, ledger, "XYZ-BTC", balance: 0, held: 10m, OpenOrder(OrderDirection.SELL, fillQuantity: 6m)));
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.3m, held: 1m, OpenOrder(OrderDirection.BUY, fillQuantity: 4m)));
+            bots.Add(RunningBot(repository, ledger, "XYZ/BTC", balance: 0, held: 10m, OpenOrder(OrderDirection.SELL, fillQuantity: 6m)));
 
             Assert.AreEqual(1m + (5m + 4m) * 0.0001m, ledger.TotalValue("BTC"));
         }

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Newtonsoft.Json;
 using SpreadBot.Infrastructure;
@@ -18,7 +18,8 @@ namespace SpreadBot.Tests
   ""TryToRestoreSession"": true,
   ""MaxNumberOfBots"": 3,
   ""ResyncIntervalMs"": 60000,
-  ""CoinMarketCapApiKey"": ""cmc"",
+  ""ExchangeId"": ""kucoin"",
+  ""UseSandbox"": true,
   ""SpreadConfigurations"": [
     {
       ""BaseMarket"": ""ETH"",
@@ -56,7 +57,8 @@ namespace SpreadBot.Tests
             Assert.IsTrue(settings.TryToRestoreSession);
             Assert.AreEqual(3, settings.MaxNumberOfBots);
             Assert.AreEqual(60000, settings.ResyncIntervalMs);
-            Assert.AreEqual("cmc", settings.CoinMarketCapApiKey);
+            Assert.AreEqual("kucoin", settings.ExchangeId);
+            Assert.IsTrue(settings.UseSandbox);
         }
 
         [TestMethod]

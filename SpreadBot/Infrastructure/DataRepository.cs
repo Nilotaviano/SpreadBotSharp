@@ -1,5 +1,5 @@
 ﻿using SpreadBot.Infrastructure.Exchanges;
-using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
+using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
@@ -7,56 +7,30 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
-using RestSharp;
-using SpreadBot.Infrastructure.PriceAggregators;
 
 namespace SpreadBot.Infrastructure
 {
-    /*
-     * TODO list:
-     * Implement Rest API redundancy (make API calls every X minutes so that we have a fallback in case the Websocket becomes unreliable)
-     */
     public class DataRepository
     {
-        private Timer resyncTimer;
-        private int? lastBalanceSequence;
-        private int? lastSummarySequence;
-        private int? lastTickerSequence;
-        private int? lastOrderSequence;
+        private readonly Timer resyncTimer;
         private int resyncInProgress;
 
         //I know it's not a Semaphore, but it works like one
         private readonly System.Threading.ManualResetEvent consumeDataSemaphore = new System.Threading.ManualResetEvent(true);
-        private readonly AppSettings appSettings;
-        private string mostRecentClosedOrderId;
 
-        private Timer priceAggregatorRefreshTimer;
-        private CoinMarketCap priceAggregator;
+        private readonly BlockingCollection<BalanceData> pendingBalanceMessages = new BlockingCollection<BalanceData>();
+        private readonly BlockingCollection<IEnumerable<MarketData>> pendingMarketMessages = new BlockingCollection<IEnumerable<MarketData>>();
+        private readonly BlockingCollection<OrderData> pendingOrderMessages = new BlockingCollection<OrderData>();
 
         public DataRepository(IExchange exchange, AppSettings appSettings)
         {
             if (!exchange.IsSetup)
                 throw new ArgumentException("Exchange is not setup");
 
-            pendingBalanceMessages = new BlockingCollection<BittrexApiBalanceData>();
-            pendingMarketSummaryMessages = new BlockingCollection<BittrexApiMarketSummariesData>();
-            pendingOrderMessages = new BlockingCollection<BittrexApiOrderData>();
-            pendingTickersMessages = new BlockingCollection<BittrexApiTickersData>();
-
             Exchange = exchange;
-            this.appSettings = appSettings;
-            mostRecentClosedOrderId = null;
             resyncTimer = new Timer(appSettings.ResyncIntervalMs);
-            resyncTimer.Elapsed += ResyncTimer_Elapsed;
+            resyncTimer.Elapsed += (sender, e) => Resync();
             resyncTimer.AutoReset = false;
-
-            if (appSettings.CoinMarketCapApiKey != null)
-            {
-                priceAggregator = new CoinMarketCap(appSettings);
-                priceAggregatorRefreshTimer = new Timer(TimeSpan.FromMinutes(30).TotalMilliseconds);
-                priceAggregatorRefreshTimer.Elapsed += async (sender, e) => await UpdateMarketDataFromAggregator();
-                priceAggregatorRefreshTimer.AutoReset = true;
-            }
         }
 
         public IExchange Exchange { get; }
@@ -64,31 +38,26 @@ namespace SpreadBot.Infrastructure
         /// <summary>
         /// BalanceData dictionary indexed by CurrencyAbbreviation
         /// </summary>
-        public ConcurrentDictionary<string, BalanceData> BalancesData { get; private set; } = new ConcurrentDictionary<string, BalanceData>();
+        public ConcurrentDictionary<string, BalanceData> BalancesData { get; } = new ConcurrentDictionary<string, BalanceData>();
 
         /// <summary>
         /// MarketData dictionary indexed by Symbol
         /// </summary>
-        public ConcurrentDictionary<string, MarketData> MarketsData { get; private set; } = new ConcurrentDictionary<string, MarketData>();
+        public ConcurrentDictionary<string, MarketData> MarketsData { get; } = new ConcurrentDictionary<string, MarketData>();
 
         /// <summary>
-        /// MarketData dictionary indexed by Symbol
+        /// OrderData dictionary indexed by ClientOrderId
         /// </summary>
-        public ConcurrentDictionary<string, OrderData> OrdersData { get; private set; } = new ConcurrentDictionary<string, OrderData>();
+        public ConcurrentDictionary<string, OrderData> OrdersData { get; } = new ConcurrentDictionary<string, OrderData>();
 
         // key: currency abbreviation, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
-        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
-        // key: Guid — which will be used for unsubscribing, value: handlers 
-        private ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>> AllMarketHandlers { get; set; } = new ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>>();
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>> BalanceHandlers { get; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<BalanceData>>>();
+        // key: Guid — which will be used for unsubscribing, value: handlers
+        private ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>> AllMarketHandlers { get; } = new ConcurrentDictionary<Guid, Action<IEnumerable<MarketData>>>();
         // key: market symbol, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
-        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>> SpecificMarketHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>>();
-        // key: order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
-        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; set; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
-
-        private BlockingCollection<BittrexApiBalanceData> pendingBalanceMessages;
-        private BlockingCollection<BittrexApiMarketSummariesData> pendingMarketSummaryMessages;
-        private BlockingCollection<BittrexApiOrderData> pendingOrderMessages;
-        private BlockingCollection<BittrexApiTickersData> pendingTickersMessages;
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>> SpecificMarketHandlers { get; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<MarketData>>>();
+        // key: client order id, value: handlers dictionary indexed by a Guid — which will be used for unsubscribing
+        private ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>> OrderHandlers { get; } = new ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<OrderData>>>();
 
         public void SubscribeToMarketsData(Guid handlerGuid, Action<IEnumerable<MarketData>> evaluateMarkets)
         {
@@ -103,14 +72,12 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void SubscribeToCurrencyBalance(string currencyName, Guid handlerGuid, Action<BalanceData> callback)
         {
-            if (!BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
-                BalanceHandlers[currencyName] = handlers = new ConcurrentDictionary<Guid, Action<BalanceData>>();
-
+            var handlers = BalanceHandlers.GetOrAdd(currencyName, _ => new ConcurrentDictionary<Guid, Action<BalanceData>>());
             handlers[handlerGuid] = callback;
 
             //If there is already data for the currency balance, fire callback
-            if (BalancesData.ContainsKey(currencyName))
-                callback(BalancesData[currencyName]);
+            if (BalancesData.TryGetValue(currencyName, out var balance))
+                callback(balance);
         }
 
         /// <summary>
@@ -118,29 +85,25 @@ namespace SpreadBot.Infrastructure
         /// </summary>
         public void SubscribeToMarketData(string marketName, Guid handlerGuid, Action<MarketData> callback)
         {
-            if (!SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
-                SpecificMarketHandlers[marketName] = handlers = new ConcurrentDictionary<Guid, Action<MarketData>>();
-
+            var handlers = SpecificMarketHandlers.GetOrAdd(marketName, _ => new ConcurrentDictionary<Guid, Action<MarketData>>());
             handlers[handlerGuid] = callback;
 
             //If there is already data for the market, fire callback
-            if (MarketsData.ContainsKey(marketName))
-                callback(MarketsData[marketName]);
+            if (MarketsData.TryGetValue(marketName, out var market))
+                callback(market);
         }
 
         /// <summary>
-        /// Subscribe to a specific order by orderId
+        /// Subscribe to a specific order by its client order id
         /// </summary>
         public void SubscribeToOrderData(string clientOrderId, Guid handlerGuid, Action<OrderData> callback)
         {
-            if (!OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
-                OrderHandlers[clientOrderId] = handlers = new ConcurrentDictionary<Guid, Action<OrderData>>();
-
+            var handlers = OrderHandlers.GetOrAdd(clientOrderId, _ => new ConcurrentDictionary<Guid, Action<OrderData>>());
             handlers[handlerGuid] = callback;
 
-            //If there is already data for the market, fire callback
-            if (OrdersData.ContainsKey(clientOrderId))
-                callback(OrdersData[clientOrderId]);
+            //If there is already data for the order, fire callback
+            if (OrdersData.TryGetValue(clientOrderId, out var order))
+                callback(order);
         }
 
         public void UnsubscribeToMarketsData(Guid handlerGuid)
@@ -148,34 +111,21 @@ namespace SpreadBot.Infrastructure
             AllMarketHandlers.Remove(handlerGuid, out _);
         }
 
-        /// <summary>
-        /// Unsubscribe to a specific currency balance by currencyName
-        /// </summary>
         public void UnsubscribeToCurrencyBalance(string currencyName, Guid handlerGuid)
         {
-            if (BalanceHandlers.TryGetValue(currencyName, out ConcurrentDictionary<Guid, Action<BalanceData>> handlers))
-            {
+            if (BalanceHandlers.TryGetValue(currencyName, out var handlers))
                 handlers.Remove(handlerGuid, out _);
-            }
         }
 
-        /// <summary>
-        /// Unsubscribe to a specific market by marketName
-        /// </summary>
         public void UnsubscribeToMarketData(string marketName, Guid handlerGuid)
         {
-            if (SpecificMarketHandlers.TryGetValue(marketName, out ConcurrentDictionary<Guid, Action<MarketData>> handlers))
-            {
+            if (SpecificMarketHandlers.TryGetValue(marketName, out var handlers))
                 handlers.Remove(handlerGuid, out _);
-            }
         }
 
-        /// <summary>
-        /// Unsubscribe to a specific order by orderId
-        /// </summary>
         public void UnsubscribeToOrderData(string clientOrderId, Guid handlerGuid)
         {
-            if (OrderHandlers.TryGetValue(clientOrderId, out ConcurrentDictionary<Guid, Action<OrderData>> handlers))
+            if (OrderHandlers.TryGetValue(clientOrderId, out var handlers))
             {
                 handlers.Remove(handlerGuid, out _);
 
@@ -188,129 +138,31 @@ namespace SpreadBot.Infrastructure
 
         public void StartConsumingData()
         {
-            Logger.Instance.LogMessage("Start consuming WS data");
+            Logger.Instance.LogMessage("Start consuming exchange data");
 
             Exchange.OnBalance(pendingBalanceMessages.Add);
-            Exchange.OnSummaries(pendingMarketSummaryMessages.Add);
-            Exchange.OnTickers(pendingTickersMessages.Add);
+            Exchange.OnMarketData(pendingMarketMessages.Add);
             Exchange.OnOrder(pendingOrderMessages.Add);
+            Exchange.OnStreamInterrupted(RequestResync);
 
-            FetchAllData();
-            FetchOpenOrdersData().Wait();
-            UpdateMarketDataFromAggregator().Wait();
+            FetchAllData().Wait();
 
             resyncTimer.Start();
-            priceAggregatorRefreshTimer?.Start();
 
-            Task.Factory.StartNew(ConsumeBalanceData, System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            Task.Factory.StartNew(ConsumeOrderData, System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            Task.Factory.StartNew(ConsumeMarketSummaryData, System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            Task.Factory.StartNew(ConsumeTickersData, System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            StartConsumer(pendingBalanceMessages, UpdateBalanceData);
+            StartConsumer(pendingMarketMessages, UpdateMarketData);
+            StartConsumer(pendingOrderMessages, UpdateOrderData);
         }
 
-        private void ResumeConsumingData()
+        private void StartConsumer<T>(BlockingCollection<T> queue, Action<T> consumeAction)
         {
-            Logger.Instance.LogMessage("Resume consuming WS data");
-
-            //Resumes all threads that called WaitOne()
-            consumeDataSemaphore.Set();
-        }
-
-        private void StopConsumingData()
-        {
-            Logger.Instance.LogMessage("Stop consuming WS data");
-
-            //Pauses all threads that call WaitOne()
-            consumeDataSemaphore.Reset();
-        }
-
-        private void ConsumeBalanceData()
-        {
-            ConsumeData(pendingBalanceMessages, balanceData =>
-            {
-                if (lastBalanceSequence.HasValue && balanceData.Sequence <= lastBalanceSequence.Value)
-                {
-                    Logger.Instance.LogMessage("Balance WS data skipped");
-                    return;
-                }
-
-                var balance = new BalanceData(balanceData.Delta);
-
-                this.BalancesData[balance.CurrencyAbbreviation] = balance;
-
-                InvokeHandlers(this.BalanceHandlers, balance.CurrencyAbbreviation, balance);
-
-                lastBalanceSequence = balanceData.Sequence;
-            });
-        }
-
-        private void ConsumeOrderData()
-        {
-            ConsumeData(pendingOrderMessages, orderData =>
-            {
-                if (lastOrderSequence.HasValue && orderData.Sequence <= lastOrderSequence.Value)
-                {
-                    Logger.Instance.LogMessage("Order WS data skipped");
-                    return;
-                }
-
-                if (lastOrderSequence.HasValue && orderData.Sequence > lastOrderSequence.Value + 1)
-                {
-                    //Every later message would also fail the sequence check, so refetch orders now instead of waiting for the timer
-                    Logger.Instance.LogError($"Order WS sequence gap: expected {lastOrderSequence.Value + 1}, got {orderData.Sequence}. Resyncing");
-                    RequestResync();
-                    return;
-                }
-
-                var data = new OrderData(orderData);
-                OrdersData.AddOrUpdate(data.ClientOrderId, data, (id, existing) => existing.Status == Models.OrderStatus.CLOSED ? existing : data);
-
-                InvokeHandlers(this.OrderHandlers, data.ClientOrderId, data);
-
-                lastOrderSequence = orderData.Sequence;
-            });
-        }
-
-        private void ConsumeMarketSummaryData()
-        {
-            ConsumeData(pendingMarketSummaryMessages, summaryData =>
-            {
-                if (lastSummarySequence.HasValue && summaryData.Sequence <= lastSummarySequence.Value)
-                {
-                    Logger.Instance.LogMessage("MarketSummary WS data skipped");
-                    return;
-                }
-
-                var marketData = summaryData.Deltas.Select(delta => delta.ToMarketData());
-
-                UpdateMarketData(marketData);
-
-                lastSummarySequence = summaryData.Sequence;
-            });
-        }
-
-        private void ConsumeTickersData()
-        {
-            ConsumeData(pendingTickersMessages, tickersData =>
-            {
-                if (lastTickerSequence.HasValue && tickersData.Sequence <= lastTickerSequence.Value)
-                {
-                    Logger.Instance.LogMessage("Ticker WS data skipped");
-                    return;
-                }
-
-                var marketData = tickersData.Deltas.Select(delta => delta.ToMarketData());
-
-                UpdateMarketData(marketData);
-
-                lastTickerSequence = tickersData.Sequence;
-            });
+            Task.Factory.StartNew(() => ConsumeData(queue, consumeAction), System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
         private void ConsumeData<T>(BlockingCollection<T> queue, Action<T> consumeAction)
         {
             var typeName = typeof(T).Name;
-            Logger.Instance.LogMessage($"Start {typeName} WS consumption");
+            Logger.Instance.LogMessage($"Start {typeName} stream consumption");
 
             foreach (var data in queue.GetConsumingEnumerable())
             {
@@ -322,35 +174,43 @@ namespace SpreadBot.Infrastructure
                 }
                 catch (Exception e)
                 {
-                    Logger.Instance.LogUnexpectedError($"Error consuming {typeName} WS data: {e}");
+                    Logger.Instance.LogUnexpectedError($"Error consuming {typeName} stream data: {e}");
                 }
             }
 
-            Logger.Instance.LogUnexpectedError($"Stopped {typeName} WS data consumption");
+            Logger.Instance.LogUnexpectedError($"Stopped {typeName} stream consumption");
+        }
+
+        private void UpdateBalanceData(BalanceData balance)
+        {
+            BalancesData[balance.CurrencyAbbreviation] = balance;
+            InvokeHandlers(BalanceHandlers, balance.CurrencyAbbreviation, balance);
+        }
+
+        private void UpdateOrderData(OrderData order)
+        {
+            //A closed order is final; a late open update must not reopen it
+            var current = OrdersData.AddOrUpdate(order.ClientOrderId, order, (id, existing) => existing.Status == OrderStatus.CLOSED ? existing : order);
+
+            InvokeHandlers(OrderHandlers, order.ClientOrderId, current);
         }
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
         {
-            foreach (var market in marketData)
-                UpdateMarketData(market);
+            var updated = marketData
+                .Select(data => MarketsData.AddOrUpdate(data.Symbol, data, (key, existingData) => MergeMarketData(existingData, data)))
+                .ToList();
+
+            foreach (var market in updated)
+                InvokeHandlers(SpecificMarketHandlers, market.Symbol, market);
+
+            InvokeHandlers(AllMarketHandlers, updated);
         }
 
-        private void UpdateMarketData(MarketData data)
-        {
-            var newData = this.MarketsData.AddOrUpdate(data.Symbol,
-                                                        data,
-                                                        (key, existingData) => this.MergeMarketData(existingData, data));
-            InvokeHandlers(this.SpecificMarketHandlers, data.Symbol, newData);
-
-            InvokeHandlers(AllMarketHandlers, new MarketData[] { newData });
-        }
-
-        private void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
+        private static void InvokeHandlers<T>(ConcurrentDictionary<string, ConcurrentDictionary<Guid, Action<T>>> handlersDict, string key, T data)
         {
             if (handlersDict.TryGetValue(key, out var handlers))
-            {
                 InvokeHandlers(handlers, data);
-            }
         }
 
         private static void InvokeHandlers<T>(ConcurrentDictionary<Guid, Action<T>> handlers, T data)
@@ -359,139 +219,52 @@ namespace SpreadBot.Infrastructure
                 handler?.Invoke(data);
         }
 
-        private void FetchAllData()
+        private async Task FetchAllData()
         {
-            Task.WaitAll(
-                FetchBalanceData(),
-                FetchMarketSummariesData(),
-                FetchTickersData(),
-                FetchOpenOrdersData(),
-                FetchClosedOrdersData(),
-                FetchMarketsData()
-            );
+            var balances = Exchange.GetBalances();
+            var markets = Exchange.GetMarkets();
+            var tickers = Exchange.GetTickers();
+            var openOrders = Exchange.GetOpenOrders();
+
+            await Task.WhenAll(balances, markets, tickers, openOrders);
+
+            foreach (var balance in balances.Result)
+                UpdateBalanceData(balance);
+
+            UpdateMarketData(markets.Result);
+            UpdateMarketData(tickers.Result);
+
+            foreach (var order in openOrders.Result)
+                UpdateOrderData(order);
+
+            await FetchTrackedOrdersNoLongerOpen(openOrders.Result);
         }
 
-        private async Task FetchBalanceData()
+        /// <summary>
+        /// Orders a bot is waiting on that the exchange no longer lists as open have filled or been cancelled while
+        /// the stream wasn't delivering; fetch each one for its final state.
+        /// </summary>
+        private async Task FetchTrackedOrdersNoLongerOpen(IReadOnlyList<OrderData> openOrders)
         {
-            Logger.Instance.LogMessage("Start resyncing balance");
-            //TODO: Handle exceptions here
-            var balances = await Exchange.GetBalanceData();
+            var openIds = new HashSet<string>(openOrders.Select(o => o.ClientOrderId));
+            var missing = OrdersData.Values
+                .Where(o => o.Status == OrderStatus.OPEN && !openIds.Contains(o.ClientOrderId) && OrderHandlers.ContainsKey(o.ClientOrderId))
+                .ToList();
 
-            if (balances.Balances != null)
+            foreach (var order in missing)
             {
-                foreach (var balance in balances.Balances)
+                try
                 {
-                    BalancesData[balance.CurrencyAbbreviation] = balance;
-                    InvokeHandlers(BalanceHandlers, balance.CurrencyAbbreviation, balance);
+                    UpdateOrderData(await Exchange.GetOrder(order.Id, order.MarketSymbol));
+                }
+                catch (Exception e)
+                {
+                    Logger.Instance.LogError($"Could not fetch order {order.Id} on {order.MarketSymbol} during resync: {e.Message}");
                 }
             }
-
-            lastBalanceSequence = balances.Sequence;
-            Logger.Instance.LogMessage("Finished resyncing balance");
         }
 
-        private async Task FetchMarketSummariesData()
-        {
-            Logger.Instance.LogMessage("Start resyncing market summaries");
-            //TODO: Handle exceptions here
-            var summaries = await Exchange.GetMarketSummariesData();
-
-            if (summaries.Deltas != null)
-            {
-                foreach (var summary in summaries.Deltas)
-                {
-                    var marketData = summary.ToMarketData();
-                    UpdateMarketData(marketData);
-                }
-            }
-
-            lastSummarySequence = summaries.Sequence;
-            Logger.Instance.LogMessage("Finished resyncing market summaries");
-        }
-
-        private async Task FetchTickersData()
-        {
-            Logger.Instance.LogMessage("Start resyncing tickers");
-
-            //TODO: Handle exceptions here
-            var tickers = await Exchange.GetTickersData();
-
-            if (tickers.Deltas != null)
-            {
-                foreach (var ticker in tickers.Deltas)
-                {
-                    var marketData = ticker.ToMarketData();
-                    UpdateMarketData(marketData);
-                }
-            }
-
-            lastTickerSequence = tickers.Sequence;
-            Logger.Instance.LogMessage("Finished resyncing tickers");
-        }
-
-
-        private async Task FetchMarketsData()
-        {
-            Logger.Instance.LogMessage("Start resyncing markets");
-            //TODO: Handle exceptions here
-            var markets = await Exchange.GetMarketsData();
-
-            if (markets != null)
-            {
-                foreach (var market in markets)
-                {
-                    var marketData = market.ToMarketData();
-                    UpdateMarketData(marketData);
-                }
-            }
-            Logger.Instance.LogMessage("Finished resyncing markets");
-        }
-
-        private async Task FetchOpenOrdersData()
-        {
-            Logger.Instance.LogMessage("Start resyncing open orders");
-            //TODO: Handle exceptions here
-            var openOrders = await Exchange.GetOpenOrdersData();
-
-            if (openOrders.Data != null && openOrders.Data.Any())
-            {
-                foreach (var order in openOrders.Data)
-                {
-                    var orderData = new OrderData(order);
-                    OrdersData[orderData.ClientOrderId] = orderData;
-                    InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
-                }
-            }
-
-            // There is no sequence information in OpenOrders
-            lastOrderSequence = null;
-            Logger.Instance.LogMessage("Finished resyncing open orders");
-        }
-
-        private async Task FetchClosedOrdersData()
-        {
-            Logger.Instance.LogMessage("Start resyncing closed orders");
-            //TODO: Handle exceptions here
-            var closedOrders = await Exchange.GetClosedOrdersData(mostRecentClosedOrderId);
-
-            if (closedOrders.Data != null && closedOrders.Data.Any())
-            {
-                mostRecentClosedOrderId = closedOrders.Data?.FirstOrDefault()?.Id;
-
-                foreach (var order in closedOrders.Data)
-                {
-                    var orderData = new OrderData(order);
-                    OrdersData[orderData.ClientOrderId] = orderData;
-                    InvokeHandlers(OrderHandlers, orderData.ClientOrderId, orderData);
-                }
-            }
-
-            // There is no sequence information in ClosedOrders
-            lastOrderSequence = null;
-            Logger.Instance.LogMessage("Finished resyncing closed orders");
-        }
-
-        private MarketData MergeMarketData(MarketData existingData, MarketData data)
+        private static MarketData MergeMarketData(MarketData existingData, MarketData data)
         {
             return new MarketData
             {
@@ -505,19 +278,13 @@ namespace SpreadBot.Infrastructure
                 UpdatedAt = data.UpdatedAt ?? existingData.UpdatedAt,
                 Volume = data.Volume ?? existingData.Volume,
                 Symbol = data.Symbol ?? existingData.Symbol,
-                Precision = data.Precision ?? existingData.Precision,
+                PriceTick = data.PriceTick ?? existingData.PriceTick,
                 MinTradeSize = data.MinTradeSize ?? existingData.MinTradeSize,
                 Notice = data.Notice ?? existingData.Notice,
                 CreatedAt = data.CreatedAt ?? existingData.CreatedAt,
-                AggregatorQuote = data.AggregatorQuote ?? existingData.AggregatorQuote,
                 Status = data.Status ?? existingData.Status,
                 IsTokenizedSecurity = data.IsTokenizedSecurity ?? existingData.IsTokenizedSecurity
             };
-        }
-
-        private void ResyncTimer_Elapsed(object sender, ElapsedEventArgs e)
-        {
-            Resync();
         }
 
         private void RequestResync()
@@ -535,9 +302,10 @@ namespace SpreadBot.Infrastructure
             {
                 Logger.Instance.LogMessage("Resyncing data");
 
-                StopConsumingData();
+                //Pauses all consumers that call WaitOne()
+                consumeDataSemaphore.Reset();
 
-                FetchAllData();
+                FetchAllData().Wait();
 
                 Logger.Instance.LogMessage("Resync completed");
             }
@@ -547,25 +315,9 @@ namespace SpreadBot.Infrastructure
             }
             finally
             {
-                ResumeConsumingData();
+                consumeDataSemaphore.Set();
                 System.Threading.Interlocked.Exchange(ref resyncInProgress, 0);
                 resyncTimer.Start();
-            }
-        }
-
-        private async Task UpdateMarketDataFromAggregator()
-        {
-            if (priceAggregator == null)
-                return;
-
-            try
-            {
-                var latestQuotes = await priceAggregator.GetLatestQuotes(MarketsData.Values.Where(m => appSettings.SpreadConfigurations.Any(s => s.BaseMarket.Equals(m.BaseMarket))).Select(v => v.Target));
-                UpdateMarketData(latestQuotes);
-            }
-            catch (Exception e)
-            {
-                Logger.Instance.LogUnexpectedError($"Unexpected exception on UpdateMarketDataFromAggregator: {e}");
             }
         }
     }

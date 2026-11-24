@@ -106,6 +106,7 @@ namespace SpreadBot.Logic
             if (botContext.CurrentOrderData != null)
             {
                 var clientOrderId = botContext.CurrentOrderData.ClientOrderId;
+                var orderId = botContext.CurrentOrderData.Id;
                 var isCached = dataRepository.OrdersData.ContainsKey(clientOrderId);
 
                 //Replays the cached order state, if any, and keeps delivering updates until the order closes
@@ -115,7 +116,7 @@ namespace SpreadBot.Logic
                 {
                     try
                     {
-                        var updatedOrder = await dataRepository.Exchange.GetOrderData(clientOrderId);
+                        var updatedOrder = await dataRepository.Exchange.GetOrder(orderId, MarketSymbol);
 
                         if (updatedOrder != null)
                             ProcessMessage(updatedOrder);
@@ -233,12 +234,13 @@ namespace SpreadBot.Logic
                     //Nevermind the above, the WS message may be lost
                     var currentOrderId = botContext.CurrentOrderData?.Id;
                     if (currentOrderId != null)
-                        await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrderData(currentOrderId));
+                        await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrder(currentOrderId, MarketSymbol));
                     else
                         LogMessage("ORDER_NOT_OPEN with no current order: it was already closed and processed");
                     break;
                 case ApiErrorType.MarketOffline:
                 case ApiErrorType.Throttled:
+                case ApiErrorType.RetryLater:
                     //Do nothing, try again on the next cycle
                     LogError($"{e.ApiErrorType}: {e}");
                     break;
@@ -304,8 +306,8 @@ namespace SpreadBot.Logic
         /// </summary>
         private async Task<decimal> GetUnclaimedCoinsFromExchange(string currency)
         {
-            var balances = await exchange.GetBalanceData();
-            var available = balances.Balances?.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
+            var balances = await exchange.GetBalances();
+            var available = balances.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
 
             return Math.Max(available - balanceLedger.ClaimedByOtherBots(currency, this), 0);
         }
@@ -391,7 +393,7 @@ namespace SpreadBot.Logic
             switch (orderData?.Direction)
             {
                 case OrderDirection.BUY:
-                    botContext.HeldAmount += orderData.FillQuantity;
+                    botContext.HeldAmount += orderData.FillQuantity - orderData.CoinCommission;
                     botContext.Balance -= orderData.Proceeds + orderData.Commission;
                     //A buy cancelled without fills bought nothing: the price and the loss timer stay those of the coins already held
                     if (orderData.FillQuantity > 0)
@@ -401,7 +403,7 @@ namespace SpreadBot.Logic
                     }
                     break;
                 case OrderDirection.SELL:
-                    botContext.HeldAmount -= orderData.FillQuantity;
+                    botContext.HeldAmount -= orderData.FillQuantity + orderData.CoinCommission;
                     // TODO: This may break when recovering a bot after the order was closed because the balance was already integrated with total balance
                     botContext.Balance += orderData.Proceeds - orderData.Commission;
                     break;
@@ -467,7 +469,7 @@ namespace SpreadBot.Logic
             OrderData sellOrder = null;
             try
             {
-                sellOrder = await exchange.SellMarket(MarketSymbol, coinsToSell.CeilToPrecision(botContext.LatestMarketData.Precision));
+                sellOrder = await exchange.SellMarket(MarketSymbol, coinsToSell);
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.RetryLater && retry) //Try just once more. TODO: Investigate if any more ApiErrorTypes should go here
             {

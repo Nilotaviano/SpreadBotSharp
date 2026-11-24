@@ -23,7 +23,7 @@ namespace SpreadBot.Tests
                 MinutesForLoss = 30,
                 MinimumProfitPercentage = 0.5m
             };
-            var market = new MarketData { Symbol = "NMR-BTC", BidRate = 0.00009999m, AskRate = 0.00010101m, Precision = 8 };
+            var market = new MarketData { Symbol = "NMR/BTC", BidRate = 0.00009999m, AskRate = 0.00010101m, PriceTick = MockExchange.Tick };
             var context = new BotContext(configuration, market, BotState.Buying, 0.25m)
             {
                 Balance = 0.0004m,
@@ -42,7 +42,7 @@ namespace SpreadBot.Tests
             var session = new PreviousSessionContext
             {
                 BotContexts = new List<BotContext> { context },
-                DustPerMarket = new Dictionary<string, decimal> { ["XYZ-BTC"] = 0.5m }
+                DustPerMarket = new Dictionary<string, decimal> { ["XYZ/BTC"] = 0.5m }
             };
 
             var json = JsonConvert.SerializeObject(session, Formatting.Indented);
@@ -55,13 +55,13 @@ namespace SpreadBot.Tests
             Assert.AreEqual(BotState.SellOrderActive, bot.BotState);
             Assert.AreEqual(0.0001m, bot.BoughtPrice);
             Assert.AreEqual(new System.DateTime(2026, 11, 24, 12, 0, 0, System.DateTimeKind.Utc), bot.BuyFilledAt.Value.ToUniversalTime());
-            Assert.AreEqual("NMR-BTC", bot.LatestMarketData.Symbol);
+            Assert.AreEqual("NMR/BTC", bot.LatestMarketData.Symbol);
             Assert.AreEqual(0.00010101m, bot.LatestMarketData.AskRate.Value);
-            Assert.AreEqual(8, bot.LatestMarketData.Precision.Value);
+            Assert.AreEqual(MockExchange.Tick, bot.LatestMarketData.PriceTick.Value);
             Assert.AreEqual("client-1", bot.CurrentOrderData.ClientOrderId);
             Assert.AreEqual(OrderStatus.OPEN, bot.CurrentOrderData.Status);
             Assert.AreEqual(0.000101m, bot.CurrentOrderData.Limit);
-            Assert.AreEqual(0.5m, restored.DustPerMarket["XYZ-BTC"]);
+            Assert.AreEqual(0.5m, restored.DustPerMarket["XYZ/BTC"]);
         }
 
         [TestMethod]
@@ -79,11 +79,11 @@ namespace SpreadBot.Tests
       ""HeldAmount"": 0.25,
       ""BotState"": 3,
       ""CurrentOrderData"": null,
-      ""LatestMarketData"": { ""Symbol"": ""NMR-BTC"", ""BidRate"": 0.00009999, ""AskRate"": 0.00010101, ""Precision"": 8 },
+      ""LatestMarketData"": { ""Symbol"": ""NMR/BTC"", ""BidRate"": 0.00009999, ""AskRate"": 0.00010101, ""Precision"": 8 },
       ""BoughtPrice"": 0.0001
     }
   ],
-  ""DustPerMarket"": { ""XYZ-BTC"": 0.5 }
+  ""DustPerMarket"": { ""XYZ/BTC"": 0.5 }
 }";
 
             var restored = JsonConvert.DeserializeObject<PreviousSessionContext>(savedByOlderBuild);
@@ -94,10 +94,10 @@ namespace SpreadBot.Tests
             Assert.AreEqual(0.0004m, bot.Balance);
             Assert.AreEqual(0.25m, bot.HeldAmount);
             Assert.AreEqual(BotState.SellOrderActive, bot.BotState);
-            Assert.AreEqual("NMR-BTC", bot.LatestMarketData.Symbol);
+            Assert.AreEqual("NMR/BTC", bot.LatestMarketData.Symbol);
             Assert.IsNull(bot.CurrentOrderData);
             Assert.IsNull(bot.BuyFilledAt);
-            Assert.AreEqual(0.5m, restored.DustPerMarket["XYZ-BTC"]);
+            Assert.AreEqual(0.5m, restored.DustPerMarket["XYZ/BTC"]);
         }
     }
 }

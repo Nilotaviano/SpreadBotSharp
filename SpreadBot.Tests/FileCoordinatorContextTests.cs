@@ -41,7 +41,7 @@ namespace SpreadBot.Tests
         [DataRow(@"{ ""BotContexts"": [null] }")]
         [DataRow(@"{ ""BotContexts"": [{}] }")] // e.g. a renamed BotContext member: the constructor gets no configuration
         [DataRow(@"{ ""BotContexts"": [{ ""spreadConfiguration"": { ""BaseMarket"": ""BTC"" } }] }")]
-        [DataRow(@"{ ""BotContexts"": [{ ""spreadConfiguration"": { ""BaseMarket"": ""BTC"" }, ""LatestMarketData"": { ""Symbol"": ""NMR-BTC"" }, ""CurrentOrderData"": { ""Id"": ""1"" } }] }")]
+        [DataRow(@"{ ""BotContexts"": [{ ""spreadConfiguration"": { ""BaseMarket"": ""BTC"" }, ""LatestMarketData"": { ""Symbol"": ""NMR/BTC"" }, ""CurrentOrderData"": { ""Id"": ""1"" } }] }")]
         public void SessionFileThatCannotBeRestored_IsMovedAsideInsteadOfOverwritten(string content)
         {
             InTemporaryDirectory(directory =>
@@ -74,7 +74,7 @@ namespace SpreadBot.Tests
         private static (Bot bot, BotContext context) BotToSave(BotState state)
         {
             var repository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 600000 });
-            var botContext = new BotContext(new SpreadConfiguration { BaseMarket = "BTC" }, new MarketData { Symbol = "NMR-BTC" }, state, 10);
+            var botContext = new BotContext(new SpreadConfiguration { BaseMarket = "BTC" }, new MarketData { Symbol = "NMR/BTC" }, state, 10);
             return (new Bot(repository, botContext, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)), botContext);
         }
 

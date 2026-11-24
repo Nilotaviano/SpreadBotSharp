@@ -1,40 +1,46 @@
-﻿using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
-using SpreadBot.Models;
-using SpreadBot.Models.Repository;
+﻿using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Infrastructure.Exchanges
 {
+    /// <summary>
+    /// Exchange-neutral seam. Symbols are in CCXT's "BASE/QUOTE" form (e.g. "NMR/BTC").
+    /// Methods throw <see cref="Models.ApiException"/> with an <see cref="Models.ApiErrorType"/> for exchange-reported failures.
+    /// </summary>
     public interface IExchange
     {
         bool IsSetup { get; }
 
         decimal FeeRate { get; }
 
-        Task Setup();
+        /// <summary>
+        /// Loads markets and starts the streams for the given quote currencies.
+        /// </summary>
+        Task Setup(IEnumerable<string> quoteCurrencies);
 
-        //Websocket subscription methods
-        //For exchanges that don't support websockets, use an interval-based cycle to call equivalent API methods to simulate Websocket behavior
-        void OnBalance(Action<BittrexApiBalanceData> callback);
-        void OnSummaries(Action<BittrexApiMarketSummariesData> callback);
-        void OnTickers(Action<BittrexApiTickersData> callback);
-        void OnOrder(Action<BittrexApiOrderData> callback);
+        //Streams: callbacks run on the exchange's stream threads
+        void OnBalance(Action<BalanceData> callback);
+        void OnMarketData(Action<IEnumerable<MarketData>> callback);
+        void OnOrder(Action<OrderData> callback);
 
-        //Rest API methods
-        Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
-        Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit, string clientOrderId = null);
-        Task<OrderData> BuyMarket(string marketSymbol, decimal quantity);
+        /// <summary>
+        /// Raised when a stream failed or reconnected, so updates may have been missed and state must be refetched.
+        /// </summary>
+        void OnStreamInterrupted(Action callback);
+
+        //Snapshots
+        Task<IReadOnlyList<BalanceData>> GetBalances();
+        Task<IReadOnlyList<MarketData>> GetMarkets();
+        Task<IReadOnlyList<MarketData>> GetTickers();
+        Task<IReadOnlyList<OrderData>> GetOpenOrders();
+        Task<OrderData> GetOrder(string orderId, string marketSymbol);
+
+        //Orders
+        Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
+        Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> SellMarket(string marketSymbol, decimal quantity);
-        Task<OrderData> CancelOrder(string orderId);
-
-        Task<CompleteBalanceData> GetBalanceData();
-        Task<BittrexApiTickersData> GetTickersData();
-        Task<BittrexApiMarketSummariesData> GetMarketSummariesData();
-        Task<BittrexApiMarketData[]> GetMarketsData();
-        Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetClosedOrdersData(string startAfterOrderId);
-        Task<ApiRestResponse<BittrexApiOrderData.Order[]>> GetOpenOrdersData();
-
-        Task<OrderData> GetOrderData(string orderId);
+        Task<OrderData> CancelOrder(string orderId, string marketSymbol);
     }
 }

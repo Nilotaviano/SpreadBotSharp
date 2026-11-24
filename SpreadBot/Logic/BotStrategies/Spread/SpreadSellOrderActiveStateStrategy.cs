@@ -17,7 +17,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
                 bool currentAskAboveMinimumProfitTarget = botContext.LatestMarketData.AskRate > botContext.BoughtPrice * (1 + botContext.spreadConfiguration.MinimumProfitPercentage / 100);
 
                 if (canSellAtLoss || currentAskAboveMinimumProfitTarget)
-                    await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id));
+                    await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id, botContext.LatestMarketData.Symbol));
             }
         }
     }

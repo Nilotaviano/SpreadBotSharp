@@ -1,18 +1,7 @@
-﻿using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
-
-namespace SpreadBot.Models.Repository
+﻿namespace SpreadBot.Models.Repository
 {
     public class BalanceData : IMessage
     {
-        public BalanceData() { }
-
-        public BalanceData(BittrexApiBalanceData.Balance balance)
-        {
-            CurrencyAbbreviation = balance.CurrencySymbol;
-            Amount = balance.Available;
-            Total = balance.Total;
-        }
-
         public MessageType MessageType => MessageType.BalanceData;
 
         public string CurrencyAbbreviation { get; set; }

@@ -1,4 +1,4 @@
-using SpreadBot.Infrastructure;
+﻿using SpreadBot.Infrastructure;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
@@ -108,13 +108,13 @@ namespace SpreadBot.Logic
         /// </summary>
         private static decimal AvailableCoinsHeldBy(Bot bot, OrderData order)
         {
-            //Sold coins are gone. The rest is locked in the order, unless the order is closed or a request may have just unlocked it
+            //Sold coins and fees taken in the coin are gone. The rest is locked in the order, unless the order is closed or a request may have just unlocked it
             if (Is(order, OrderDirection.SELL))
-                return MayBeUnlocked(bot, order) ? bot.HeldAmount - order.FillQuantity : 0;
+                return MayBeUnlocked(bot, order) ? bot.HeldAmount - order.FillQuantity - order.CoinCommission : 0;
 
-            //Coins from the buy's fills are already in Available
+            //Coins from the buy's fills, net of fees taken in the coin, are already in Available
             if (Is(order, OrderDirection.BUY))
-                return bot.HeldAmount + order.FillQuantity;
+                return bot.HeldAmount + order.FillQuantity - order.CoinCommission;
 
             return bot.HeldAmount;
         }
@@ -122,10 +122,10 @@ namespace SpreadBot.Logic
         private static decimal CoinsOwnedBy(Bot bot, OrderData order)
         {
             if (Is(order, OrderDirection.SELL))
-                return bot.HeldAmount - order.FillQuantity;
+                return bot.HeldAmount - order.FillQuantity - order.CoinCommission;
 
             if (Is(order, OrderDirection.BUY))
-                return bot.HeldAmount + order.FillQuantity;
+                return bot.HeldAmount + order.FillQuantity - order.CoinCommission;
 
             return bot.HeldAmount;
         }

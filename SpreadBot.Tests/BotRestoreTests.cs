@@ -1,7 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
-using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
 using SpreadBot.Logic;
 using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
@@ -15,7 +14,7 @@ namespace SpreadBot.Tests
     [TestClass]
     public class BotRestoreTests
     {
-        private const string Symbol = "NMR-BTC";
+        private const string Symbol = "NMR/BTC";
         private const string SellOrderId = "sell-1";
 
         private static BotContext RestoredContextWithOpenSellOrder()
@@ -27,7 +26,7 @@ namespace SpreadBot.Tests
                 MinimumNegotiatedAmount = 0.001m,
                 MinutesForLoss = 30
             };
-            var market = new MarketData { Symbol = Symbol, BidRate = 0.00009999m, AskRate = 0.00010101m, Precision = 8 };
+            var market = new MarketData { Symbol = Symbol, BidRate = 0.00009999m, AskRate = 0.00010101m, PriceTick = MockExchange.Tick };
 
             return new BotContext(configuration, market, BotState.Buying, 0)
             {
@@ -62,7 +61,7 @@ namespace SpreadBot.Tests
         {
             var exchange = new MockExchange();
             exchange.Mock
-                .Setup(e => e.GetOrderData(SellOrderId))
+                .Setup(e => e.GetOrder(SellOrderId, Symbol))
                 .ThrowsAsync(new ApiException(ApiErrorType.UnknownError, "exchange unavailable"));
 
             var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 60000 });
@@ -72,23 +71,20 @@ namespace SpreadBot.Tests
             var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
             bot.Start();
 
-            exchange.Mock.Verify(e => e.GetOrderData(SellOrderId), Times.Once);
+            exchange.Mock.Verify(e => e.GetOrder(SellOrderId, Symbol), Times.Once);
 
-            exchange.OnOrder(new BittrexApiOrderData
+            exchange.OnOrder(new OrderData
             {
-                Sequence = 1,
-                Delta = new BittrexApiOrderData.Order
-                {
-                    Id = SellOrderId,
-                    Direction = OrderDirection.SELL,
-                    Status = OrderStatus.CLOSED,
-                    Limit = 0.0001m,
-                    Quantity = 20,
-                    FillQuantity = 20,
-                    Proceeds = 0.002m,
-                    Commission = 0,
-                    MarketSymbol = Symbol
-                }
+                ClientOrderId = SellOrderId,
+                Id = SellOrderId,
+                Direction = OrderDirection.SELL,
+                Status = OrderStatus.CLOSED,
+                Limit = 0.0001m,
+                Quantity = 20,
+                FillQuantity = 20,
+                Proceeds = 0.002m,
+                Commission = 0,
+                MarketSymbol = Symbol
             });
 
             WaitUntil(() => context.BotState == BotState.Buying && context.SemaphoreCurrentCount == 1, "the sell fill is processed");
@@ -104,7 +100,7 @@ namespace SpreadBot.Tests
         {
             var exchange = new MockExchange();
             exchange.Mock
-                .Setup(e => e.GetOrderData(SellOrderId))
+                .Setup(e => e.GetOrder(SellOrderId, Symbol))
                 .ReturnsAsync(new OrderData
                 {
                     Id = SellOrderId,
@@ -131,6 +127,40 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void BuyFill_WithFeeTakenInTheCoin_HoldsTheNetAmount()
+        {
+            const string buyOrderId = "buy-1";
+            var exchange = new MockExchange();
+            var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 60000 });
+            dataRepository.StartConsumingData();
+
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.0001m };
+            var context = new BotContext(configuration, new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick, AskRate = 0.0001m }, BotState.BuyOrderActive, 0)
+            {
+                Balance = 0.002m,
+                CurrentOrderData = new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN }
+            };
+            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+
+            exchange.OnOrder(new OrderData
+            {
+                Id = buyOrderId,
+                ClientOrderId = buyOrderId,
+                MarketSymbol = Symbol,
+                Direction = OrderDirection.BUY,
+                Status = OrderStatus.CLOSED,
+                FillQuantity = 20,
+                Proceeds = 0.002m,
+                CoinCommission = 0.02m
+            });
+
+            WaitUntil(() => context.CurrentOrderData == null && context.SemaphoreCurrentCount == 1, "the buy fill is processed");
+
+            Assert.AreEqual(19.98m, context.HeldAmount);
+            Assert.AreEqual(0m, context.Balance);
+        }
+
+        [TestMethod]
         public void Start_WithHeldCoinsButNoFillTime_StartsTheLossTimer()
         {
             var dataRepository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 60000 });
@@ -151,7 +181,7 @@ namespace SpreadBot.Tests
         {
             var dataRepository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 60000 });
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.001m };
-            var market = new MarketData { Symbol = Symbol, Precision = 8 };
+            var market = new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick };
 
             var bot = new Bot(dataRepository, configuration, market, 20, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
             bot.Start();

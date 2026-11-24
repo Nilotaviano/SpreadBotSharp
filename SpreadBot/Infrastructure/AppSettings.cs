@@ -11,12 +11,12 @@ namespace SpreadBot.Infrastructure
 
         public bool TryToRestoreSession { get; set; }
 
+        public string ExchangeId { get; set; } = "binance"; //A ccxt.pro exchange id
+        public bool UseSandbox { get; set; } //The exchange's testnet, when CCXT supports one
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
         public int ResyncIntervalMs { get; set; }
-
-        public string CoinMarketCapApiKey { get; set; }
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 
@@ -40,7 +40,7 @@ namespace SpreadBot.Infrastructure
         public decimal MinimumPrice { get; set; }
         public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
         public decimal AllocatedAmountOfBaseCurrency { get; set; }
-        public decimal SpreadThresholdBeforeCancelingCurrentOrder { get; set; } = 1.Satoshi(); //default 1 satoshi, but should be set higher, I think
+        public decimal SpreadThresholdBeforeCancelingCurrentOrder { get; set; } = 0.00000001m; //Any price move of at least one tick, but should be set higher, I think
         public int MinutesForLoss { get; set; }
         public decimal MinimumProfitPercentage { get; set; } //Bot will try to sell with at least this amount of profit, until past the MinutesForLoss threshold
         public bool AvoidTokenizedSecurities { get; set; }

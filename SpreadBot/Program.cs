@@ -1,10 +1,11 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
 using SpreadBot.Infrastructure;
-using SpreadBot.Infrastructure.Exchanges.Bittrex;
+using SpreadBot.Infrastructure.Exchanges.Ccxt;
 using SpreadBot.Logic;
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace SpreadBot
@@ -55,10 +56,10 @@ namespace SpreadBot
 
             NetProfitRecorder.Instance.AppSettings = appSettings;
 
-            var bittrex = new BittrexClient(appSettings.ApiKey, appSettings.ApiSecret);
-            await bittrex.Setup();
+            var exchange = new CcxtExchange(appSettings.ExchangeId, appSettings.ApiKey, appSettings.ApiSecret, appSettings.UseSandbox);
+            await exchange.Setup(appSettings.SpreadConfigurations.Select(c => c.BaseMarket).Distinct());
 
-            var dataRepository = new DataRepository(bittrex, appSettings);
+            var dataRepository = new DataRepository(exchange, appSettings);
             dataRepository.StartConsumingData();
 
             var coordinatorContext = new FileCoordinatorContext();
