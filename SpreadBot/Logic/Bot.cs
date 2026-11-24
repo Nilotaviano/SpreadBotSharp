@@ -24,6 +24,9 @@ namespace SpreadBot.Logic
 
         private readonly Timer processingMessageTimeExceededTimer;
 
+        private const int MaxInsufficientFundsRetries = 3;
+        private int consecutiveInsufficientFundsRejections;
+
 
         public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory)
         {
@@ -247,10 +250,16 @@ namespace SpreadBot.Logic
             var currency = botContext.LatestMarketData.Target;
             var balances = await exchange.GetBalanceData();
             var available = balances.Balances?.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
+            consecutiveInsufficientFundsRejections++;
 
-            if (available >= HeldAmount)
+            if (available >= HeldAmount && consecutiveInsufficientFundsRejections < MaxInsufficientFundsRetries)
             {
                 LogError($"Sell rejected for insufficient funds, but the exchange shows {available}{currency} available for {HeldAmount}{currency} held; retrying");
+            }
+            else if (available >= HeldAmount)
+            {
+                LogUnexpectedError($"Sell rejected for insufficient funds {consecutiveInsufficientFundsRejections} times although the exchange shows {available}{currency} available for {HeldAmount}{currency} held; finishing");
+                await FinishWork();
             }
             else if (available >= HeldAmount * (1 - tolerance))
             {
@@ -259,7 +268,9 @@ namespace SpreadBot.Logic
             }
             else
             {
-                LogUnexpectedError($"Exchange shows {available}{currency} available but the bot holds {HeldAmount}{currency}, beyond the {tolerance:P0} tolerance; finishing");
+                //Only what the exchange holds can be cleaned up or recorded as dust
+                LogUnexpectedError($"Exchange shows {available}{currency} available but the bot holds {HeldAmount}{currency}, beyond the {tolerance:P0} tolerance; finishing with the available amount");
+                botContext.HeldAmount = Math.Max(available, 0);
                 await FinishWork();
             }
         }
@@ -281,6 +292,7 @@ namespace SpreadBot.Logic
                 return;
             }
 
+            consecutiveInsufficientFundsRejections = 0;
             SetCurrentOrderData(orderData);
             await ProcessOrderData(orderData);
         }

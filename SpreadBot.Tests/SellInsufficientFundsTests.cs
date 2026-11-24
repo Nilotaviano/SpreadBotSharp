@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
@@ -38,14 +38,16 @@ namespace SpreadBot.Tests
             var unallocated = false;
             new Bot(dataRepository, context, _ => unallocated = true, new BotStrategiesFactory()).Start();
 
-            exchange.OnTickers(new BittrexApiTickersData
-            {
-                Sequence = 1,
-                Deltas = new[] { new BittrexApiTickersData.Ticker { Symbol = Symbol, AskRate = 0.00010101m, BidRate = 0.00009999m, LastTradeRate = 0.0001m } }
-            });
+            SendTicker(exchange, 1);
 
             return (context, exchange, () => unallocated);
         }
+
+        private static void SendTicker(MockExchange exchange, int sequence) => exchange.OnTickers(new BittrexApiTickersData
+        {
+            Sequence = sequence,
+            Deltas = new[] { new BittrexApiTickersData.Ticker { Symbol = Symbol, AskRate = 0.00010101m + sequence * 1.Satoshi(), BidRate = 0.00009999m, LastTradeRate = 0.0001m } }
+        });
 
         private static void WaitUntil(Func<bool> condition, string description)
         {
@@ -81,6 +83,27 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(BotState.FinishedWork, context.BotState);
             Assert.AreEqual(2, BalanceLookups(exchange), "one lookup at startup, one to reconcile");
+            Assert.AreEqual(5m, context.HeldAmount, "only the coins the exchange holds remain to clean up or record as dust");
+            exchange.Mock.Verify(e => e.SellMarket(Symbol, 5m), Times.Once);
+        }
+
+        [TestMethod]
+        public void RepeatedRejectionDespiteEnoughBalance_FinishesAfterBoundedRetries()
+        {
+            var (context, exchange, unallocated) = BoughtBotWhoseSellIsRejected(exchangeAvailable: 10m);
+
+            WaitUntil(() => BalanceLookups(exchange) == 2, "the first rejection is reconciled");
+            Assert.AreEqual(BotState.Bought, context.BotState);
+
+            SendTicker(exchange, 2);
+            WaitUntil(() => BalanceLookups(exchange) == 3, "the second rejection is reconciled");
+            Assert.AreEqual(BotState.Bought, context.BotState);
+
+            SendTicker(exchange, 3);
+            WaitUntil(() => unallocated(), "the bot gives up and is unallocated");
+
+            Assert.AreEqual(BotState.FinishedWork, context.BotState);
+            Assert.AreEqual(10m, context.HeldAmount);
         }
     }
 }
