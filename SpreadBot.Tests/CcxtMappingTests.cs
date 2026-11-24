@@ -90,6 +90,9 @@ namespace SpreadBot.Tests
             Assert.AreEqual(ApiErrorType.MarketOffline, CcxtExchange.ToApiException(new ccxt.BadSymbol("binance does not have market symbol")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.MarketOffline, CcxtExchange.ToApiException(new ccxt.MarketClosed("binance Market is closed.")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.RetryLater, CcxtExchange.ToApiException(new ccxt.OperationRejected("binance Server is busy, please wait and try again")).ApiErrorType);
+            Assert.AreEqual(ApiErrorType.Unauthorized, CcxtExchange.ToApiException(new ccxt.RestrictedLocation("binance Service unavailable from a restricted location")).ApiErrorType);
+            Assert.AreEqual(ApiErrorType.Unauthorized, CcxtExchange.ToApiException(new ccxt.ManualInteractionNeeded("binance Please confirm the agreement first")).ApiErrorType);
+            Assert.AreEqual(ApiErrorType.UnknownError, CcxtExchange.ToApiException(new ccxt.InvalidOrder("binance stop price is zero or less")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.DustTrade, CcxtExchange.ToApiException(new ccxt.InvalidOrder("binance amount of NMR/BTC must be greater than minimum amount precision of 0.01")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.DustTrade, CcxtExchange.ToApiException(new ccxt.InvalidOrder("binance order cost = amount * price is zero or less {\"code\":-1013,\"msg\":\"Price * QTY is zero or less.\"}")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.UnknownError, CcxtExchange.ToApiException(new ccxt.InvalidOrder("binance price of NMR/BTC must be greater than minimum price precision of 0.000001")).ApiErrorType);

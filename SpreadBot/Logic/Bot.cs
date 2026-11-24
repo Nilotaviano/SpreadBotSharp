@@ -385,7 +385,11 @@ namespace SpreadBot.Logic
 
             if (!ShowsOrderState(found))
             {
-                LogError($"Looking up order {unknown.ClientOrderId}, whose placement is unknown, gave no id or status (id: {found?.Id}, status: {found?.Status}); still waiting");
+                var unsettled = $"Looking up order {unknown.ClientOrderId}, whose placement is unknown, gave no id or status (id: {found?.Id}, status: {found?.Status}); still waiting";
+                if (expired)
+                    LogUnexpectedError(unsettled);
+                else
+                    LogError(unsettled);
                 return;
             }
 

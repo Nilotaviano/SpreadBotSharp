@@ -339,6 +339,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 ccxt.AuthenticationError => ApiErrorType.Unauthorized,
                 ccxt.BadSymbol => ApiErrorType.MarketOffline,
                 ccxt.MarketClosed => ApiErrorType.MarketOffline,
+                //The account can't trade until someone acts: retrying won't help
+                ccxt.RestrictedLocation => ApiErrorType.Unauthorized,
+                ccxt.ManualInteractionNeeded => ApiErrorType.Unauthorized,
                 //e.g. Binance's -1004 "server is busy"
                 ccxt.OperationRejected => ApiErrorType.RetryLater,
                 _ => ApiErrorType.UnknownError
@@ -350,7 +353,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         //Binance filter failures for minimum notional / lot size, e.g. "Filter failure: NOTIONAL" or "Order's notional must be no smaller than ...";
         //ccxt's own checks before sending: "amount of X must be greater than minimum amount precision of ..." when the amount truncates
         //to zero, and Binance's "Price * QTY is zero or less", which ccxt rewords as "order cost = amount * price is zero or less"
-        private static readonly string[] BelowMinimumMarkers = { "NOTIONAL", "LOT_SIZE", "minimum amount precision", "is zero or less" };
+        private static readonly string[] BelowMinimumMarkers = { "NOTIONAL", "LOT_SIZE", "minimum amount precision", "amount * price is zero or less", "Price * QTY is zero or less" };
 
         private static bool IsBelowMinimum(string message) =>
             message != null && BelowMinimumMarkers.Any(marker => message.Contains(marker, StringComparison.OrdinalIgnoreCase));

@@ -180,7 +180,9 @@ namespace SpreadBot.Tests
             var ccxtExchange = Exchange().Object;
             ccxtExchange.precisionMode = 3;
 
-            await Assert.ThrowsExactlyAsync<NotSupportedException>(() => new CcxtExchange(ccxtExchange).Setup(new[] { "BTC" }));
+            var error = await Assert.ThrowsExactlyAsync<NotSupportedException>(() => new CcxtExchange(ccxtExchange).Setup(new[] { "BTC" }));
+
+            StringAssert.Contains(error.Message, "significant digits");
         }
 
         [TestMethod]

@@ -256,6 +256,9 @@ namespace SpreadBot.Tests
             ProcessTicker(exchange, context, 1);
             exchange.OnOrder(Reported("42", UnknownClientOrderId, OrderStatus.UNDEFINED));
             WaitUntil(() => dataRepository.OrdersData.TryGetValue(UnknownClientOrderId, out var cached) && cached.Status == OrderStatus.UNDEFINED && context.SemaphoreCurrentCount == 1, "the report without a status is processed");
+            //The report is cached before its handler takes the semaphore; give a handler the poll raced time to finish
+            Thread.Sleep(100);
+            WaitUntil(() => context.SemaphoreCurrentCount == 1, "the report's handler is done");
             Assert.AreEqual(OrderStatus.UNKNOWN, context.CurrentOrderData?.Status);
 
             exchange.OnOrder(Reported("42", UnknownClientOrderId, OrderStatus.OPEN));
