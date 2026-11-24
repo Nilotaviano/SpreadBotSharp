@@ -53,7 +53,7 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public void WriteAllTextAtomic_WhenWriteFails_LeavesOriginalFileIntact()
+        public void WriteAllTextAtomic_WhenTempFileCannotBeCreated_LeavesOriginalFileIntact()
         {
             var directory = Directory.CreateTempSubdirectory("spreadbot-tests-").FullName;
             try
@@ -62,7 +62,9 @@ namespace SpreadBot.Tests
                 File.WriteAllText(path, "{\"previous\":\"état\"}");
                 Directory.CreateDirectory(path + ".tmp");
 
-                Assert.Throws<Exception>(() => Extensions.WriteAllTextAtomic(path, "{\"new\":true}"));
+                var exception = Assert.Throws<Exception>(() => Extensions.WriteAllTextAtomic(path, "{\"new\":true}"));
+
+                Assert.IsTrue(exception is UnauthorizedAccessException || exception is IOException, exception.ToString());
 
                 Assert.AreEqual("{\"previous\":\"état\"}", File.ReadAllText(path));
             }

@@ -146,6 +146,10 @@ namespace SpreadBot.Logic
 
                 try
                 {
+                    //FinishWork may have run while this message waited for the semaphore
+                    if (botContext.BotState == BotState.FinishedWork)
+                        return;
+
                     processingMessageTimeExceededTimer.Start();
 
                     switch (message.MessageType)
@@ -351,30 +355,45 @@ namespace SpreadBot.Logic
 
         private async Task FinishWork()
         {
+            if (botContext.BotState == BotState.FinishedWork)
+                return;
+
             botContext.BotState = BotState.FinishedWork;
+            processingMessageTimeExceededTimer.Dispose();
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
 
             botContext.Semaphore.Clear();
 
-            try
+            //Each step runs even if an earlier one fails, so the allocation is released and profit recorded
+            await RunFinishStep("cleaning dust", async () =>
             {
                 if (HeldAmount > 0)
                     await CleanDust();
-            }
-            finally
+            });
+            await RunFinishStep("unallocating", () =>
             {
-                //Release the allocation and record profit even if cleaning dust or unallocating fails
-                try
-                {
-                    unallocateBotCallback(this);
-                }
-                finally
-                {
-                    NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
-                    processingMessageTimeExceededTimer.Dispose();
-                    LogMessage($"finished on {MarketSymbol}");
-                }
+                unallocateBotCallback(this);
+                return Task.CompletedTask;
+            });
+            await RunFinishStep("recording profit", () =>
+            {
+                NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
+                return Task.CompletedTask;
+            });
+
+            LogMessage($"finished on {MarketSymbol}");
+        }
+
+        private async Task RunFinishStep(string description, Func<Task> step)
+        {
+            try
+            {
+                await step();
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedError($"Error while {description} on finish: {e}");
             }
         }
 
