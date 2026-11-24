@@ -206,6 +206,61 @@ namespace SpreadBot.Tests
             Assert.AreEqual(OrderStatus.OPEN, order.Status);
         }
 
+        private static ccxt.Order FilledWithoutFees(double filled) =>
+            new ccxt.Order { id = "42", clientOrderId = "client", symbol = Symbol, side = "buy", type = "limit", status = "closed", amount = 10, price = 0.0001, filled = filled, cost = filled * 0.0001 };
+
+        private static ccxt.Trade Trade(double amount, double fee, string feeCurrency) =>
+            new ccxt.Trade { order = "42", symbol = Symbol, amount = amount, fee = new ccxt.Fee { cost = fee, currency = feeCurrency } };
+
+        [TestMethod]
+        public async Task GetOrder_ClosedWithFillsButNoFees_TakesTheFeesFromItsTrades()
+        {
+            // Binance's order endpoints carry no commission; booking the close without it would overstate the coins held
+            var exchange = Exchange();
+            exchange.Setup(e => e.FetchOrder("42", Symbol, It.IsAny<IDictionary<string, object>>())).ReturnsAsync(FilledWithoutFees(10));
+            exchange
+                .Setup(e => e.FetchOrderTrades("42", Symbol, It.IsAny<long?>(), It.IsAny<long?>(), It.IsAny<IDictionary<string, object>>()))
+                .ReturnsAsync(new List<ccxt.Trade> { Trade(4, 0.004, "NMR"), Trade(6, 0.006, "NMR"), Trade(0, 0.0000001, "BTC") });
+
+            var order = await new CcxtExchange(exchange.Object).GetOrder("42", Symbol);
+
+            Assert.AreEqual(OrderStatus.CLOSED, order.Status);
+            Assert.AreEqual(0.01m, order.CoinCommission);
+            Assert.AreEqual(0.0000001m, order.Commission);
+        }
+
+        [TestMethod]
+        public async Task GetOrder_ClosedWithFillsTheTradesDoNotCoverYet_IsRetriedLater()
+        {
+            var exchange = Exchange();
+            exchange.Setup(e => e.FetchOrder("42", Symbol, It.IsAny<IDictionary<string, object>>())).ReturnsAsync(FilledWithoutFees(10));
+            exchange
+                .Setup(e => e.FetchOrderTrades("42", Symbol, It.IsAny<long?>(), It.IsAny<long?>(), It.IsAny<IDictionary<string, object>>()))
+                .ReturnsAsync(new List<ccxt.Trade> { Trade(4, 0.004, "NMR") });
+
+            var error = await Assert.ThrowsExactlyAsync<ApiException>(() => new CcxtExchange(exchange.Object).GetOrder("42", Symbol));
+
+            Assert.AreEqual(ApiErrorType.RetryLater, error.ApiErrorType);
+        }
+
+        [TestMethod]
+        [DataRow("closed", 0.0, false)] // nothing filled, so no fees
+        [DataRow("open", 4.0, false)] // the close is booked later
+        [DataRow("closed", 10.0, true)] // the answer has them
+        public async Task GetOrder_WithoutFeesToFind_DoesNotFetchTrades(string status, double filled, bool withFee)
+        {
+            var answer = FilledWithoutFees(filled);
+            answer.status = status;
+            if (withFee)
+                answer.fee = new ccxt.Fee { cost = 0.01, currency = "NMR" };
+            var exchange = Exchange();
+            exchange.Setup(e => e.FetchOrder("42", Symbol, It.IsAny<IDictionary<string, object>>())).ReturnsAsync(answer);
+
+            await new CcxtExchange(exchange.Object).GetOrder("42", Symbol);
+
+            exchange.Verify(e => e.FetchOrderTrades(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<long?>(), It.IsAny<IDictionary<string, object>>()), Times.Never);
+        }
+
         [TestMethod]
         public async Task GetOrderByClientId_ReportsAnOrderTheExchangeDoesNotKnowAsNotOpen()
         {

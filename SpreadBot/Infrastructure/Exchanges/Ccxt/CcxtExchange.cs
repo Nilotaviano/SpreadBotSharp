@@ -186,14 +186,41 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
 
         public async Task<OrderData> GetOrder(string orderId, string marketSymbol)
         {
-            return ToOrderData(await Call(() => exchange.FetchOrder(orderId, marketSymbol)));
+            return await WithFees(await Call(() => exchange.FetchOrder(orderId, marketSymbol)));
         }
 
         public async Task<OrderData> GetOrderByClientId(string clientOrderId, string marketSymbol)
         {
             var parameters = new Dictionary<string, object> { ["clientOrderId"] = clientOrderId };
-            return ToOrderData(await Call(() => exchange.FetchOrder(null, marketSymbol, parameters)));
+            return await WithFees(await Call(() => exchange.FetchOrder(null, marketSymbol, parameters)));
         }
+
+        /// <summary>
+        /// Some order endpoints (Binance's) report no fees, and a closed order is booked once, so a fetched closed order with fills
+        /// takes its fees from its trades. Until they cover the fill, it fails as RetryLater instead of being booked without fees.
+        /// </summary>
+        private async Task<OrderData> WithFees(ccxt.Order order)
+        {
+            if (order.status == "open" || order.status == null || !(order.filled > 0) || Fees(order).Any(IsKnown))
+                return ToOrderData(order);
+
+            var trades = await Call(() => exchange.FetchOrderTrades(order.id, order.symbol));
+            var traded = trades.Sum(t => ToDecimal(t.amount) ?? 0);
+            var filled = ToDecimal(order.filled) ?? 0;
+            if (traded < filled)
+                throw new ApiException(ApiErrorType.RetryLater, $"Order {order.id} on {order.symbol} filled {filled}, but its trades show {traded} so far, so its fees aren't known yet");
+
+            order.fees = trades.SelectMany(trade => trade.fees?.Count > 0 ? trade.fees : trade.fee.HasValue ? new List<ccxt.Fee> { trade.fee.Value } : new List<ccxt.Fee>()).ToList();
+            order.fee = null;
+            return ToOrderData(order);
+        }
+
+        private static List<ccxt.Fee> Fees(ccxt.Order order) =>
+            order.fees != null && order.fees.Count > 0
+                ? order.fees
+                : order.fee.HasValue ? new List<ccxt.Fee> { order.fee.Value } : new List<ccxt.Fee>();
+
+        private static bool IsKnown(ccxt.Fee fee) => fee.currency != null && fee.cost.HasValue;
 
         public Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit) => CreateMakerOrder(marketSymbol, "buy", quantity, limit);
 
@@ -396,9 +423,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         internal static OrderData ToOrderData(ccxt.Order order)
         {
             var (coin, quote) = SplitSymbol(order.symbol);
-            var fees = order.fees != null && order.fees.Count > 0
-                ? order.fees
-                : order.fee.HasValue ? new List<ccxt.Fee> { order.fee.Value } : new List<ccxt.Fee>();
+            var fees = Fees(order);
 
             return new OrderData
             {
