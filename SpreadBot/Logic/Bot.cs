@@ -74,19 +74,25 @@ namespace SpreadBot.Logic
 
             if (botContext.CurrentOrderData != null)
             {
-                if (!dataRepository.OrdersData.TryGetValue(botContext.CurrentOrderData.ClientOrderId, out var updatedOrder))
+                var clientOrderId = botContext.CurrentOrderData.ClientOrderId;
+
+                //Replays the cached order state, if any, and keeps delivering updates until the order closes
+                dataRepository.SubscribeToOrderData(clientOrderId, Guid, ProcessMessage);
+
+                if (!dataRepository.OrdersData.ContainsKey(clientOrderId))
                 {
                     try
                     {
-                        updatedOrder = await dataRepository.Exchange.GetOrderData(botContext.CurrentOrderData.ClientOrderId);
+                        var updatedOrder = await dataRepository.Exchange.GetOrderData(clientOrderId);
+
+                        if (updatedOrder != null)
+                            ProcessMessage(updatedOrder);
                     }
                     catch (Exception e)
                     {
-                        LogError(e.ToString());
+                        LogError($"Could not fetch order {clientOrderId} on start, waiting for the next resync: {e}");
                     }
                 }
-
-                await ProcessOrderData(updatedOrder);
             }
 
             //This will trigger a call to ProcessMessage
@@ -185,6 +191,13 @@ namespace SpreadBot.Logic
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
         {
             var orderData = await func();
+
+            if (orderData == null)
+            {
+                LogUnexpectedError("Exchange returned no order data; keeping the current order");
+                return;
+            }
+
             SetCurrentOrderData(orderData);
             await ProcessOrderData(orderData);
         }
@@ -192,10 +205,10 @@ namespace SpreadBot.Logic
         //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
-            if (orderData.Id != botContext.CurrentOrderData?.Id)
+            if (orderData == null || orderData.Id != botContext.CurrentOrderData?.Id)
                 return;
 
-            switch (orderData?.Status)
+            switch (orderData.Status)
             {
                 case OrderStatus.OPEN:
                     botContext.BotState = (orderData?.Direction) switch
