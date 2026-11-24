@@ -17,9 +17,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private const int TickSizePrecisionMode = 4;
         private const decimal DefaultFeeRate = 0.001m;
         private static readonly TimeSpan StreamRetryDelay = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan OrderLookupRetryDelay = TimeSpan.FromSeconds(1);
+        private const int OrderLookupAttempts = 3;
 
         private readonly ccxt.Exchange exchange;
         private readonly CancellationTokenSource streams = new CancellationTokenSource();
+        private int disposed;
 
         private readonly ConcurrentBag<Action<BalanceData>> onBalanceCallbacks = new ConcurrentBag<Action<BalanceData>>();
         private readonly ConcurrentBag<Action<IEnumerable<MarketData>>> onMarketDataCallbacks = new ConcurrentBag<Action<IEnumerable<MarketData>>>();
@@ -56,6 +59,11 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 exchange.setSandboxMode(true);
         }
 
+        internal CcxtExchange(ccxt.Exchange exchange)
+        {
+            this.exchange = exchange;
+        }
+
         public bool IsSetup { get; private set; }
 
         public decimal FeeRate { get; private set; } = DefaultFeeRate;
@@ -70,32 +78,29 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 .Select(m => (object)m.symbol)
                 .ToList();
 
-            var takerFee = markets.Values.Where(m => m.spot && m.taker.HasValue).Select(m => m.taker).FirstOrDefault();
-            if (takerFee.HasValue)
-                FeeRate = (decimal)takerFee.Value;
+            //The highest fee among the traded markets, so buys always leave room for it
+            var takerFees = watchedSymbols.Select(s => markets[(string)s].taker).Where(fee => fee.HasValue).Select(fee => fee.Value).ToList();
+            if (takerFees.Count > 0)
+                FeeRate = (decimal)takerFees.Max();
 
             Logger.Instance.LogMessage($"Loaded {markets.Count} markets from {exchange.id}; watching {watchedSymbols.Count} with quote {string.Join(",", quotes)}");
 
             StartStream("tickers", async () =>
             {
                 var tickers = await exchange.WatchTickers(watchedSymbols);
-                var marketData = tickers.tickers.Values.Select(ToMarketData).ToList();
-                foreach (var callback in onMarketDataCallbacks)
-                    callback(marketData);
+                Dispatch(onMarketDataCallbacks, (IEnumerable<MarketData>)tickers.tickers.Values.Select(ToMarketData).ToList());
             });
             StartStream("balance", async () =>
             {
                 var balances = await exchange.WatchBalance();
                 foreach (var balance in ToBalanceData(balances))
-                    foreach (var callback in onBalanceCallbacks)
-                        callback(balance);
+                    Dispatch(onBalanceCallbacks, balance);
             });
             StartStream("orders", async () =>
             {
                 var orders = await exchange.WatchOrders();
-                foreach (var order in orders.Select(ToOrderData))
-                    foreach (var callback in onOrderCallbacks)
-                        callback(order);
+                foreach (var order in orders.Select(ToOrderData).ToList())
+                    Dispatch(onOrderCallbacks, order);
             });
 
             IsSetup = true;
@@ -138,10 +143,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
 
         public Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit) => CreateMakerOrder(marketSymbol, "sell", quantity, limit);
 
-        public async Task<OrderData> SellMarket(string marketSymbol, decimal quantity)
-        {
-            return ToOrderData(await Call(() => exchange.CreateOrder(marketSymbol, "market", "sell", (double)quantity)));
-        }
+        public Task<OrderData> SellMarket(string marketSymbol, decimal quantity) => CreateOrder(marketSymbol, "market", "sell", quantity, null);
 
         public async Task<OrderData> CancelOrder(string orderId, string marketSymbol)
         {
@@ -151,12 +153,90 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             return await GetOrder(orderId, marketSymbol);
         }
 
-        private async Task<OrderData> CreateMakerOrder(string marketSymbol, string side, decimal quantity, decimal limit)
-        {
-            //Post-only: a spread bot must never take liquidity; if the price would cross, the exchange rejects the order
-            var parameters = new Dictionary<string, object> { ["postOnly"] = true };
+        //Post-only: a spread bot must never take liquidity; if the price would cross, the exchange rejects the order
+        private Task<OrderData> CreateMakerOrder(string marketSymbol, string side, decimal quantity, decimal limit) =>
+            CreateOrder(marketSymbol, "limit", side, quantity, limit, new Dictionary<string, object> { ["postOnly"] = true });
 
-            return ToOrderData(await Call(() => exchange.CreateOrder(marketSymbol, "limit", side, (double)quantity, (double)limit, parameters)));
+        /// <summary>
+        /// Places an order under a fresh client order id. If the request fails without an answer (network error), the
+        /// order may still have been accepted, so it is looked up by that id before reporting failure: a blind retry
+        /// would leave an untracked order on the exchange and place a second one.
+        /// </summary>
+        private async Task<OrderData> CreateOrder(string marketSymbol, string type, string side, decimal quantity, decimal? limit, Dictionary<string, object> parameters = null)
+        {
+            var clientOrderId = NewClientOrderId();
+            parameters ??= new Dictionary<string, object>();
+            parameters["clientOrderId"] = clientOrderId;
+
+            ccxt.Order order;
+            try
+            {
+                order = await exchange.CreateOrder(marketSymbol, type, side, (double)quantity, limit.HasValue ? (double)limit.Value : (double?)null, parameters);
+            }
+            catch (ccxt.NetworkError e)
+            {
+                Logger.Instance.LogError($"Creating {side} {type} order {clientOrderId} on {marketSymbol} failed without an answer, looking it up: {e.Message}");
+                return ToOrderData(await FindOrderByClientId(clientOrderId, marketSymbol) ?? throw ToApiException(e));
+            }
+            catch (ccxt.BaseError e)
+            {
+                throw ToApiException(e);
+            }
+
+            //Some responses carry no status (e.g. an acknowledgement); fetch the order so the bot never tracks an order in an unknown state
+            if (order.status == null)
+                order = await Call(() => exchange.FetchOrder(order.id, marketSymbol));
+
+            return ToOrderData(order);
+        }
+
+        /// <summary>
+        /// The order with this client id, or null if the exchange confirms there is none.
+        /// </summary>
+        private async Task<ccxt.Order?> FindOrderByClientId(string clientOrderId, string marketSymbol)
+        {
+            var parameters = new Dictionary<string, object> { ["clientOrderId"] = clientOrderId };
+
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    return await exchange.FetchOrder(null, marketSymbol, parameters);
+                }
+                catch (ccxt.OrderNotFound)
+                {
+                    return null;
+                }
+                catch (ccxt.NetworkError e) when (attempt < OrderLookupAttempts)
+                {
+                    Logger.Instance.LogError($"Looking up order {clientOrderId} failed (attempt {attempt}), retrying: {e.Message}");
+                    await Task.Delay(OrderLookupRetryDelay);
+                }
+                catch (ccxt.BaseError e)
+                {
+                    //Still unknown: the resync reports open orders no bot tracks
+                    Logger.Instance.LogUnexpectedError($"Could not determine whether order {clientOrderId} on {marketSymbol} was placed: {e.Message}");
+                    throw ToApiException(e);
+                }
+            }
+        }
+
+        //Binance allows up to 36 characters from [.A-Za-z0-9:/_-]
+        private static string NewClientOrderId() => "sb" + Guid.NewGuid().ToString("N");
+
+        private static void Dispatch<T>(IEnumerable<Action<T>> callbacks, T data)
+        {
+            foreach (var callback in callbacks)
+            {
+                try
+                {
+                    callback(data);
+                }
+                catch (Exception e)
+                {
+                    Logger.Instance.LogUnexpectedError($"Stream callback failed for {typeof(T).Name}: {e}");
+                }
+            }
         }
 
         private void StartStream(string name, Func<Task> receive)
@@ -232,9 +312,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             return new ApiException(type, error.Message);
         }
 
-        //Binance filter failures for minimum notional / lot size, e.g. "Filter failure: NOTIONAL"
+        //Binance filter failures for minimum notional / lot size, e.g. "Filter failure: NOTIONAL" or "Order's notional must be no smaller than ..."
         private static bool IsBelowMinimum(string message) =>
-            message != null && (message.Contains("NOTIONAL") || message.Contains("LOT_SIZE"));
+            message != null && (message.Contains("NOTIONAL", StringComparison.OrdinalIgnoreCase) || message.Contains("LOT_SIZE", StringComparison.OrdinalIgnoreCase));
 
         internal static OrderData ToOrderData(ccxt.Order order)
         {
@@ -302,9 +382,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 : 1m / (decimal)Math.Pow(10, precision);
         }
 
-        private static IEnumerable<BalanceData> ToBalanceData(ccxt.Balances balances)
+        internal static IEnumerable<BalanceData> ToBalanceData(ccxt.Balances balances)
         {
-            return balances.balances.Select(b => new BalanceData
+            //A partial entry would otherwise overwrite a known balance with zero
+            return balances.balances.Where(b => b.Value.free.HasValue && b.Value.total.HasValue).Select(b => new BalanceData
             {
                 CurrencyAbbreviation = b.Key,
                 Amount = ToDecimal(b.Value.free) ?? 0,
@@ -326,8 +407,14 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref disposed, 1) == 1)
+                return;
+
             streams.Cancel();
-            exchange.Close().GetAwaiter().GetResult();
+
+            if (!exchange.Close().Wait(TimeSpan.FromSeconds(5)))
+                Logger.Instance.LogError("Timed out closing the exchange connections");
+
             streams.Dispose();
         }
     }

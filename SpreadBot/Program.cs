@@ -68,6 +68,9 @@ namespace SpreadBot
             coordinator.Start();
 
             Console.ReadLine();
+
+            coordinator.Dispose();
+            exchange.Dispose();
         }
 
         private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
