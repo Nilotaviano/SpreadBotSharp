@@ -58,9 +58,11 @@ namespace SpreadBot.Tests
             return exchange;
         }
 
-        private static BotContext StartBuyingBot(MockExchange exchange, OrderData currentOrder = null)
+        private static BotContext StartBuyingBot(MockExchange exchange, OrderData currentOrder = null) => StartBuyingBot(exchange, out _, currentOrder);
+
+        private static BotContext StartBuyingBot(MockExchange exchange, out DataRepository dataRepository, OrderData currentOrder = null)
         {
-            var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
             dataRepository.StartConsumingData();
 
             var configuration = new SpreadConfiguration
@@ -195,6 +197,69 @@ namespace SpreadBot.Tests
             Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
             Assert.AreEqual("43", context.CurrentOrderData.Id);
             exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Exactly(2));
+        }
+
+        [TestMethod]
+        public void ReportedByTheStreamWhileTheLookupMissesIt_IsAdoptedNotDropped()
+        {
+            // Past the request lifetime a confirmed absence drops the order, but the stream's report is already cached and waits behind the lookup
+            var exchange = Exchange();
+            DataRepository dataRepository = null;
+            exchange.Mock.Setup(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>())).ThrowsAsync(UnknownPlacement(DateTime.UtcNow.AddMinutes(-2)));
+            exchange.Mock
+                .Setup(e => e.GetOrderByClientId(UnknownClientOrderId, Symbol))
+                .Callback(() =>
+                {
+                    exchange.OnOrder(Reported("42", UnknownClientOrderId, OrderStatus.OPEN));
+                    WaitUntil(() => dataRepository.OrdersData.ContainsKey(UnknownClientOrderId), "the stream's report is cached");
+                })
+                .ThrowsAsync(new ApiException(ApiErrorType.OrderNotOpen, "Order does not exist."));
+            var context = StartBuyingBot(exchange, out dataRepository);
+
+            ProcessTicker(exchange, context, 1);
+            exchange.PushTicker(Ticker(2));
+            WaitUntil(() => context.BotState == BotState.BuyOrderActive && context.SemaphoreCurrentCount == 1, "the reported order is adopted");
+            ProcessTicker(exchange, context, 3);
+
+            Assert.AreEqual("42", context.CurrentOrderData.Id);
+            Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
+            exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Once);
+        }
+
+        [TestMethod]
+        [DataRow(null, OrderStatus.OPEN)]
+        [DataRow("42", OrderStatus.UNDEFINED)] // ccxt's status was null
+        public void LookupAnswerWithoutAnIdOrStatus_KeepsWaiting(string id, OrderStatus status)
+        {
+            var exchange = Exchange();
+            exchange.Mock.Setup(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>())).ThrowsAsync(UnknownPlacement(DateTime.UtcNow));
+            exchange.Mock.Setup(e => e.GetOrderByClientId(UnknownClientOrderId, Symbol)).ReturnsAsync(Reported(id, UnknownClientOrderId, status));
+            var context = StartBuyingBot(exchange);
+
+            for (var sequence = 1; sequence <= 3; sequence++)
+                ProcessTicker(exchange, context, sequence);
+
+            Assert.AreEqual(1, Lookups(exchange));
+            Assert.AreEqual(OrderStatus.UNKNOWN, context.CurrentOrderData?.Status);
+            Assert.AreEqual(BotState.Buying, context.BotState);
+            exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Once);
+        }
+
+        [TestMethod]
+        public void StreamReportWithoutAStatus_IsNotAdopted()
+        {
+            // Adopting it would unsubscribe the client order id, so the order's later updates would never reach the bot
+            var exchange = Exchange();
+            exchange.Mock.Setup(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>())).ThrowsAsync(UnknownPlacement(DateTime.UtcNow));
+            var context = StartBuyingBot(exchange);
+
+            ProcessTicker(exchange, context, 1);
+            exchange.OnOrder(Reported("42", UnknownClientOrderId, OrderStatus.UNDEFINED));
+            exchange.OnOrder(Reported("42", UnknownClientOrderId, OrderStatus.OPEN));
+
+            WaitUntil(() => context.BotState == BotState.BuyOrderActive && context.SemaphoreCurrentCount == 1, "the report with a status is adopted");
+            Assert.AreEqual("42", context.CurrentOrderData.Id);
+            Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status);
         }
 
         [TestMethod]

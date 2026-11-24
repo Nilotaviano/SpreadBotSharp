@@ -350,21 +350,15 @@ namespace SpreadBot.Logic
             nextUnknownOrderLookup = now + UnknownOrderLookupInterval;
 
             OrderData found;
+            var notFound = false;
             try
             {
                 found = await exchange.GetOrderByClientId(unknown.ClientOrderId, unknown.MarketSymbol);
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.OrderNotOpen)
             {
-                if (!expired)
-                {
-                    LogMessage($"Order {unknown.ClientOrderId}, whose placement is unknown, is not on the exchange yet");
-                    return;
-                }
-
-                LogError($"Order {unknown.ClientOrderId} is still not on the exchange {exchange.OrderRequestLifetime.TotalSeconds}s after it was sent, so it was never placed");
-                SetCurrentOrderData(null);
-                return;
+                //The stream may have reported it while the lookup ran: that update waits behind this message, and dropping the order would discard it
+                notFound = !dataRepository.OrdersData.TryGetValue(unknown.ClientOrderId, out found);
             }
             catch (ApiException e)
             {
@@ -376,9 +370,32 @@ namespace SpreadBot.Logic
                 return;
             }
 
-            LogMessage($"Order {unknown.ClientOrderId}, whose placement was unknown, is on the exchange as {found?.Status}");
+            if (notFound)
+            {
+                if (!expired)
+                {
+                    LogMessage($"Order {unknown.ClientOrderId}, whose placement is unknown, is not on the exchange yet");
+                    return;
+                }
+
+                LogError($"Order {unknown.ClientOrderId} is still not on the exchange {exchange.OrderRequestLifetime.TotalSeconds}s after it was sent, so it was never placed");
+                SetCurrentOrderData(null);
+                return;
+            }
+
+            if (!ShowsOrderState(found))
+            {
+                LogError($"Looking up order {unknown.ClientOrderId}, whose placement is unknown, gave no id or status (id: {found?.Id}, status: {found?.Status}); still waiting");
+                return;
+            }
+
+            LogMessage($"Order {unknown.ClientOrderId}, whose placement was unknown, is on the exchange as {found.Status}");
             await ExecuteOrderFunction(() => Task.FromResult(found));
         }
+
+        //Only such a report settles an order whose placement is unknown: adopting anything less would let the strategy place another order
+        private static bool ShowsOrderState(OrderData order) =>
+            order?.Id != null && (order.Status == OrderStatus.OPEN || order.Status == OrderStatus.CLOSED);
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
         {
@@ -419,7 +436,7 @@ namespace SpreadBot.Logic
         private async Task ProcessOrderData(OrderData orderData)
         {
             //The exchange reports the order whose placement was unknown: it was accepted
-            if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN && orderData.Id != null && orderData.ClientOrderId == botContext.CurrentOrderData.ClientOrderId)
+            if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN && ShowsOrderState(orderData) && orderData.ClientOrderId == botContext.CurrentOrderData.ClientOrderId)
                 SetCurrentOrderData(orderData);
 
             if (orderData.Id == null || orderData.Id != botContext.CurrentOrderData?.Id)
