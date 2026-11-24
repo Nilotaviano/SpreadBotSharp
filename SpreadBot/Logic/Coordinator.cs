@@ -193,7 +193,7 @@ namespace SpreadBot.Logic
             });
         }
 
-        private (decimal, decimal) GetMarketOrderKey(MarketData marketData)
+        internal static (decimal, decimal) GetMarketOrderKey(MarketData marketData)
         {
             return (marketData.QuoteVolume.GetValueOrDefault(0), marketData.SpreadPercentage);
         }
