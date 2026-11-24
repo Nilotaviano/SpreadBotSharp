@@ -30,6 +30,9 @@ namespace SpreadBot.Logic
 
         private volatile bool orderRequestInFlight;
 
+        //The newest market data handed to the bot; older market data still waiting for the semaphore is stale
+        private volatile MarketData newestMarketData;
+
         private static readonly TimeSpan UnknownOrderLookupInterval = TimeSpan.FromSeconds(5);
         private DateTime nextUnknownOrderLookup;
 
@@ -155,6 +158,9 @@ namespace SpreadBot.Logic
         {
             message.ThrowIfArgumentIsNull(nameof(message));
 
+            if (message is MarketData received)
+                newestMarketData = received;
+
             LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
 
             if (botContext.BotState == BotState.FinishedWork)
@@ -169,6 +175,11 @@ namespace SpreadBot.Logic
                 {
                     //FinishWork may have run while this message waited for the semaphore
                     if (botContext.BotState == BotState.FinishedWork)
+                        return;
+
+                    //Newer market data arrived while this waited (e.g. behind an order request); acting on this would cancel or place on
+                    //stale prices, and the newer one is queued behind it
+                    if (message is MarketData marketData && !ReferenceEquals(marketData, newestMarketData))
                         return;
 
                     processingMessageTimeExceededTimer.Start();
