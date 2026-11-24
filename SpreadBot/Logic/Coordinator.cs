@@ -21,6 +21,7 @@ namespace SpreadBot.Logic
         private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
         private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
+        private readonly object evaluateMarketsLock = new object();
 
         public ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfiguration { get; } = new ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>>();
 
@@ -53,7 +54,8 @@ namespace SpreadBot.Logic
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
             {
                 //Total, not Available: restored bots' open buy orders lock funds that AllocateBot subtracts from this again
-                availableBalanceForBaseMarket.TryAdd(baseMarket, this.dataRepository.BalancesData[baseMarket].Total);
+                var exchangeTotal = this.dataRepository.BalancesData.TryGetValue(baseMarket, out var balance) ? balance.Total : 0;
+                availableBalanceForBaseMarket.TryAdd(baseMarket, exchangeTotal);
             }
         }
 
@@ -101,6 +103,13 @@ namespace SpreadBot.Logic
         /// </summary>
         /// <param name="marketDeltas">Markets that were updated</param>
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
+        {
+            //Summaries and tickers are consumed on separate threads; evaluating concurrently could grant the same balance twice
+            lock (evaluateMarketsLock)
+                EvaluateMarketsSerialized(marketDeltas);
+        }
+
+        private void EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas)
         {
             if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
                 return;
@@ -260,11 +269,18 @@ namespace SpreadBot.Logic
             var recordedDust = context.RemoveDustForMarket(market.Symbol);
             var availableCoins = dataRepository.BalancesData.TryGetValue(market.Target, out var balance) ? balance.Amount : 0;
 
-            if (recordedDust <= availableCoins)
+            //Coins of other bots on the same coin are part of Available unless locked in their sell order
+            var heldByOtherBots = context.GetBots()
+                .Where(b => b.botContext.LatestMarketData.Target == market.Target && b.botContext.BotState != BotState.SellOrderActive)
+                .Sum(b => b.HeldAmount);
+            var inheritable = Math.Max(availableCoins - heldByOtherBots, 0);
+
+            if (recordedDust <= inheritable)
                 return recordedDust;
 
-            Logger.Instance.LogError($"Recorded dust {recordedDust}{market.Target} for {market.Symbol} exceeds the {availableCoins}{market.Target} available on the exchange; inheriting only that");
-            return Math.Max(availableCoins, 0);
+            Logger.Instance.LogError($"Recorded dust {recordedDust}{market.Target} for {market.Symbol} exceeds the {inheritable}{market.Target} unclaimed on the exchange; inheriting only that and keeping the rest recorded");
+            context.AddDustForMarket(market.Symbol, recordedDust - inheritable);
+            return inheritable;
         }
 
         private void UnallocateBot(Bot bot)

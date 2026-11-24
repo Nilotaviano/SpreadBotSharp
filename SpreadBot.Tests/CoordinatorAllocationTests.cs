@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
@@ -133,10 +133,13 @@ namespace SpreadBot.Tests
             var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("NMR", 2, 2) }, "NMR-BTC");
             var bots = new List<Bot>();
 
-            new Coordinator(Settings(Configuration(0.3m)), repository, InMemoryContext(bots, dust: 5).Object).Start();
+            var context = InMemoryContext(bots, dust: 5);
+
+            new Coordinator(Settings(Configuration(0.3m)), repository, context.Object).Start();
 
             Assert.AreEqual(1, bots.Count);
             Assert.AreEqual(2m, bots[0].HeldAmount);
+            context.Verify(c => c.AddDustForMarket("NMR-BTC", 3m), Times.Once, "the excess stays recorded");
         }
 
         [TestMethod]
