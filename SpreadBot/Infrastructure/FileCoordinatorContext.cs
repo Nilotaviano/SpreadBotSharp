@@ -39,12 +39,13 @@ namespace SpreadBot.Infrastructure
 
                     return savedData;
                 }
-                catch (Exception e)
+                //Only a file that can't be parsed is set aside, since the next save would overwrite the only record of the previous
+                //session's positions; any other failure (e.g. the file is locked) propagates and stops startup rather than skip a valid session
+                catch (JsonException e)
                 {
-                    //The next save would overwrite the only record of the previous session's positions
-                    var preservedFile = $"{FILE_NAME}.unreadable-{DateTime.UtcNow:yyyyMMddHHmmss}";
+                    var preservedFile = $"{FILE_NAME}.unreadable-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+                    Logger.Instance.LogUnexpectedError($"Could not parse coordinator context file; moving it to {preservedFile} and starting without the previous session. Exception: {e}");
                     File.Move(FILE_NAME, preservedFile);
-                    Logger.Instance.LogUnexpectedError($"Could not read coordinator context file; moved it to {preservedFile} and starting without the previous session. Exception: {e}");
                 }
                 finally
                 {
