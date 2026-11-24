@@ -30,7 +30,8 @@ namespace SpreadBot
                 .Build()
                 .Get<AppSettings>();
 
-            var watcher = new FileSystemWatcher(Path.GetDirectoryName(appSettingsPath));
+            //Held until exit: a FileSystemWatcher references itself only weakly, so an unreferenced one is collected and stops raising events
+            using var watcher = new FileSystemWatcher(Path.GetDirectoryName(appSettingsPath));
             watcher.NotifyFilter = NotifyFilters.LastWrite;
             watcher.Filter = Path.GetFileName(appSettingsPath);
             watcher.EnableRaisingEvents = true;

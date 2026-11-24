@@ -10,7 +10,7 @@
       "request": "launch",
       "preLaunchTask": "build",
       "program": "${workspaceFolder}/SpreadBot/bin/Debug/net10.0/SpreadBot.dll",
-      "args": [],
+      "args": ["${workspaceFolder}/SpreadBot/appsettings.json"],
       "cwd": "${workspaceFolder}/SpreadBot",
       "console": "internalConsole",
       "stopAtEntry": false,

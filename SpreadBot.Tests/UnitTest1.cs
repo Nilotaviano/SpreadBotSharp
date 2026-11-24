@@ -213,10 +213,10 @@ namespace SpreadBot.Tests
             var bot = new Bot(datarepository, spreadConfiguration, openingMarketData, 0, (bot) => { }, new BotStrategiesFactory());
             bot.Start();
 
-            summariesEvent.WaitOne(100);
-            tickersEvent.WaitOne(100);
-            buyEvent.WaitOne(100);
-            sellEvent.WaitOne(100);
+            Assert.IsTrue(summariesEvent.WaitOne(TimeSpan.FromSeconds(5)), "summary not delivered");
+            Assert.IsTrue(tickersEvent.WaitOne(TimeSpan.FromSeconds(5)), "ticker not delivered");
+            Assert.IsTrue(buyEvent.WaitOne(TimeSpan.FromSeconds(5)), "buy order not delivered");
+            Assert.IsTrue(sellEvent.WaitOne(TimeSpan.FromSeconds(5)), "sell order not delivered");
 
             datarepository.UnsubscribeToMarketData(openingMarketData.Symbol, testGuid);
             datarepository.UnsubscribeToOrderData(buyOrderId, testGuid);

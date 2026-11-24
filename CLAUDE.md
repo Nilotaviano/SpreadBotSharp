@@ -57,7 +57,7 @@ Wiring is manual in `Program.cs` (no DI container): `BittrexClient` → `DataRep
 
 ## Gotchas
 
-- `SpreadConfiguration` overrides `Equals`/`GetHashCode` over its value fields and is used as a dictionary key (`Coordinator.AllocatedMarketsPerSpreadConfiguration`) and to match profit records. Editing a config's values makes it a *different* configuration (profit tracked separately; the old one is marked inactive). `NetProfitRecorder.SpreadConfigurationNetProfit` duplicates these fields and equality — keep the two in sync when adding fields.
+- `SpreadConfiguration` overrides `Equals`/`GetHashCode` over its value fields (all but `AvoidTokenizedSecurities`) and is used as a dictionary key (`Coordinator.AllocatedMarketsPerSpreadConfiguration`) and to match profit records. Editing a config's values makes it a *different* configuration (profit tracked separately; the old one is marked inactive). `NetProfitRecorder.SpreadConfigurationNetProfit` duplicates these fields and equality — keep the two in sync when adding fields.
 - Serialization is Newtonsoft.Json everywhere. Use Newtonsoft attributes; `System.Text.Json` attributes are silently ignored.
 - Trimming is off on purpose: Newtonsoft, the config binder and SignalR's `dynamic` handlers need reflection. Don't re-enable `PublishTrimmed`.
 - Don't enable `ImplicitUsings`: several files use `System.Timers.Timer`, which would clash with `System.Threading.Timer`.
