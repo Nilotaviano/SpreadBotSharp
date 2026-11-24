@@ -70,6 +70,18 @@ namespace SpreadBot.Logic
 
         public async void Start()
         {
+            try
+            {
+                await StartAsync();
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedError($"Unhandled exception while starting: {e}");
+            }
+        }
+
+        private async Task StartAsync()
+        {
             LogMessage($"started on {MarketSymbol}");
 
             //A context restored in a sell state may have no fill time; start the loss timer now so the sell floor can still drop
@@ -107,6 +119,18 @@ namespace SpreadBot.Logic
         //Doesn't return Task because this shouldn't be awaited
         private async void ProcessMessage(IMessage message)
         {
+            try
+            {
+                await ProcessMessageAsync(message);
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedError($"Unhandled exception while processing a message: {e}");
+            }
+        }
+
+        private async Task ProcessMessageAsync(IMessage message)
+        {
             message.ThrowIfArgumentIsNull(nameof(message));
 
             LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
@@ -118,10 +142,11 @@ namespace SpreadBot.Logic
             else
             {
                 await botContext.Semaphore.WaitAsync();
-                processingMessageTimeExceededTimer.Start();
 
                 try
                 {
+                    processingMessageTimeExceededTimer.Start();
+
                     switch (message.MessageType)
                     {
                         case MessageType.MarketData:
@@ -187,6 +212,8 @@ namespace SpreadBot.Logic
                     var currentOrderId = botContext.CurrentOrderData?.Id;
                     if (currentOrderId != null)
                         await ExecuteOrderFunction(async () => await dataRepository.Exchange.GetOrderData(currentOrderId));
+                    else
+                        LogMessage("ORDER_NOT_OPEN with no current order: it was already closed and processed");
                     break;
                 case ApiErrorType.MarketOffline:
                 case ApiErrorType.Throttled:
@@ -297,13 +324,25 @@ namespace SpreadBot.Logic
 
             botContext.Semaphore.Clear();
 
-            if (HeldAmount > 0)
-                await CleanDust();
-
-            unallocateBotCallback(this);
-            NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
-            processingMessageTimeExceededTimer.Dispose();
-            LogMessage($"finished on {MarketSymbol}");
+            try
+            {
+                if (HeldAmount > 0)
+                    await CleanDust();
+            }
+            finally
+            {
+                //Release the allocation and record profit even if cleaning dust or unallocating fails
+                try
+                {
+                    unallocateBotCallback(this);
+                }
+                finally
+                {
+                    NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
+                    processingMessageTimeExceededTimer.Dispose();
+                    LogMessage($"finished on {MarketSymbol}");
+                }
+            }
         }
 
         private async Task CleanDust(bool retry = true)

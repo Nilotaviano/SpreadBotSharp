@@ -1,5 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SpreadBot.Infrastructure;
+using System;
 using System.IO;
 
 namespace SpreadBot.Tests
@@ -44,6 +45,26 @@ namespace SpreadBot.Tests
 
                 Assert.AreEqual("{\"new\":true}", File.ReadAllText(path));
                 CollectionAssert.AreEqual(new[] { path }, Directory.GetFiles(directory));
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        [TestMethod]
+        public void WriteAllTextAtomic_WhenWriteFails_LeavesOriginalFileIntact()
+        {
+            var directory = Directory.CreateTempSubdirectory("spreadbot-tests-").FullName;
+            try
+            {
+                var path = Path.Combine(directory, "context.json");
+                File.WriteAllText(path, "{\"previous\":\"état\"}");
+                Directory.CreateDirectory(path + ".tmp");
+
+                Assert.Throws<Exception>(() => Extensions.WriteAllTextAtomic(path, "{\"new\":true}"));
+
+                Assert.AreEqual("{\"previous\":\"état\"}", File.ReadAllText(path));
             }
             finally
             {
