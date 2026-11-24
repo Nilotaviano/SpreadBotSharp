@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Bittrex.Models;
@@ -124,6 +124,20 @@ namespace SpreadBot.Tests
             Assert.AreEqual(BotState.Buying, context.BotState);
             Assert.AreEqual(0m, context.HeldAmount);
             Assert.AreEqual(0.002m, context.Balance);
+        }
+
+        [TestMethod]
+        public void Start_WithHeldCoinsButNoFillTime_StartsTheLossTimer()
+        {
+            var dataRepository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 60000 });
+            var context = RestoredContextWithOpenSellOrder();
+            context.CurrentOrderData = null;
+            context.BotState = BotState.Bought;
+            Assert.IsNull(context.BuyFilledAt);
+
+            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory()).Start();
+
+            Assert.IsNotNull(context.BuyFilledAt);
         }
     }
 }

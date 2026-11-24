@@ -72,6 +72,10 @@ namespace SpreadBot.Logic
         {
             LogMessage($"started on {MarketSymbol}");
 
+            //A restored context can hold coins with no recorded fill time (older file format); start the loss timer now
+            if (botContext.HeldAmount > 0 && botContext.BuyFilledAt == null)
+                botContext.BuyFilledAt = DateTime.UtcNow;
+
             if (botContext.CurrentOrderData != null)
             {
                 var clientOrderId = botContext.CurrentOrderData.ClientOrderId;
@@ -258,7 +262,7 @@ namespace SpreadBot.Logic
                     botContext.HeldAmount += orderData.FillQuantity;
                     botContext.Balance -= orderData.Proceeds + orderData.Commission;
                     botContext.BoughtPrice = orderData.Limit;
-                    botContext.buyStopwatch.Restart();
+                    botContext.BuyFilledAt = DateTime.UtcNow;
                     break;
                 case OrderDirection.SELL:
                     botContext.HeldAmount -= orderData.FillQuantity;

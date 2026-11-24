@@ -1,7 +1,6 @@
 ﻿using SpreadBot.Logic;
 using SpreadBot.Models.Repository;
 using System;
-using System.Diagnostics;
 using Newtonsoft.Json;
 
 namespace SpreadBot.Infrastructure
@@ -13,11 +12,11 @@ namespace SpreadBot.Infrastructure
         public Guid Guid { get; private set; }
 
         public readonly SpreadConfiguration spreadConfiguration;
-        public readonly Stopwatch buyStopwatch = new Stopwatch();
 
         private MarketData latestMarketData;
         private OrderData currentOrderData;
         private decimal boughtPrice;
+        private DateTime? buyFilledAt;
         private BotState botState;
         private decimal heldAmount;
         private decimal balance;
@@ -97,6 +96,21 @@ namespace SpreadBot.Infrastructure
                 boughtPrice = value;
                 NotifyPropertyChanged();
             }
+        }
+
+        public DateTime? BuyFilledAt
+        {
+            get => buyFilledAt;
+            set
+            {
+                buyFilledAt = value;
+                NotifyPropertyChanged();
+            }
+        }
+
+        public bool CanSellAtLoss(DateTime utcNow)
+        {
+            return BuyFilledAt.HasValue && (utcNow - BuyFilledAt.Value).TotalMinutes > spreadConfiguration.MinutesForLoss;
         }
 
         private void NotifyPropertyChanged()

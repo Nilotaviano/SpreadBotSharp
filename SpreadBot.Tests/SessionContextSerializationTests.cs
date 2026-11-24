@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Newtonsoft.Json;
 using SpreadBot.Infrastructure;
 using SpreadBot.Logic;
@@ -29,6 +29,7 @@ namespace SpreadBot.Tests
                 Balance = 0.0004m,
                 BotState = BotState.SellOrderActive,
                 BoughtPrice = 0.0001m,
+                BuyFilledAt = new System.DateTime(2026, 11, 24, 12, 0, 0, System.DateTimeKind.Utc),
                 CurrentOrderData = new OrderData
                 {
                     Id = "order-1",
@@ -53,6 +54,7 @@ namespace SpreadBot.Tests
             Assert.AreEqual(0.25m, bot.HeldAmount);
             Assert.AreEqual(BotState.SellOrderActive, bot.BotState);
             Assert.AreEqual(0.0001m, bot.BoughtPrice);
+            Assert.AreEqual(new System.DateTime(2026, 11, 24, 12, 0, 0, System.DateTimeKind.Utc), bot.BuyFilledAt.Value.ToUniversalTime());
             Assert.AreEqual("NMR-BTC", bot.LatestMarketData.Symbol);
             Assert.AreEqual(0.00010101m, bot.LatestMarketData.AskRate.Value);
             Assert.AreEqual(8, bot.LatestMarketData.Precision.Value);
@@ -94,6 +96,7 @@ namespace SpreadBot.Tests
             Assert.AreEqual(BotState.SellOrderActive, bot.BotState);
             Assert.AreEqual("NMR-BTC", bot.LatestMarketData.Symbol);
             Assert.IsNull(bot.CurrentOrderData);
+            Assert.IsNull(bot.BuyFilledAt);
             Assert.AreEqual(0.5m, restored.DustPerMarket["XYZ-BTC"]);
         }
     }

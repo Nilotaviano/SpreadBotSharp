@@ -14,7 +14,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
             decimal askPrice = botContext.LatestMarketData.AskRate.Value - 1.Satoshi().CeilToPrecision(botContext.LatestMarketData.Precision);
 
-            bool canSellAtLoss = botContext.buyStopwatch.Elapsed.TotalMinutes > botContext.spreadConfiguration.MinutesForLoss;
+            bool canSellAtLoss = botContext.CanSellAtLoss(DateTime.UtcNow);
             if (!canSellAtLoss)
                 askPrice = Math.Max(botContext.BoughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToPrecision(botContext.LatestMarketData.Precision);
 

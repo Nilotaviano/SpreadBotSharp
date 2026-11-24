@@ -13,7 +13,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             {
                 //cancel order and switch to BotState.Sell
                 //TODO: I think we should rate limit how often we cancel orders here
-                bool canSellAtLoss = botContext.buyStopwatch.Elapsed.TotalMinutes > botContext.spreadConfiguration.MinutesForLoss;
+                bool canSellAtLoss = botContext.CanSellAtLoss(DateTime.UtcNow);
                 bool currentAskAboveMinimumProfitTarget = botContext.LatestMarketData.AskRate > botContext.BoughtPrice * (1 + botContext.spreadConfiguration.MinimumProfitPercentage / 100);
 
                 if (canSellAtLoss || currentAskAboveMinimumProfitTarget)
