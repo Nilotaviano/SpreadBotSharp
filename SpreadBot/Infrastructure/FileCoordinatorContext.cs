@@ -41,7 +41,10 @@ namespace SpreadBot.Infrastructure
                 }
                 catch (Exception e)
                 {
-                    Logger.Instance.LogError($"Could not read coordinator context file. Exception: {e}");
+                    //The next save would overwrite the only record of the previous session's positions
+                    var preservedFile = $"{FILE_NAME}.unreadable-{DateTime.UtcNow:yyyyMMddHHmmss}";
+                    File.Move(FILE_NAME, preservedFile);
+                    Logger.Instance.LogUnexpectedError($"Could not read coordinator context file; moved it to {preservedFile} and starting without the previous session. Exception: {e}");
                 }
                 finally
                 {

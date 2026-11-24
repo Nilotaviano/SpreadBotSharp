@@ -45,9 +45,11 @@ namespace SpreadBot.Logic
 
         private void UpdateAppSettings()
         {
-            configurationsByBaseMarket?.Clear();
+            //A reload runs on the file watcher's thread while evaluation and balance reporting read the grouping: swap in a new one, never mutate it
+            var regrouped = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
 
-            configurationsByBaseMarket = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
+            lock (allocationLock)
+                configurationsByBaseMarket = regrouped;
         }
 
         public void Start()
