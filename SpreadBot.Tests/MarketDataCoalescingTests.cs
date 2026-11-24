@@ -44,7 +44,7 @@ namespace SpreadBot.Tests
 
             var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
             dataRepository.StartConsumingData();
-            var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.001m, MinimumSpreadPercentage = 1 };
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.001m, MinimumSpreadPercentage = 1, SpreadThresholdBeforeCancelingCurrentOrder = MockExchange.Tick };
             var context = new BotContext(configuration, new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, BotState.Buying, 0);
             new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
 

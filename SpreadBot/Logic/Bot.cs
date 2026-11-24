@@ -30,8 +30,8 @@ namespace SpreadBot.Logic
 
         private volatile bool orderRequestInFlight;
 
-        //The newest market data handed to the bot; older market data still waiting for the semaphore is stale
-        private volatile MarketData newestMarketData;
+        //Only read and written under BotContext.Semaphore
+        private MarketData lastProcessedMarketData;
 
         private static readonly TimeSpan UnknownOrderLookupInterval = TimeSpan.FromSeconds(5);
         private DateTime nextUnknownOrderLookup;
@@ -158,9 +158,6 @@ namespace SpreadBot.Logic
         {
             message.ThrowIfArgumentIsNull(nameof(message));
 
-            if (message is MarketData received)
-                newestMarketData = received;
-
             LogMessage($"processing message{Environment.NewLine}: {JsonConvert.SerializeObject(message)}");
 
             if (botContext.BotState == BotState.FinishedWork)
@@ -177,10 +174,17 @@ namespace SpreadBot.Logic
                     if (botContext.BotState == BotState.FinishedWork)
                         return;
 
-                    //Newer market data arrived while this waited (e.g. behind an order request); acting on this would cancel or place on
-                    //stale prices, and the newer one is queued behind it
-                    if (message is MarketData marketData && !ReferenceEquals(marketData, newestMarketData))
-                        return;
+                    if (message is MarketData marketData)
+                    {
+                        //Every update replaces the market's cache entry before reaching the bot, so one that is no longer the entry was
+                        //overtaken while it waited (e.g. behind an order request): acting on it would cancel or place on stale prices,
+                        //and the entry's own message is still to come. The entry may also arrive twice (e.g. a subscription's replay)
+                        if ((dataRepository.MarketsData.TryGetValue(marketData.Symbol, out var current) && !ReferenceEquals(marketData, current))
+                            || ReferenceEquals(marketData, lastProcessedMarketData))
+                            return;
+
+                        lastProcessedMarketData = marketData;
+                    }
 
                     processingMessageTimeExceededTimer.Start();
 
