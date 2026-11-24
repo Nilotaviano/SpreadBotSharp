@@ -36,8 +36,9 @@ namespace SpreadBot.Infrastructure.Exchanges
         Task<IReadOnlyList<MarketData>> GetTickers();
         Task<IReadOnlyList<OrderData>> GetOpenOrders();
         Task<OrderData> GetOrder(string orderId, string marketSymbol);
+        Task<OrderData> GetOrderByClientId(string clientOrderId, string marketSymbol);
 
-        //Orders
+        //Orders: when the answer doesn't say whether an order was placed, they throw Models.OrderStateUnknownException
         Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit);
         Task<OrderData> SellMarket(string marketSymbol, decimal quantity);

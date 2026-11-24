@@ -30,6 +30,10 @@ namespace SpreadBot.Logic
 
         private volatile bool orderRequestInFlight;
 
+        private static readonly TimeSpan UnknownOrderLookupInterval = TimeSpan.FromSeconds(5);
+        //Well past the time an exchange still accepts a request after it was signed (Binance's recvWindow: 10 s in ccxt)
+        private static readonly TimeSpan UnknownOrderGivenUpAfter = TimeSpan.FromSeconds(60);
+        private DateTime nextUnknownOrderLookup;
 
         public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, BalanceLedger balanceLedger)
         {
@@ -63,12 +67,12 @@ namespace SpreadBot.Logic
 
         private void SetCurrentOrderData(OrderData value)
         {
-            if (botContext.CurrentOrderData?.Id != value?.Id)
+            if (OrderIdentity(botContext.CurrentOrderData) != OrderIdentity(value))
             {
                 if (botContext.CurrentOrderData != null)
                     dataRepository.UnsubscribeToOrderData(botContext.CurrentOrderData.ClientOrderId, Guid);
 
-                if (value?.Status == OrderStatus.OPEN)
+                if (value?.Status == OrderStatus.OPEN || value?.Status == OrderStatus.UNKNOWN)
                 {
                     dataRepository.SubscribeToOrderData(value, Guid, ProcessMessage);
                 }
@@ -82,6 +86,9 @@ namespace SpreadBot.Logic
             botContext.CurrentOrderData = value;
             orderRequestInFlight = false;
         }
+
+        //An order whose placement is unknown has no id until the exchange reports it, so its client order id identifies it
+        private static string OrderIdentity(OrderData order) => order?.Id ?? order?.ClientOrderId;
 
         public async void Start()
         {
@@ -112,7 +119,8 @@ namespace SpreadBot.Logic
                 //Replays the cached order state, if any, and keeps delivering updates until the order closes
                 dataRepository.SubscribeToOrderData(botContext.CurrentOrderData, Guid, ProcessMessage);
 
-                if (!isCached)
+                //An order whose placement is unknown has no id to fetch; ProcessMarketData looks it up by client order id
+                if (!isCached && botContext.CurrentOrderData.Status != OrderStatus.UNKNOWN)
                 {
                     try
                     {
@@ -316,7 +324,52 @@ namespace SpreadBot.Logic
         {
             botContext.LatestMarketData = marketData;
 
+            //The strategy would place another order while this one may be live
+            if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN)
+            {
+                await ResolveUnknownOrder();
+                return;
+            }
+
             await botStrategy.ProcessMarketData(dataRepository, botContext, ExecuteOrderFunction, FinishWork);
+        }
+
+        /// <summary>
+        /// Looks up the current order, whose placement is unknown, by its client order id (at most once per
+        /// <see cref="UnknownOrderLookupInterval"/>). Found, it becomes a normal current order. Still not found
+        /// <see cref="UnknownOrderGivenUpAfter"/> after it was sent, the exchange can no longer accept it, so it's dropped
+        /// and the strategy places again. Stream updates and resyncs that report it adopt it in <see cref="ProcessOrderData"/>.
+        /// </summary>
+        private async Task ResolveUnknownOrder()
+        {
+            var unknown = botContext.CurrentOrderData;
+            var now = DateTime.UtcNow;
+
+            if (now < nextUnknownOrderLookup)
+                return;
+
+            nextUnknownOrderLookup = now + UnknownOrderLookupInterval;
+
+            OrderData found;
+            try
+            {
+                found = await exchange.GetOrderByClientId(unknown.ClientOrderId, unknown.MarketSymbol);
+            }
+            catch (ApiException e) when (e.ApiErrorType == ApiErrorType.OrderNotOpen)
+            {
+                if (now - unknown.CreatedAt < UnknownOrderGivenUpAfter)
+                {
+                    LogMessage($"Order {unknown.ClientOrderId}, whose placement is unknown, is not on the exchange yet");
+                    return;
+                }
+
+                LogError($"Order {unknown.ClientOrderId} is still not on the exchange {UnknownOrderGivenUpAfter.TotalSeconds}s after it was sent, so it was never placed");
+                SetCurrentOrderData(null);
+                return;
+            }
+
+            LogMessage($"Order {unknown.ClientOrderId}, whose placement was unknown, is on the exchange as {found?.Status}");
+            await ExecuteOrderFunction(() => Task.FromResult(found));
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
@@ -325,7 +378,18 @@ namespace SpreadBot.Logic
             //that fails may still have been carried out (e.g. a cancel that timed out), so a failure leaves it set
             orderRequestInFlight = true;
 
-            var orderData = await func();
+            OrderData orderData;
+            try
+            {
+                orderData = await func();
+            }
+            catch (OrderStateUnknownException e)
+            {
+                //It may be live: as the current order it blocks placing another one until it's found or given up on
+                LogError($"{e.Message}; holding off until order {e.Order.ClientOrderId} is found or given up on");
+                SetCurrentOrderData(e.Order);
+                return;
+            }
 
             if (orderData == null)
             {
@@ -346,6 +410,10 @@ namespace SpreadBot.Logic
         //TODO: Refactor/clean this method
         private async Task ProcessOrderData(OrderData orderData)
         {
+            //The exchange reports the order whose placement was unknown: it was accepted
+            if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN && orderData.Id != null && orderData.ClientOrderId == botContext.CurrentOrderData.ClientOrderId)
+                SetCurrentOrderData(orderData);
+
             if (orderData.Id == null || orderData.Id != botContext.CurrentOrderData?.Id)
                 return;
 

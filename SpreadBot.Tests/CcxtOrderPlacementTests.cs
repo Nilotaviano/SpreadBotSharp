@@ -29,7 +29,7 @@ namespace SpreadBot.Tests
                 .Callback((string _, string _, string _, double _, double? _, IDictionary<string, object> parameters) => sent = parameters)
                 .ReturnsAsync(Order("open"));
 
-            var order = await new CcxtExchange(exchange.Object, TimeSpan.Zero).BuyLimit(Symbol, 10, 0.0001m);
+            var order = await new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m);
 
             Assert.AreEqual(OrderStatus.OPEN, order.Status);
             Assert.AreEqual(true, sent["postOnly"]);
@@ -38,89 +38,91 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public async Task CreateFailingWithoutAnAnswer_ReturnsTheOrderIfTheExchangeAcceptedIt()
+        public async Task CreateFailingWithoutAnAnswer_ReportsTheOrderAsSentWithAnUnknownState()
         {
+            // The exchange may have accepted it before the answer was lost; failing would make the bot place it again
+            var exchange = Exchange();
+            IDictionary<string, object> sent = null;
+            exchange
+                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", 10, 0.0001, It.IsAny<IDictionary<string, object>>()))
+                .Callback((string _, string _, string _, double _, double? _, IDictionary<string, object> parameters) => sent = parameters)
+                .ThrowsAsync(new ccxt.RequestTimeout("binance timed out"));
+
+            var before = DateTime.UtcNow;
+            var error = await Assert.ThrowsExactlyAsync<OrderStateUnknownException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
+
+            Assert.AreEqual(ApiErrorType.OrderStateUnknown, error.ApiErrorType);
+            Assert.AreEqual(OrderStatus.UNKNOWN, error.Order.Status);
+            Assert.AreEqual((string)sent["clientOrderId"], error.Order.ClientOrderId);
+            Assert.IsNull(error.Order.Id);
+            Assert.AreEqual(Symbol, error.Order.MarketSymbol);
+            Assert.AreEqual(OrderDirection.BUY, error.Order.Direction);
+            Assert.AreEqual(10m, error.Order.Quantity);
+            Assert.AreEqual(0.0001m, error.Order.Limit);
+            Assert.IsTrue(error.Order.CreatedAt >= before);
+            exchange.Verify(e => e.FetchOrder(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IDictionary<string, object>>()), Times.Never);
+        }
+
+        [TestMethod]
+        [DataRow(nameof(ccxt.RateLimitExceeded), ApiErrorType.Throttled)]
+        [DataRow(nameof(ccxt.DDoSProtection), ApiErrorType.Throttled)]
+        [DataRow(nameof(ccxt.InvalidNonce), ApiErrorType.RetryLater)]
+        public async Task CreateRefusedBeforeReachingTheOrderBook_IsAPlainFailure(string errorName, ApiErrorType expected)
+        {
+            var refusal = (ccxt.BaseError)Activator.CreateInstance(typeof(ccxt.BaseError).Assembly.GetType($"ccxt.{errorName}", throwOnError: true), "binance refused");
             var exchange = Exchange();
             exchange
                 .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
-                .ThrowsAsync(new ccxt.RequestTimeout("binance timed out"));
+                .ThrowsAsync(refusal);
+
+            var error = await Assert.ThrowsExactlyAsync<ApiException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
+
+            Assert.AreEqual(expected, error.ApiErrorType);
+        }
+
+        [TestMethod]
+        [DataRow(null, "42")]
+        [DataRow("open", null)]
+        public async Task AcknowledgementWithoutStatusOrId_ReportsAnUnknownState(string status, string id)
+        {
+            var acknowledgement = Order(status);
+            acknowledgement.id = id;
+            var exchange = Exchange();
             exchange
-                .Setup(e => e.FetchOrder(null, Symbol, It.Is<IDictionary<string, object>>(p => p.ContainsKey("clientOrderId"))))
+                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
+                .ReturnsAsync(acknowledgement);
+
+            var error = await Assert.ThrowsExactlyAsync<OrderStateUnknownException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
+
+            Assert.AreEqual(OrderStatus.UNKNOWN, error.Order.Status);
+            StringAssert.StartsWith(error.Order.ClientOrderId, "sb");
+        }
+
+        [TestMethod]
+        public async Task GetOrderByClientId_FetchesByTheClientOrderId()
+        {
+            var exchange = Exchange();
+            exchange
+                .Setup(e => e.FetchOrder(null, Symbol, It.Is<IDictionary<string, object>>(p => (string)p["clientOrderId"] == "client")))
                 .ReturnsAsync(Order("open"));
 
-            var order = await new CcxtExchange(exchange.Object, TimeSpan.Zero).BuyLimit(Symbol, 10, 0.0001m);
+            var order = await new CcxtExchange(exchange.Object).GetOrderByClientId("client", Symbol);
 
             Assert.AreEqual("42", order.Id);
             Assert.AreEqual(OrderStatus.OPEN, order.Status);
         }
 
         [TestMethod]
-        public async Task CreateFailingWithoutAnAnswer_ReportsRetryLaterIfTheOrderDoesNotExist()
+        public async Task GetOrderByClientId_ReportsAnOrderTheExchangeDoesNotKnowAsNotOpen()
         {
             var exchange = Exchange();
-            exchange
-                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
-                .ThrowsAsync(new ccxt.RequestTimeout("binance timed out"));
             exchange
                 .Setup(e => e.FetchOrder(null, Symbol, It.IsAny<IDictionary<string, object>>()))
                 .ThrowsAsync(new ccxt.OrderNotFound("binance Order does not exist."));
 
-            var error = await Assert.ThrowsExactlyAsync<ApiException>(() => new CcxtExchange(exchange.Object, TimeSpan.Zero).BuyLimit(Symbol, 10, 0.0001m));
+            var error = await Assert.ThrowsExactlyAsync<ApiException>(() => new CcxtExchange(exchange.Object).GetOrderByClientId("client", Symbol));
 
-            Assert.AreEqual(ApiErrorType.RetryLater, error.ApiErrorType);
-        }
-
-        [TestMethod]
-        public async Task CreateFailingWithoutAnAnswer_RetriesALookupThatDoesNotFindTheOrderYet()
-        {
-            var exchange = Exchange();
-            exchange
-                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
-                .ThrowsAsync(new ccxt.RequestTimeout("binance timed out"));
-            exchange
-                .SetupSequence(e => e.FetchOrder(null, Symbol, It.IsAny<IDictionary<string, object>>()))
-                .ThrowsAsync(new ccxt.OrderNotFound("binance Order does not exist."))
-                .ReturnsAsync(Order("open"));
-
-            var order = await new CcxtExchange(exchange.Object, TimeSpan.Zero).BuyLimit(Symbol, 10, 0.0001m);
-
-            Assert.AreEqual("42", order.Id);
-        }
-
-        [TestMethod]
-        public async Task CreateResponseWithoutStatus_IsLookedUpForTheFullOrder()
-        {
-            var exchange = Exchange();
-            exchange
-                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
-                .ReturnsAsync(Order(null));
-            exchange
-                .Setup(e => e.FetchOrder(null, Symbol, It.Is<IDictionary<string, object>>(p => p.ContainsKey("clientOrderId"))))
-                .ReturnsAsync(Order("closed"));
-
-            var order = await new CcxtExchange(exchange.Object, TimeSpan.Zero).BuyLimit(Symbol, 10, 0.0001m);
-
-            Assert.AreEqual(OrderStatus.CLOSED, order.Status);
-        }
-
-        [TestMethod]
-        public async Task CreateResponseWithoutStatus_IsTrackedAsOpenWhenTheLookupFails()
-        {
-            // The exchange acknowledged the order, so reporting a failure would make the bot place it again
-            var exchange = Exchange();
-            exchange
-                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
-                .ReturnsAsync(Order(null, clientOrderId: null));
-            exchange
-                .Setup(e => e.FetchOrder(null, Symbol, It.IsAny<IDictionary<string, object>>()))
-                .ThrowsAsync(new ccxt.RequestTimeout("binance timed out"));
-
-            var order = await new CcxtExchange(exchange.Object, TimeSpan.Zero).BuyLimit(Symbol, 10, 0.0001m);
-
-            Assert.AreEqual(OrderStatus.OPEN, order.Status);
-            Assert.AreEqual("42", order.Id);
-            StringAssert.StartsWith(order.ClientOrderId, "sb");
-            Assert.AreEqual(Symbol, order.MarketSymbol);
+            Assert.AreEqual(ApiErrorType.OrderNotOpen, error.ApiErrorType);
         }
 
         [TestMethod]

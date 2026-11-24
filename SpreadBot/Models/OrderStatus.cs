@@ -8,6 +8,8 @@ namespace SpreadBot.Models
     {
         UNDEFINED,
         OPEN,
-        CLOSED
+        CLOSED,
+        /// <summary>Sent, but whether the exchange accepted it is not known yet; only its client order id identifies it.</summary>
+        UNKNOWN
     }
 }

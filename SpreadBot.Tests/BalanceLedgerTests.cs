@@ -54,6 +54,16 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void UnallocatedBaseBalance_KeepsTheBalanceOfABuyWhosePlacementIsUnknownClaimed()
+        {
+            // Whether or not the buy reached the exchange, its funds stay the bot's, so they're never allocated twice
+            var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.3m, held: 0, new OrderData { ClientOrderId = "sb1", Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN }));
+
+            Assert.AreEqual(0.7m, ledger.UnallocatedBaseBalance("BTC"));
+        }
+
+        [TestMethod]
         public void UnallocatedBaseBalance_CountsProceedsOfAPartiallyFilledSell()
         {
             // 0.05 BTC of proceeds (minus 0.001 fee) reached Available before the sell closes and the bot books them

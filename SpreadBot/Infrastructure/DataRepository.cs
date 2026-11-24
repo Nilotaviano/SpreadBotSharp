@@ -109,10 +109,9 @@ namespace SpreadBot.Infrastructure
                 return;
             }
 
+            //An order whose placement is unknown has no id to fetch; until it has one, only the stream and resyncs' open orders reach it
             if (order.Id != null && order.MarketSymbol != null)
                 TrackedOrders[clientOrderId] = order;
-            else
-                Logger.Instance.LogUnexpectedError($"Order {clientOrderId} has no id or symbol, so resyncs can't fetch it; only stream updates will reach it");
 
             var handlers = OrderHandlers.GetOrAdd(clientOrderId, _ => new ConcurrentDictionary<Guid, Action<OrderData>>());
             handlers[handlerGuid] = callback;
@@ -259,7 +258,7 @@ namespace SpreadBot.Infrastructure
             await FetchTrackedOrdersNoLongerOpen(openOrders.Result);
 
             var untracked = openOrders.Result
-                .Where(o => !TrackedOrders.ContainsKey(o.ClientOrderId) && reportedUntrackedOrders.TryAdd(o.ClientOrderId, true))
+                .Where(o => !OrderHandlers.ContainsKey(o.ClientOrderId) && reportedUntrackedOrders.TryAdd(o.ClientOrderId, true))
                 .ToList();
             if (untracked.Count > 0)
                 Logger.Instance.LogError($"Open orders no bot tracks (placed manually, or left by a failed placement): {string.Join(", ", untracked.Select(o => $"{o.MarketSymbol} {o.Direction} {o.Id}"))}");

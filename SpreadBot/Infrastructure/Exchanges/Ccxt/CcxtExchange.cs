@@ -17,10 +17,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private const int TickSizePrecisionMode = 4;
         private const decimal DefaultFeeRate = 0.001m;
         private static readonly TimeSpan StreamRetryDelay = TimeSpan.FromSeconds(5);
-        private const int OrderLookupAttempts = 3;
 
         private readonly ccxt.Exchange exchange;
-        private readonly TimeSpan orderLookupRetryDelay = TimeSpan.FromSeconds(1);
         private readonly CancellationTokenSource streams = new CancellationTokenSource();
         private int disposed;
 
@@ -59,10 +57,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 exchange.setSandboxMode(true);
         }
 
-        internal CcxtExchange(ccxt.Exchange exchange, TimeSpan orderLookupRetryDelay)
+        internal CcxtExchange(ccxt.Exchange exchange)
         {
             this.exchange = exchange;
-            this.orderLookupRetryDelay = orderLookupRetryDelay;
         }
 
         public bool IsSetup { get; private set; }
@@ -140,6 +137,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             return ToOrderData(await Call(() => exchange.FetchOrder(orderId, marketSymbol)));
         }
 
+        public async Task<OrderData> GetOrderByClientId(string clientOrderId, string marketSymbol)
+        {
+            var parameters = new Dictionary<string, object> { ["clientOrderId"] = clientOrderId };
+            return ToOrderData(await Call(() => exchange.FetchOrder(null, marketSymbol, parameters)));
+        }
+
         public Task<OrderData> BuyLimit(string marketSymbol, decimal quantity, decimal limit) => CreateMakerOrder(marketSymbol, "buy", quantity, limit);
 
         public Task<OrderData> SellLimit(string marketSymbol, decimal quantity, decimal limit) => CreateMakerOrder(marketSymbol, "sell", quantity, limit);
@@ -159,9 +162,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             CreateOrder(marketSymbol, "limit", side, quantity, limit, new Dictionary<string, object> { ["postOnly"] = true });
 
         /// <summary>
-        /// Places an order under a fresh client order id. If the request fails without an answer (network error), the
-        /// order may still have been accepted, so it is looked up by that id before reporting failure: a blind retry
-        /// would leave an untracked order on the exchange and place a second one.
+        /// Places an order under a fresh client order id. If the answer doesn't show the order's state (no answer at all,
+        /// or an acknowledgement without a status or id), throws <see cref="OrderStateUnknownException"/> with the order
+        /// as sent, so the caller can look it up by that id: placing it again could leave a second order on the exchange.
         /// </summary>
         private async Task<OrderData> CreateOrder(string marketSymbol, string type, string side, decimal quantity, decimal? limit, Dictionary<string, object> parameters = null)
         {
@@ -169,79 +172,37 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             parameters ??= new Dictionary<string, object>();
             parameters["clientOrderId"] = clientOrderId;
 
+            var sent = new OrderData
+            {
+                ClientOrderId = clientOrderId,
+                MarketSymbol = marketSymbol,
+                Direction = side == "buy" ? OrderDirection.BUY : OrderDirection.SELL,
+                Type = type == "limit" ? OrderType.LIMIT : OrderType.MARKET,
+                Quantity = quantity,
+                Limit = limit ?? 0,
+                Status = OrderStatus.UNKNOWN,
+                CreatedAt = DateTime.UtcNow
+            };
+
             ccxt.Order order;
             try
             {
                 order = await exchange.CreateOrder(marketSymbol, type, side, (double)quantity, limit.HasValue ? (double)limit.Value : (double?)null, parameters);
             }
-            catch (ccxt.NetworkError e)
+            //Rate limits and timestamp rejections refuse the request itself; any other network error may have happened after the exchange accepted it
+            catch (ccxt.NetworkError e) when (e is not ccxt.RateLimitExceeded && e is not ccxt.DDoSProtection && e is not ccxt.InvalidNonce)
             {
-                Logger.Instance.LogError($"Creating {side} {type} order {clientOrderId} on {marketSymbol} failed without an answer, looking it up: {e.Message}");
-                return ToOrderData(await FindOrderByClientId(clientOrderId, marketSymbol) ?? throw ToApiException(e));
+                throw new OrderStateUnknownException(sent, $"Creating {side} {type} order {clientOrderId} on {marketSymbol} failed without an answer: {e.Message}");
             }
             catch (ccxt.BaseError e)
             {
                 throw ToApiException(e);
             }
 
-            if (order.status != null)
-                return ToOrderData(order);
+            if (order.status == null || order.id == null)
+                throw new OrderStateUnknownException(sent, $"Order {clientOrderId} on {marketSymbol} was acknowledged without a status or id (id: {order.id}, status: {order.status})");
 
-            //An acknowledgement without a status: the order exists, so never report failure here (the bot would place it again).
-            //Look it up for its state; if that fails, track it as open and let the stream or the next resync settle it.
-            try
-            {
-                var found = await FindOrderByClientId(clientOrderId, marketSymbol);
-                if (found.HasValue)
-                    return ToOrderData(found.Value);
-            }
-            catch (ApiException e)
-            {
-                Logger.Instance.LogError($"Order {clientOrderId} on {marketSymbol} was acknowledged without a status and the lookup failed; tracking it as open: {e.Message}");
-            }
-
-            var acknowledged = ToOrderData(order);
-            acknowledged.ClientOrderId = order.clientOrderId ?? clientOrderId;
-            acknowledged.MarketSymbol ??= marketSymbol;
-            acknowledged.Status = OrderStatus.OPEN;
-            return acknowledged;
-        }
-
-        /// <summary>
-        /// The order with this client id, or null if the exchange still doesn't know it after every attempt.
-        /// Waits before each attempt: right after a request with no answer, the exchange may not list the order yet.
-        /// </summary>
-        private async Task<ccxt.Order?> FindOrderByClientId(string clientOrderId, string marketSymbol)
-        {
-            var parameters = new Dictionary<string, object> { ["clientOrderId"] = clientOrderId };
-
-            for (var attempt = 1; ; attempt++)
-            {
-                await Task.Delay(orderLookupRetryDelay);
-
-                try
-                {
-                    return await exchange.FetchOrder(null, marketSymbol, parameters);
-                }
-                catch (ccxt.OrderNotFound) when (attempt < OrderLookupAttempts)
-                {
-                    Logger.Instance.LogError($"Order {clientOrderId} not found yet (attempt {attempt}), retrying");
-                }
-                catch (ccxt.OrderNotFound)
-                {
-                    return null;
-                }
-                catch (ccxt.NetworkError e) when (attempt < OrderLookupAttempts)
-                {
-                    Logger.Instance.LogError($"Looking up order {clientOrderId} failed (attempt {attempt}), retrying: {e.Message}");
-                }
-                catch (ccxt.BaseError e)
-                {
-                    //Still unknown: the resync reports open orders no bot tracks
-                    Logger.Instance.LogUnexpectedError($"Could not determine whether order {clientOrderId} on {marketSymbol} was placed: {e.Message}");
-                    throw ToApiException(e);
-                }
-            }
+            return ToOrderData(order);
         }
 
         //Binance allows up to 36 characters from [.A-Za-z0-9:/_-]
