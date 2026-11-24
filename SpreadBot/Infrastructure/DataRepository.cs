@@ -23,6 +23,7 @@ namespace SpreadBot.Infrastructure
         private int? lastSummarySequence;
         private int? lastTickerSequence;
         private int? lastOrderSequence;
+        private int resyncInProgress;
 
         //I know it's not a Semaphore, but it works like one
         private readonly System.Threading.ManualResetEvent consumeDataSemaphore = new System.Threading.ManualResetEvent(true);
@@ -247,9 +248,17 @@ namespace SpreadBot.Infrastructure
         {
             ConsumeData(pendingOrderMessages, orderData =>
             {
-                if (lastOrderSequence.HasValue && orderData.Sequence != lastOrderSequence.Value + 1)
+                if (lastOrderSequence.HasValue && orderData.Sequence <= lastOrderSequence.Value)
                 {
                     Logger.Instance.LogMessage("Order WS data skipped");
+                    return;
+                }
+
+                if (lastOrderSequence.HasValue && orderData.Sequence > lastOrderSequence.Value + 1)
+                {
+                    //Every later message would also fail the sequence check, so refetch orders now instead of waiting for the timer
+                    Logger.Instance.LogError($"Order WS sequence gap: expected {lastOrderSequence.Value + 1}, got {orderData.Sequence}. Resyncing");
+                    RequestResync();
                     return;
                 }
 
@@ -508,6 +517,20 @@ namespace SpreadBot.Infrastructure
 
         private void ResyncTimer_Elapsed(object sender, ElapsedEventArgs e)
         {
+            Resync();
+        }
+
+        private void RequestResync()
+        {
+            resyncTimer.Stop();
+            Task.Run(Resync);
+        }
+
+        private void Resync()
+        {
+            if (System.Threading.Interlocked.Exchange(ref resyncInProgress, 1) == 1)
+                return;
+
             try
             {
                 Logger.Instance.LogMessage("Resyncing data");
@@ -525,6 +548,7 @@ namespace SpreadBot.Infrastructure
             finally
             {
                 ResumeConsumingData();
+                System.Threading.Interlocked.Exchange(ref resyncInProgress, 0);
                 resyncTimer.Start();
             }
         }
