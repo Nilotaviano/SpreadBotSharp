@@ -262,7 +262,9 @@ namespace SpreadBot.Logic
                 }
                 catch (Exception e)
                 {
-                    LogError($"Could not check the exchange balance before finishing: {e}");
+                    //Finishing market-sells HeldAmount, which may include other bots' coins until it's checked
+                    LogError($"Could not check the exchange balance before finishing; retrying on the next rejection: {e}");
+                    return;
                 }
 
                 await FinishWork();
@@ -331,6 +333,8 @@ namespace SpreadBot.Logic
             switch (orderData?.Status)
             {
                 case OrderStatus.OPEN:
+                    //Keep partial fills current; BalanceLedger counts them before the order closes
+                    SetCurrentOrderData(orderData);
                     botContext.BotState = (orderData?.Direction) switch
                     {
                         OrderDirection.BUY => BotState.BuyOrderActive,

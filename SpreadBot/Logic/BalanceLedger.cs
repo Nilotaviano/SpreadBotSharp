@@ -1,4 +1,6 @@
 using SpreadBot.Infrastructure;
+using SpreadBot.Models;
+using SpreadBot.Models.Repository;
 using System;
 using System.Linq;
 
@@ -6,7 +8,8 @@ namespace SpreadBot.Logic
 {
     /// <summary>
     /// Answers how much of the exchange's balances is free for new work versus claimed by running bots.
-    /// The exchange's balances are the source of truth; bots' own Balance/HeldAmount say which part of them is theirs.
+    /// The exchange's balances are the source of truth; bots' own Balance/HeldAmount and open order say which part of them is theirs.
+    /// A bot only books a fill when its order closes, so an open order's partial fills are counted here explicitly.
     /// </summary>
     public class BalanceLedger
     {
@@ -24,23 +27,21 @@ namespace SpreadBot.Logic
         /// </summary>
         public decimal UnallocatedBaseBalance(string baseMarket)
         {
-            //Funds of bots with an open buy order are locked, so the exchange already excludes them from Available
             var heldByBots = context.GetBots()
-                .Where(b => b.BaseMarket == baseMarket && b.botContext.BotState != BotState.BuyOrderActive)
-                .Sum(b => b.Balance);
+                .Where(b => b.BaseMarket == baseMarket)
+                .Sum(AvailableBaseHeldBy);
 
             return Available(baseMarket) - heldByBots;
         }
 
         /// <summary>
-        /// Coins of <paramref name="currency"/> available on the exchange that belong to running bots other than
-        /// <paramref name="excluding"/>. Coins locked in a bot's open sell order are not part of Available, so those bots are skipped.
+        /// Coins of <paramref name="currency"/> available on the exchange that belong to running bots other than <paramref name="excluding"/>.
         /// </summary>
         public decimal CoinsHeldByOtherBots(string currency, Bot excluding = null)
         {
             return context.GetBots()
-                .Where(b => b != excluding && b.botContext.LatestMarketData.Target == currency && b.botContext.BotState != BotState.SellOrderActive)
-                .Sum(b => b.HeldAmount);
+                .Where(b => b != excluding && b.botContext.LatestMarketData.Target == currency)
+                .Sum(AvailableCoinsHeldBy);
         }
 
         /// <summary>
@@ -52,7 +53,7 @@ namespace SpreadBot.Logic
         }
 
         /// <summary>
-        /// Everything in <paramref name="baseMarket"/> terms: the exchange's total base balance plus the coins bots on that base hold, at their last trade rate.
+        /// Everything in <paramref name="baseMarket"/> terms: the exchange's total base balance plus the coins bots on that base own, at their last trade rate.
         /// </summary>
         public decimal TotalValue(string baseMarket)
         {
@@ -60,7 +61,61 @@ namespace SpreadBot.Logic
 
             return context.GetBots()
                 .Where(b => b.BaseMarket == baseMarket)
-                .Aggregate(total, (value, bot) => value + bot.HeldAmount * bot.LastTradeRate);
+                .Aggregate(total, (value, bot) => value + CoinsOwnedBy(bot) * bot.LastTradeRate);
+        }
+
+        /// <summary>
+        /// The part of the bot's base currency that the exchange counts as Available.
+        /// </summary>
+        private static decimal AvailableBaseHeldBy(Bot bot)
+        {
+            var order = bot.botContext.CurrentOrderData;
+
+            //Locked in the buy order or already spent on its partial fills: neither is in Available
+            if (IsOpen(order, OrderDirection.BUY))
+                return 0;
+
+            //Proceeds of the sell's partial fills are already in Available
+            if (IsOpen(order, OrderDirection.SELL))
+                return bot.Balance + order.Proceeds - order.Commission;
+
+            return bot.Balance;
+        }
+
+        /// <summary>
+        /// The part of the bot's coins that the exchange counts as Available.
+        /// </summary>
+        private static decimal AvailableCoinsHeldBy(Bot bot)
+        {
+            var order = bot.botContext.CurrentOrderData;
+
+            //Unsold coins are locked in the sell order; sold ones are gone
+            if (IsOpen(order, OrderDirection.SELL))
+                return 0;
+
+            //Coins from the buy's partial fills are already in Available
+            if (IsOpen(order, OrderDirection.BUY))
+                return bot.HeldAmount + order.FillQuantity;
+
+            return bot.HeldAmount;
+        }
+
+        private static decimal CoinsOwnedBy(Bot bot)
+        {
+            var order = bot.botContext.CurrentOrderData;
+
+            if (IsOpen(order, OrderDirection.SELL))
+                return bot.HeldAmount - order.FillQuantity;
+
+            if (IsOpen(order, OrderDirection.BUY))
+                return bot.HeldAmount + order.FillQuantity;
+
+            return bot.HeldAmount;
+        }
+
+        private static bool IsOpen(OrderData order, OrderDirection direction)
+        {
+            return order != null && order.Status == OrderStatus.OPEN && order.Direction == direction;
         }
 
         private decimal Available(string currency)

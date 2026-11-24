@@ -83,6 +83,7 @@ namespace SpreadBot.Logic
                     allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
 
                     AllocateBot(bot);
+                    bot.Start();
 
                     Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
                 }
@@ -96,14 +97,22 @@ namespace SpreadBot.Logic
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
             //Summaries and tickers are consumed on separate threads; evaluating concurrently could grant the same balance twice
+            List<Bot> allocatedBots;
+
             lock (allocationLock)
-                EvaluateMarketsSerialized(marketDeltas);
+                allocatedBots = EvaluateMarketsSerialized(marketDeltas);
+
+            //Started outside the lock so nothing a bot does on start can block allocation
+            foreach (var bot in allocatedBots)
+                bot.Start();
         }
 
-        private void EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas)
+        private List<Bot> EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas)
         {
+            var allocatedBots = new List<Bot>();
+
             if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
-                return;
+                return allocatedBots;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
 
@@ -153,12 +162,15 @@ namespace SpreadBot.Logic
                         var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory, balanceLedger);
 
                         AllocateBot(bot);
+                        allocatedBots.Add(bot);
                     }
 
                     if (!anyConfigurationAvailable)
                         break;
                 }
             }
+
+            return allocatedBots;
         }
 
         private void AllocateBot(Bot bot)
@@ -168,8 +180,6 @@ namespace SpreadBot.Logic
                 context.AddBot(bot);
                 Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Unallocated balance: {balanceLedger.UnallocatedBaseBalance(bot.BaseMarket)}{bot.BaseMarket}");
             }
-
-            bot.Start();
         }
 
         private bool IsViableMarket(MarketData market)
