@@ -161,6 +161,37 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void OpenOrderUpdate_WithFewerFills_DoesNotReplaceANewerOne()
+        {
+            const string buyOrderId = "buy-1";
+            var exchange = new MockExchange();
+            var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 60000 });
+            dataRepository.StartConsumingData();
+
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m };
+            var context = new BotContext(configuration, new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 0)
+            {
+                Balance = 0.002m,
+                CurrentOrderData = new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN }
+            };
+            var observedFills = new System.Collections.Concurrent.ConcurrentQueue<decimal>();
+            context.ContextChanged += (_, _) => observedFills.Enqueue(context.CurrentOrderData?.FillQuantity ?? -1);
+            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+
+            OrderData PartialFill(decimal filled) => new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, FillQuantity = filled };
+
+            exchange.OnOrder(PartialFill(5));
+            WaitUntil(() => context.CurrentOrderData.FillQuantity == 5, "the partial fill is applied");
+
+            exchange.OnOrder(PartialFill(3));
+            exchange.OnOrder(PartialFill(7));
+            WaitUntil(() => context.CurrentOrderData.FillQuantity == 7, "the newer partial fill is applied");
+
+            Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
+            CollectionAssert.DoesNotContain(observedFills.ToArray(), 3m, "the stale update with fewer fills was applied");
+        }
+
+        [TestMethod]
         public void Start_WithHeldCoinsButNoFillTime_StartsTheLossTimer()
         {
             var dataRepository = new DataRepository(new MockExchange().Object, new AppSettings { ResyncIntervalMs = 60000 });

@@ -347,8 +347,9 @@ namespace SpreadBot.Logic
             switch (orderData?.Status)
             {
                 case OrderStatus.OPEN:
-                    //Keep partial fills current; BalanceLedger counts them before the order closes
-                    SetCurrentOrderData(orderData);
+                    //Keep partial fills current, BalanceLedger counts them before the order closes; a late update with fewer fills is stale
+                    if (orderData.FillQuantity >= botContext.CurrentOrderData.FillQuantity)
+                        SetCurrentOrderData(orderData);
                     botContext.BotState = (orderData?.Direction) switch
                     {
                         OrderDirection.BUY => BotState.BuyOrderActive,
@@ -357,9 +358,10 @@ namespace SpreadBot.Logic
                     };
                     break;
                 case OrderStatus.CLOSED:
-                    SetCurrentOrderData(null);
-
+                    //Book the fill before dropping the order, so BalanceLedger never sees neither
                     UpdateContext(orderData);
+
+                    SetCurrentOrderData(null);
 
                     if (botContext.HeldAmount * botContext.LatestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {
