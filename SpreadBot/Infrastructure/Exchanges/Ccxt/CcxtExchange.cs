@@ -17,10 +17,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private const int TickSizePrecisionMode = 4;
         private const decimal DefaultFeeRate = 0.001m;
         private static readonly TimeSpan StreamRetryDelay = TimeSpan.FromSeconds(5);
-        private static readonly TimeSpan OrderLookupRetryDelay = TimeSpan.FromSeconds(1);
         private const int OrderLookupAttempts = 3;
 
         private readonly ccxt.Exchange exchange;
+        private readonly TimeSpan orderLookupRetryDelay = TimeSpan.FromSeconds(1);
         private readonly CancellationTokenSource streams = new CancellationTokenSource();
         private int disposed;
 
@@ -59,9 +59,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 exchange.setSandboxMode(true);
         }
 
-        internal CcxtExchange(ccxt.Exchange exchange)
+        internal CcxtExchange(ccxt.Exchange exchange, TimeSpan orderLookupRetryDelay)
         {
             this.exchange = exchange;
+            this.orderLookupRetryDelay = orderLookupRetryDelay;
         }
 
         public bool IsSetup { get; private set; }
@@ -183,15 +184,32 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 throw ToApiException(e);
             }
 
-            //Some responses carry no status (e.g. an acknowledgement); fetch the order so the bot never tracks an order in an unknown state
-            if (order.status == null)
-                order = await Call(() => exchange.FetchOrder(order.id, marketSymbol));
+            if (order.status != null)
+                return ToOrderData(order);
 
-            return ToOrderData(order);
+            //An acknowledgement without a status: the order exists, so never report failure here (the bot would place it again).
+            //Look it up for its state; if that fails, track it as open and let the stream or the next resync settle it.
+            try
+            {
+                var found = await FindOrderByClientId(clientOrderId, marketSymbol);
+                if (found.HasValue)
+                    return ToOrderData(found.Value);
+            }
+            catch (ApiException e)
+            {
+                Logger.Instance.LogError($"Order {clientOrderId} on {marketSymbol} was acknowledged without a status and the lookup failed; tracking it as open: {e.Message}");
+            }
+
+            var acknowledged = ToOrderData(order);
+            acknowledged.ClientOrderId = order.clientOrderId ?? clientOrderId;
+            acknowledged.MarketSymbol ??= marketSymbol;
+            acknowledged.Status = OrderStatus.OPEN;
+            return acknowledged;
         }
 
         /// <summary>
-        /// The order with this client id, or null if the exchange confirms there is none.
+        /// The order with this client id, or null if the exchange still doesn't know it after every attempt.
+        /// Waits before each attempt: right after a request with no answer, the exchange may not list the order yet.
         /// </summary>
         private async Task<ccxt.Order?> FindOrderByClientId(string clientOrderId, string marketSymbol)
         {
@@ -199,9 +217,15 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
 
             for (var attempt = 1; ; attempt++)
             {
+                await Task.Delay(orderLookupRetryDelay);
+
                 try
                 {
                     return await exchange.FetchOrder(null, marketSymbol, parameters);
+                }
+                catch (ccxt.OrderNotFound) when (attempt < OrderLookupAttempts)
+                {
+                    Logger.Instance.LogError($"Order {clientOrderId} not found yet (attempt {attempt}), retrying");
                 }
                 catch (ccxt.OrderNotFound)
                 {
@@ -210,7 +234,6 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 catch (ccxt.NetworkError e) when (attempt < OrderLookupAttempts)
                 {
                     Logger.Instance.LogError($"Looking up order {clientOrderId} failed (attempt {attempt}), retrying: {e.Message}");
-                    await Task.Delay(OrderLookupRetryDelay);
                 }
                 catch (ccxt.BaseError e)
                 {

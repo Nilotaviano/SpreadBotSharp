@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Logic;
@@ -62,6 +62,19 @@ namespace SpreadBot.Tests
             await new SpreadSellStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             exchange.Mock.Verify(e => e.SellLimit(Symbol, 10, ask), Times.Once);
+        }
+
+        [TestMethod]
+        public async Task Sell_KeepsTheProfitFloor_WhenItIsAboveAJoinedAsk()
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinutesForLoss = 30, MinimumProfitPercentage = 10 };
+            var ask = Bid + MockExchange.Tick;
+            var context = new BotContext(configuration, Market(ask), BotState.Bought, 10) { BoughtPrice = Bid, BuyFilledAt = DateTime.UtcNow };
+
+            await new SpreadSellStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+
+            exchange.Mock.Verify(e => e.SellLimit(Symbol, 10, Bid * 1.10m), Times.Once);
         }
     }
 }

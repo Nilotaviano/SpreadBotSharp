@@ -1,4 +1,4 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Models;
@@ -32,7 +32,7 @@ namespace SpreadBot.Tests
             new OrderData { Id = id, ClientOrderId = id, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = status, FillQuantity = filled };
 
         /// <summary>
-        /// Consumers are paused during a resync, so once a ticker pushed afterwards is consumed the resync has finished.
+        /// Consumers are paused during a resync, so once the resync has started, a ticker pushed afterwards is only consumed after it finishes.
         /// </summary>
         private static void WaitForResyncToFinish(MockExchange exchange, DataRepository repository)
         {
@@ -101,7 +101,9 @@ namespace SpreadBot.Tests
 
             // "1" is still open and tracked; "2" is open but untracked; "3" was unsubscribed
             exchange.Mock.Setup(e => e.GetOpenOrders()).ReturnsAsync(new List<OrderData> { Order("1", OrderStatus.OPEN) });
+            exchange.Mock.Invocations.Clear();
             exchange.OnStreamInterrupted();
+            WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.GetOpenOrders)), "the resync starts");
             WaitForResyncToFinish(exchange, repository);
 
             exchange.Mock.Verify(e => e.GetOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);

@@ -368,10 +368,16 @@ namespace SpreadBot.Logic
                     {
                         UpdateContext(orderData);
                     }
-                    finally
+                    catch (Exception e)
                     {
+                        //Without its fill booked the bot's state is unknown; stop it rather than trade on it
+                        LogUnexpectedError($"Could not book closed order {orderData.Id}; finishing: {e}");
                         SetCurrentOrderData(null);
+                        await FinishWork();
+                        return;
                     }
+
+                    SetCurrentOrderData(null);
 
                     if (botContext.HeldAmount * botContext.LatestMarketData.AskRate > botContext.spreadConfiguration.MinimumNegotiatedAmount)
                     {

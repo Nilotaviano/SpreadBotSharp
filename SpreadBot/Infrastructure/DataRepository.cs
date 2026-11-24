@@ -21,6 +21,7 @@ namespace SpreadBot.Infrastructure
         private readonly BlockingCollection<BalanceData> pendingBalanceMessages = new BlockingCollection<BalanceData>();
         private readonly BlockingCollection<IEnumerable<MarketData>> pendingMarketMessages = new BlockingCollection<IEnumerable<MarketData>>();
         private readonly BlockingCollection<OrderData> pendingOrderMessages = new BlockingCollection<OrderData>();
+        private readonly ConcurrentDictionary<string, bool> reportedUntrackedOrders = new ConcurrentDictionary<string, bool>();
 
         public DataRepository(IExchange exchange, AppSettings appSettings)
         {
@@ -101,7 +102,17 @@ namespace SpreadBot.Infrastructure
         public void SubscribeToOrderData(OrderData order, Guid handlerGuid, Action<OrderData> callback)
         {
             var clientOrderId = order.ClientOrderId;
-            TrackedOrders[clientOrderId] = order;
+
+            if (clientOrderId == null)
+            {
+                Logger.Instance.LogUnexpectedError($"Can't subscribe to order {order.Id} on {order.MarketSymbol}: it has no client order id");
+                return;
+            }
+
+            if (order.Id != null && order.MarketSymbol != null)
+                TrackedOrders[clientOrderId] = order;
+            else
+                Logger.Instance.LogUnexpectedError($"Order {clientOrderId} has no id or symbol, so resyncs can't fetch it; only stream updates will reach it");
 
             var handlers = OrderHandlers.GetOrAdd(clientOrderId, _ => new ConcurrentDictionary<Guid, Action<OrderData>>());
             handlers[handlerGuid] = callback;
@@ -247,7 +258,9 @@ namespace SpreadBot.Infrastructure
 
             await FetchTrackedOrdersNoLongerOpen(openOrders.Result);
 
-            var untracked = openOrders.Result.Where(o => !TrackedOrders.ContainsKey(o.ClientOrderId)).ToList();
+            var untracked = openOrders.Result
+                .Where(o => !TrackedOrders.ContainsKey(o.ClientOrderId) && reportedUntrackedOrders.TryAdd(o.ClientOrderId, true))
+                .ToList();
             if (untracked.Count > 0)
                 Logger.Instance.LogError($"Open orders no bot tracks (placed manually, or left by a failed placement): {string.Join(", ", untracked.Select(o => $"{o.MarketSymbol} {o.Direction} {o.Id}"))}");
         }
