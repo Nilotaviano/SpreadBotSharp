@@ -175,6 +175,15 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task Setup_RejectsAnExchangeWhosePricePrecisionIsSignificantDigits()
+        {
+            var ccxtExchange = Exchange().Object;
+            ccxtExchange.precisionMode = 3;
+
+            await Assert.ThrowsExactlyAsync<NotSupportedException>(() => new CcxtExchange(ccxtExchange).Setup(new[] { "BTC" }));
+        }
+
+        [TestMethod]
         public void OrderRequestLifetime_IsTheRecvWindowPlusAMargin()
         {
             // ccxt's Binance signs requests with a 10 s recvWindow

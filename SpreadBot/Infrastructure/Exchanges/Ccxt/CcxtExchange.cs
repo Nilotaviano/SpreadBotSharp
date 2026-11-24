@@ -15,6 +15,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
     /// </summary>
     public sealed class CcxtExchange : IExchange, IDisposable
     {
+        private const int SignificantDigitsPrecisionMode = 3;
         private const int TickSizePrecisionMode = 4;
         private const decimal DefaultFeeRate = 0.001m;
         private static readonly TimeSpan StreamRetryDelay = TimeSpan.FromSeconds(5);
@@ -89,6 +90,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
 
         public async Task Setup(IEnumerable<string> quoteCurrencies)
         {
+            //A number of significant digits gives no fixed price tick, and the strategies move prices by the tick
+            if (Convert.ToInt32(exchange.precisionMode) == SignificantDigitsPrecisionMode)
+                throw new NotSupportedException($"{exchange.id} gives price precision as significant digits, which has no fixed price tick");
+
             var quotes = new HashSet<string>(quoteCurrencies);
 
             markets = await Call(() => exchange.LoadMarkets());
@@ -333,15 +338,22 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 ccxt.NetworkError => ApiErrorType.RetryLater,
                 ccxt.AuthenticationError => ApiErrorType.Unauthorized,
                 ccxt.BadSymbol => ApiErrorType.MarketOffline,
+                ccxt.MarketClosed => ApiErrorType.MarketOffline,
+                //e.g. Binance's -1004 "server is busy"
+                ccxt.OperationRejected => ApiErrorType.RetryLater,
                 _ => ApiErrorType.UnknownError
             };
 
             return new ApiException(type, error.Message);
         }
 
-        //Binance filter failures for minimum notional / lot size, e.g. "Filter failure: NOTIONAL" or "Order's notional must be no smaller than ..."
+        //Binance filter failures for minimum notional / lot size, e.g. "Filter failure: NOTIONAL" or "Order's notional must be no smaller than ...";
+        //ccxt's own checks before sending: "amount of X must be greater than minimum amount precision of ..." when the amount truncates
+        //to zero, and Binance's "Price * QTY is zero or less", which ccxt rewords as "order cost = amount * price is zero or less"
+        private static readonly string[] BelowMinimumMarkers = { "NOTIONAL", "LOT_SIZE", "minimum amount precision", "is zero or less" };
+
         private static bool IsBelowMinimum(string message) =>
-            message != null && (message.Contains("NOTIONAL", StringComparison.OrdinalIgnoreCase) || message.Contains("LOT_SIZE", StringComparison.OrdinalIgnoreCase));
+            message != null && BelowMinimumMarkers.Any(marker => message.Contains(marker, StringComparison.OrdinalIgnoreCase));
 
         internal static OrderData ToOrderData(ccxt.Order order)
         {
