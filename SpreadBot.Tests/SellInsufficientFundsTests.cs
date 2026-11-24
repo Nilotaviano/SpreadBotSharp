@@ -104,6 +104,7 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(BotState.FinishedWork, context.BotState);
             Assert.AreEqual(10m, context.HeldAmount);
+            exchange.Mock.Verify(e => e.SellLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>(), null), Times.Exactly(3));
         }
     }
 }

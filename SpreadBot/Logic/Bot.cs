@@ -24,7 +24,7 @@ namespace SpreadBot.Logic
 
         private readonly Timer processingMessageTimeExceededTimer;
 
-        private const int MaxInsufficientFundsRetries = 3;
+        private const int MaxConsecutiveInsufficientFundsRejections = 3;
         private int consecutiveInsufficientFundsRejections;
 
 
@@ -141,7 +141,7 @@ namespace SpreadBot.Logic
 
             if (botContext.BotState == BotState.FinishedWork)
             {
-                LogError("Bot is still running after FinishWork was called");
+                LogMessage("Ignoring a message that arrived after the bot finished");
             }
             else
             {
@@ -247,19 +247,21 @@ namespace SpreadBot.Logic
         {
             const decimal tolerance = 0.02m;
 
+            consecutiveInsufficientFundsRejections++;
+
             var currency = botContext.LatestMarketData.Target;
             var balances = await exchange.GetBalanceData();
             var available = balances.Balances?.FirstOrDefault(b => b.CurrencyAbbreviation == currency)?.Amount ?? 0;
-            consecutiveInsufficientFundsRejections++;
 
-            if (available >= HeldAmount && consecutiveInsufficientFundsRejections < MaxInsufficientFundsRetries)
+            if (consecutiveInsufficientFundsRejections >= MaxConsecutiveInsufficientFundsRejections)
             {
-                LogError($"Sell rejected for insufficient funds, but the exchange shows {available}{currency} available for {HeldAmount}{currency} held; retrying");
+                LogUnexpectedError($"Sell rejected for insufficient funds {consecutiveInsufficientFundsRejections} times in a row (exchange shows {available}{currency} available for {HeldAmount}{currency} held); finishing");
+                botContext.HeldAmount = Math.Min(HeldAmount, Math.Max(available, 0));
+                await FinishWork();
             }
             else if (available >= HeldAmount)
             {
-                LogUnexpectedError($"Sell rejected for insufficient funds {consecutiveInsufficientFundsRejections} times although the exchange shows {available}{currency} available for {HeldAmount}{currency} held; finishing");
-                await FinishWork();
+                LogError($"Sell rejected for insufficient funds, but the exchange shows {available}{currency} available for {HeldAmount}{currency} held; retrying");
             }
             else if (available >= HeldAmount * (1 - tolerance))
             {
@@ -374,8 +376,6 @@ namespace SpreadBot.Logic
             processingMessageTimeExceededTimer.Dispose();
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
-
-            botContext.Semaphore.Clear();
 
             //Each step runs even if an earlier one fails, so the allocation is released and profit recorded
             await RunFinishStep("cleaning dust", async () =>
