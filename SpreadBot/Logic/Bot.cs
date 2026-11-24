@@ -31,8 +31,6 @@ namespace SpreadBot.Logic
         private volatile bool orderRequestInFlight;
 
         private static readonly TimeSpan UnknownOrderLookupInterval = TimeSpan.FromSeconds(5);
-        //Well past the time an exchange still accepts a request after it was signed (Binance's recvWindow: 10 s in ccxt)
-        private static readonly TimeSpan UnknownOrderGivenUpAfter = TimeSpan.FromSeconds(60);
         private DateTime nextUnknownOrderLookup;
 
         public Bot(DataRepository dataRepository, BotContext context, Action<Bot> unallocateBotCallback, BotStrategiesFactory botStrategiesFactory, BalanceLedger balanceLedger)
@@ -337,13 +335,14 @@ namespace SpreadBot.Logic
         /// <summary>
         /// Looks up the current order, whose placement is unknown, by its client order id (at most once per
         /// <see cref="UnknownOrderLookupInterval"/>). Found, it becomes a normal current order. Still not found
-        /// <see cref="UnknownOrderGivenUpAfter"/> after it was sent, the exchange can no longer accept it, so it's dropped
+        /// <see cref="IExchange.OrderRequestLifetime"/> after it was sent, the exchange can no longer accept it, so it's dropped
         /// and the strategy places again. Stream updates and resyncs that report it adopt it in <see cref="ProcessOrderData"/>.
         /// </summary>
         private async Task ResolveUnknownOrder()
         {
             var unknown = botContext.CurrentOrderData;
             var now = DateTime.UtcNow;
+            var expired = now - unknown.CreatedAt >= exchange.OrderRequestLifetime;
 
             if (now < nextUnknownOrderLookup)
                 return;
@@ -357,14 +356,23 @@ namespace SpreadBot.Logic
             }
             catch (ApiException e) when (e.ApiErrorType == ApiErrorType.OrderNotOpen)
             {
-                if (now - unknown.CreatedAt < UnknownOrderGivenUpAfter)
+                if (!expired)
                 {
                     LogMessage($"Order {unknown.ClientOrderId}, whose placement is unknown, is not on the exchange yet");
                     return;
                 }
 
-                LogError($"Order {unknown.ClientOrderId} is still not on the exchange {UnknownOrderGivenUpAfter.TotalSeconds}s after it was sent, so it was never placed");
+                LogError($"Order {unknown.ClientOrderId} is still not on the exchange {exchange.OrderRequestLifetime.TotalSeconds}s after it was sent, so it was never placed");
                 SetCurrentOrderData(null);
+                return;
+            }
+            catch (ApiException e)
+            {
+                //Without the order's state, holding is the only safe choice; HandleApiException reacts to failed placements and could finish the bot
+                if (expired)
+                    LogUnexpectedError($"Order {unknown.ClientOrderId}'s placement is still unknown {(now - unknown.CreatedAt).TotalSeconds:0}s after it was sent and looking it up fails: {e.ApiErrorType} {e.Message}");
+                else
+                    LogError($"Looking up order {unknown.ClientOrderId}, whose placement is unknown, failed: {e.ApiErrorType} {e.Message}");
                 return;
             }
 

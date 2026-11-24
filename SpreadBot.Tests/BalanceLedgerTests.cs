@@ -64,6 +64,28 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void UnallocatedBaseBalance_ClaimsTheMostASellWhosePlacementIsUnknownCanBringIn()
+        {
+            // The sell may have filled already, putting up to 10 × 0.0002 BTC of proceeds in Available
+            var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "BTC", Amount = 1m, Total = 1m });
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.01m, held: 10m,
+                new OrderData { ClientOrderId = "sb1", Direction = OrderDirection.SELL, Status = OrderStatus.UNKNOWN, Quantity = 10m, Limit = 0.0002m }));
+
+            Assert.AreEqual(1m - 0.01m - 0.002m, ledger.UnallocatedBaseBalance("BTC"));
+        }
+
+        [TestMethod]
+        public void ClaimedByOtherBots_ClaimsTheMostABuyWhosePlacementIsUnknownCanBringIn()
+        {
+            var (ledger, bots, repository) = Ledger(new BalanceData { CurrencyAbbreviation = "NMR", Amount = 6m, Total = 6m });
+            bots.Add(RunningBot(repository, ledger, "NMR/BTC", balance: 0.3m, held: 1m,
+                new OrderData { ClientOrderId = "sb1", Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN, Quantity = 4m, Limit = 0.0001m }));
+
+            Assert.AreEqual(5m, ledger.ClaimedByOtherBots("NMR"));
+            Assert.AreEqual(1m, ledger.UnclaimedCoins("NMR"));
+        }
+
+        [TestMethod]
         public void UnallocatedBaseBalance_CountsProceedsOfAPartiallyFilledSell()
         {
             // 0.05 BTC of proceeds (minus 0.001 fee) reached Available before the sell closes and the bot books them

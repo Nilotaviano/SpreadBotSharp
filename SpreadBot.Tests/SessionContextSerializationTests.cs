@@ -65,6 +65,36 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void PreviousSessionContext_RoundTripsAnOrderWhosePlacementIsUnknown()
+        {
+            // The send time decides when the order is given up on; a shifted time would drop a possibly live order at once
+            var sentAt = new System.DateTime(2026, 11, 24, 12, 0, 0, System.DateTimeKind.Utc);
+            var context = new BotContext(new SpreadConfiguration { BaseMarket = "BTC" }, new MarketData { Symbol = "NMR/BTC" }, BotState.Buying, 0)
+            {
+                CurrentOrderData = new OrderData
+                {
+                    ClientOrderId = "sb-unknown",
+                    MarketSymbol = "NMR/BTC",
+                    Direction = OrderDirection.BUY,
+                    Quantity = 20m,
+                    Limit = 0.0001m,
+                    Status = OrderStatus.UNKNOWN,
+                    CreatedAt = sentAt
+                }
+            };
+
+            var json = JsonConvert.SerializeObject(new PreviousSessionContext { BotContexts = new List<BotContext> { context } });
+            var order = JsonConvert.DeserializeObject<PreviousSessionContext>(json).BotContexts.Single().CurrentOrderData;
+
+            Assert.AreEqual(OrderStatus.UNKNOWN, order.Status);
+            Assert.IsNull(order.Id);
+            Assert.AreEqual("sb-unknown", order.ClientOrderId);
+            Assert.AreEqual("NMR/BTC", order.MarketSymbol);
+            Assert.AreEqual(sentAt, order.CreatedAt);
+            Assert.AreEqual(System.DateTimeKind.Utc, order.CreatedAt.Kind);
+        }
+
+        [TestMethod]
         public void PreviousSessionContext_RestoresFileThatStillContainsSerializedSemaphore()
         {
             const string savedByOlderBuild = @"{

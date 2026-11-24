@@ -115,13 +115,31 @@ namespace SpreadBot.Tests
             ProcessTicker(exchange, context, 1);
             Assert.AreEqual(OrderStatus.UNKNOWN, context.CurrentOrderData?.Status);
 
-            ProcessTicker(exchange, context, 2);
-            ProcessTicker(exchange, context, 3);
+            for (var sequence = 2; sequence <= 6; sequence++)
+                ProcessTicker(exchange, context, sequence);
 
             exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Once);
-            Assert.AreEqual(1, Lookups(exchange), "lookups are spaced out, not one per ticker");
+            Assert.IsTrue(Lookups(exchange) is >= 1 and <= 2, $"lookups are spaced out, not one per ticker ({Lookups(exchange)} for 5 tickers)");
             Assert.AreEqual(BotState.Buying, context.BotState);
             Assert.AreEqual(UnknownClientOrderId, context.CurrentOrderData?.ClientOrderId);
+        }
+
+        [TestMethod]
+        public void LookupFailingWithAnErrorThatWouldFinishABuyingBot_KeepsWaiting()
+        {
+            // MarketOffline while Buying finishes a bot whose buy was rejected; here the buy may be live
+            var exchange = Exchange();
+            exchange.Mock.Setup(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>())).ThrowsAsync(UnknownPlacement(DateTime.UtcNow.AddMinutes(-2)));
+            exchange.Mock.Setup(e => e.GetOrderByClientId(UnknownClientOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.MarketOffline, "binance does not have market symbol NMR/BTC"));
+            var context = StartBuyingBot(exchange);
+
+            ProcessTicker(exchange, context, 1);
+            ProcessTicker(exchange, context, 2);
+
+            Assert.AreEqual(1, Lookups(exchange));
+            Assert.AreEqual(BotState.Buying, context.BotState);
+            Assert.AreEqual(OrderStatus.UNKNOWN, context.CurrentOrderData?.Status, "past the request lifetime, only a confirmed absence drops it");
+            exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Once);
         }
 
         [TestMethod]

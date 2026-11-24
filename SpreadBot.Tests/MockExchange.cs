@@ -27,6 +27,7 @@ namespace SpreadBot.Tests
         {
             Mock.Setup(e => e.IsSetup).Returns(true);
             Mock.Setup(e => e.FeeRate).Returns(0);
+            Mock.Setup(e => e.OrderRequestLifetime).Returns(TimeSpan.FromSeconds(60));
             Mock.Setup(e => e.GetBalances()).ReturnsAsync(() => balances.ToList());
             Mock.Setup(e => e.GetMarkets()).ReturnsAsync(new List<MarketData>());
             Mock.Setup(e => e.GetTickers()).ReturnsAsync(new List<MarketData>());

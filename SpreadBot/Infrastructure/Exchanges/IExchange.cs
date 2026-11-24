@@ -16,6 +16,11 @@ namespace SpreadBot.Infrastructure.Exchanges
         decimal FeeRate { get; }
 
         /// <summary>
+        /// How long after an order request is sent the exchange may still accept it: an order it doesn't know after that was never placed.
+        /// </summary>
+        TimeSpan OrderRequestLifetime { get; }
+
+        /// <summary>
         /// Loads markets and starts the streams for the given quote currencies.
         /// </summary>
         Task Setup(IEnumerable<string> quoteCurrencies);

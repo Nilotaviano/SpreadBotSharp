@@ -100,6 +100,10 @@ namespace SpreadBot.Logic
             if (Is(order, OrderDirection.SELL))
                 return bot.Balance + order.Proceeds - order.Commission;
 
+            //A sell whose placement is unknown may already have filled: claim the most it can bring in
+            if (IsUnknown(order, OrderDirection.SELL))
+                return bot.Balance + order.Quantity * order.Limit;
+
             return bot.Balance;
         }
 
@@ -115,6 +119,10 @@ namespace SpreadBot.Logic
             //Coins from the buy's fills, net of fees taken in the coin, are already in Available
             if (Is(order, OrderDirection.BUY))
                 return bot.HeldAmount + order.FillQuantity - order.CoinCommission;
+
+            //A buy whose placement is unknown may already have filled: claim the most it can bring in
+            if (IsUnknown(order, OrderDirection.BUY))
+                return bot.HeldAmount + order.Quantity;
 
             return bot.HeldAmount;
         }
@@ -156,6 +164,11 @@ namespace SpreadBot.Logic
         private static bool Is(OrderData order, OrderDirection direction)
         {
             return order != null && (order.Status == OrderStatus.OPEN || order.Status == OrderStatus.CLOSED) && order.Direction == direction;
+        }
+
+        private static bool IsUnknown(OrderData order, OrderDirection direction)
+        {
+            return order != null && order.Status == OrderStatus.UNKNOWN && order.Direction == direction;
         }
 
         private decimal Available(string currency)

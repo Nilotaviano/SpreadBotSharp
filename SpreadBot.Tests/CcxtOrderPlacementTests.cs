@@ -16,6 +16,9 @@ namespace SpreadBot.Tests
         //CallBase: ccxt's constructor calls the virtual describe(); only the methods each test sets up are replaced
         private static Mock<ccxt.pro.binance> Exchange() => new Mock<ccxt.pro.binance>(new object[] { null }) { CallBase = true };
 
+        private static ccxt.BaseError CcxtError(string name) =>
+            (ccxt.BaseError)Activator.CreateInstance(typeof(ccxt.BaseError).Assembly.GetType($"ccxt.{name}", throwOnError: true), $"binance {name}");
+
         private static ccxt.Order Order(string status, string clientOrderId = "client") =>
             new ccxt.Order { id = "42", clientOrderId = clientOrderId, symbol = Symbol, side = "buy", type = "limit", status = status, amount = 10, price = 0.0001 };
 
@@ -64,16 +67,31 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        [DataRow(nameof(ccxt.ExchangeNotAvailable))]
+        [DataRow(nameof(ccxt.BadResponse))]
+        [DataRow(nameof(ccxt.OperationFailed))] // Binance -1000/-1001/-1006: "execution status unknown"
+        public async Task CreateFailingWithAnUnclearOutcome_ReportsAnUnknownState(string errorName)
+        {
+            var exchange = Exchange();
+            exchange
+                .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
+                .ThrowsAsync(CcxtError(errorName));
+
+            var error = await Assert.ThrowsExactlyAsync<OrderStateUnknownException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
+
+            Assert.AreEqual(OrderStatus.UNKNOWN, error.Order.Status);
+        }
+
+        [TestMethod]
         [DataRow(nameof(ccxt.RateLimitExceeded), ApiErrorType.Throttled)]
         [DataRow(nameof(ccxt.DDoSProtection), ApiErrorType.Throttled)]
         [DataRow(nameof(ccxt.InvalidNonce), ApiErrorType.RetryLater)]
         public async Task CreateRefusedBeforeReachingTheOrderBook_IsAPlainFailure(string errorName, ApiErrorType expected)
         {
-            var refusal = (ccxt.BaseError)Activator.CreateInstance(typeof(ccxt.BaseError).Assembly.GetType($"ccxt.{errorName}", throwOnError: true), "binance refused");
             var exchange = Exchange();
             exchange
                 .Setup(e => e.CreateOrder(Symbol, "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
-                .ThrowsAsync(refusal);
+                .ThrowsAsync(CcxtError(errorName));
 
             var error = await Assert.ThrowsExactlyAsync<ApiException>(() => new CcxtExchange(exchange.Object).BuyLimit(Symbol, 10, 0.0001m));
 
@@ -96,6 +114,13 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(OrderStatus.UNKNOWN, error.Order.Status);
             StringAssert.StartsWith(error.Order.ClientOrderId, "sb");
+        }
+
+        [TestMethod]
+        public void OrderRequestLifetime_IsTheRecvWindowPlusAMargin()
+        {
+            // ccxt's Binance signs requests with a 10 s recvWindow
+            Assert.AreEqual(TimeSpan.FromSeconds(60), new CcxtExchange(Exchange().Object).OrderRequestLifetime);
         }
 
         [TestMethod]

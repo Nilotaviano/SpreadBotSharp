@@ -17,6 +17,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private const int TickSizePrecisionMode = 4;
         private const decimal DefaultFeeRate = 0.001m;
         private static readonly TimeSpan StreamRetryDelay = TimeSpan.FromSeconds(5);
+        //Covers clock drift and the lookup's own latency on top of the exchange's recvWindow
+        private static readonly TimeSpan OrderRequestLifetimeMargin = TimeSpan.FromSeconds(50);
+        //Exchanges without a recvWindow don't bound when a delayed request may still be accepted; this is a generous guess
+        private static readonly TimeSpan DefaultOrderRequestLifetime = TimeSpan.FromMinutes(5);
 
         private readonly ccxt.Exchange exchange;
         private readonly CancellationTokenSource streams = new CancellationTokenSource();
@@ -65,6 +69,12 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         public bool IsSetup { get; private set; }
 
         public decimal FeeRate { get; private set; } = DefaultFeeRate;
+
+        //Binance-style exchanges reject a request signed more than recvWindow ago (10 s in ccxt's Binance)
+        public TimeSpan OrderRequestLifetime =>
+            exchange.options.TryGetValue("recvWindow", out var recvWindow) && recvWindow != null
+                ? TimeSpan.FromMilliseconds(Convert.ToDouble(recvWindow)) + OrderRequestLifetimeMargin
+                : DefaultOrderRequestLifetime;
 
         public async Task Setup(IEnumerable<string> quoteCurrencies)
         {
@@ -189,8 +199,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             {
                 order = await exchange.CreateOrder(marketSymbol, type, side, (double)quantity, limit.HasValue ? (double)limit.Value : (double?)null, parameters);
             }
-            //Rate limits and timestamp rejections refuse the request itself; any other network error may have happened after the exchange accepted it
-            catch (ccxt.NetworkError e) when (e is not ccxt.RateLimitExceeded && e is not ccxt.DDoSProtection && e is not ccxt.InvalidNonce)
+            //Rate limits and timestamp rejections refuse the request itself. Any other failed operation (network errors, unreadable
+            //responses, Binance's -1000/-1001/-1006 "execution status unknown") may have happened after the exchange accepted it
+            catch (ccxt.OperationFailed e) when (e is not ccxt.RateLimitExceeded && e is not ccxt.DDoSProtection && e is not ccxt.InvalidNonce)
             {
                 throw new OrderStateUnknownException(sent, $"Creating {side} {type} order {clientOrderId} on {marketSymbol} failed without an answer: {e.Message}");
             }
