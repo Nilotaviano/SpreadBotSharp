@@ -32,8 +32,9 @@ namespace SpreadBot.Logic
 
         //Set by Halt: the bot places nothing more
         private volatile bool halted;
-        //Set while RequestFinish cancels: a fill booked meanwhile must not place a sell the finish would have to cancel too
-        private volatile bool finishing;
+        //Finishes requested and not over: while any is, a fill booked meanwhile must not place a sell the finish would have to cancel too
+        private int pendingFinishes;
+        private bool Finishing => System.Threading.Volatile.Read(ref pendingFinishes) > 0;
         internal TimeSpan CancelRetryDelay { get; init; } = TimeSpan.FromSeconds(3);
         //How long a finish on request tries to cancel the open order before giving up
         internal TimeSpan FinishCancelBudget { get; init; } = TimeSpan.FromSeconds(15);
@@ -364,8 +365,15 @@ namespace SpreadBot.Logic
         {
             botContext.LatestMarketData = marketData;
 
-            if (halted || finishing)
+            if (halted)
                 return;
+
+            if (Finishing)
+            {
+                //Skipped, not processed: a finish that's refused replays the latest update
+                lastProcessedMarketData = null;
+                return;
+            }
 
             //The strategy would place another order while this one may be live
             if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN)
@@ -491,7 +499,7 @@ namespace SpreadBot.Logic
         public async Task RequestFinish()
         {
             //Before waiting: messages queued behind the one being processed must not place orders either
-            finishing = true;
+            System.Threading.Interlocked.Increment(ref pendingFinishes);
 
             await botContext.Semaphore.WaitAsync();
             try
@@ -524,9 +532,12 @@ namespace SpreadBot.Logic
             }
             finally
             {
-                //Refused or given up: it carries on trading
-                finishing = false;
+                var stillFinishing = System.Threading.Interlocked.Decrement(ref pendingFinishes) > 0;
                 botContext.Semaphore.Release();
+
+                //Refused or given up: it carries on trading, from the market update it skipped meanwhile
+                if (!stillFinishing && botContext.BotState != BotState.FinishedWork && dataRepository.MarketsData.TryGetValue(MarketSymbol, out var latest))
+                    ProcessMessage(latest);
             }
         }
 

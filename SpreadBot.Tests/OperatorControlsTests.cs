@@ -142,7 +142,7 @@ namespace SpreadBot.Tests
             exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 
-        private static (MockExchange exchange, BotContext context, Bot bot, Func<int> unallocations) BotWithOpenBuy(Action<Mock<IExchange>> setup, TimeSpan? cancelBudget = null)
+        private static (MockExchange exchange, BotContext context, Bot bot, Func<int> unallocations, DataRepository repository) BotWithOpenBuy(Action<Mock<IExchange>> setup, TimeSpan? cancelBudget = null)
         {
             var exchange = new MockExchange();
             setup(exchange.Mock);
@@ -157,29 +157,36 @@ namespace SpreadBot.Tests
                 CancelRetryDelay = TimeSpan.FromMilliseconds(10),
                 FinishCancelBudget = cancelBudget ?? TimeSpan.FromSeconds(15)
             };
-            return (exchange, context, bot, () => unallocations);
+            return (exchange, context, bot, () => unallocations, repository);
         }
 
         [TestMethod]
         public void FinishWhoseCancelKeepsFailing_LeavesTheBotTrading()
         {
-            var (exchange, context, bot, unallocations) = BotWithOpenBuy(
+            var (exchange, context, bot, unallocations, repository) = BotWithOpenBuy(
                 mock => mock.Setup(e => e.CancelOrder("buy-1", Symbol)).ThrowsAsync(new ApiException(ApiErrorType.RetryLater, "server busy")),
                 cancelBudget: TimeSpan.FromMilliseconds(100));
+            // The bid moved above the buy: trading on, the strategy cancels it to re-quote
+            exchange.WithMarkets(Symbol);
+            repository.StartConsumingData();
+            exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010300m, bid: 0.00010100m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+            WaitUntil(() => repository.MarketsData[Symbol].BidRate == 0.00010100m, "the update is cached");
 
             bot.RequestFinish().Wait();
+            var cancelsByTheFinish = exchange.Mock.Invocations.Count(i => i.Method.Name == nameof(IExchange.CancelOrder));
 
+            Assert.IsTrue(cancelsByTheFinish >= 2, "retried");
             Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
             Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status);
             Assert.AreEqual(0, unallocations());
-            exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.AtLeast(2));
+            WaitUntil(() => exchange.Mock.Invocations.Count(i => i.Method.Name == nameof(IExchange.CancelOrder)) > cancelsByTheFinish, "the strategy acts on the update it skipped");
         }
 
         [TestMethod]
         public void FillBookedDuringTheFinish_PlacesNoSellAndIsSoldAtMarket()
         {
             // The cancel answers with 20 coins bought: booking them would normally place a sell at once
-            var (exchange, context, bot, unallocations) = BotWithOpenBuy(mock =>
+            var (exchange, context, bot, unallocations, _) = BotWithOpenBuy(mock =>
             {
                 mock.Setup(e => e.CancelOrder("buy-1", Symbol)).ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m, Quantity = 30, FillQuantity = 20, Proceeds = 0.002m });
                 mock.Setup(e => e.SellMarket(Symbol, 20)).ReturnsAsync(new OrderData { Id = "dust", ClientOrderId = "dust", MarketSymbol = Symbol, Direction = OrderDirection.SELL, Status = OrderStatus.CLOSED, FillQuantity = 20, Proceeds = 0.002m });
@@ -196,7 +203,7 @@ namespace SpreadBot.Tests
         [TestMethod]
         public void HaltedBot_IsntFinishedOnRequest()
         {
-            var (exchange, context, bot, unallocations) = BotWithOpenBuy(mock =>
+            var (exchange, context, bot, unallocations, _) = BotWithOpenBuy(mock =>
                 mock.Setup(e => e.CancelOrder("buy-1", Symbol)).ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m }));
             bot.Halt(DateTime.UtcNow).Wait();
 
