@@ -28,3 +28,8 @@ msbuild.wrn
 # Visual Studio 2015
 .vs/
 /SpreadBot/Properties/launchSettings.json
+
+# The bot's SQLite database and its pre-migration backups
+*.db
+*.db-journal
+*.db.before-*.bak

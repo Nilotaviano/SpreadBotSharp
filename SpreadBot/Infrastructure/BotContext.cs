@@ -9,7 +9,8 @@ namespace SpreadBot.Infrastructure
     {
         public event EventHandler ContextChanged;
 
-        public Guid Guid { get; private set; }
+        //Set when a bot is restored, so its stored row and orders stay its own
+        public Guid Guid { get; init; } = Guid.NewGuid();
 
         public readonly SpreadConfiguration spreadConfiguration;
 
@@ -24,12 +25,11 @@ namespace SpreadBot.Infrastructure
         [JsonIgnore]
         public readonly SemaphoreQueue Semaphore = new SemaphoreQueue(1, 1);
 
-        //Just so that this exists o coordinatorContext.json
+        //Shown when the context is logged
         public int SemaphoreCurrentCount => Semaphore.CurrentCount;
 
         public BotContext(SpreadConfiguration spreadConfiguration, MarketData marketData, BotState buy, decimal existingDust)
         {
-            Guid = Guid.NewGuid();
             this.spreadConfiguration = spreadConfiguration;
             this.LatestMarketData = marketData;
             this.BotState = buy;

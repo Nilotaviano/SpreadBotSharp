@@ -58,6 +58,12 @@ namespace SpreadBot.Logic
         { }
 
         public Guid Guid => botContext.Guid;
+
+        /// <summary>
+        /// Raised, under the bot's semaphore, for every order state the bot applies: an order it places or adopts, an open order's
+        /// updates, and a closed order it books.
+        /// </summary>
+        public event Action<Bot, OrderData> OrderUpdated;
         public string BaseMarket => botContext.spreadConfiguration.BaseMarket;
         public string MarketSymbol => botContext.LatestMarketData.Symbol;
         public decimal Balance => botContext.Balance;
@@ -90,6 +96,9 @@ namespace SpreadBot.Logic
 
             botContext.CurrentOrderData = value;
             orderRequestInFlight = false;
+
+            if (value != null)
+                OrderUpdated?.Invoke(this, value);
         }
 
         //An order whose placement is unknown has no id until the exchange reports it, so its client order id identifies it
@@ -606,6 +615,8 @@ namespace SpreadBot.Logic
             if (orderData == null || orderData.Status != OrderStatus.CLOSED)
                 return;
 
+            OrderUpdated?.Invoke(this, orderData);
+
             if (orderData.FillQuantity != 0 ^ (orderData.Proceeds + orderData.Commission) != 0)
             {
                 string errorMessage = $"Either fill quantity or proceeds is 0 while the other is not. " +
@@ -649,7 +660,7 @@ namespace SpreadBot.Logic
             dataRepository.UnsubscribeToMarketData(MarketSymbol, Guid);
             SetCurrentOrderData(null);
 
-            //Each step runs even if an earlier one fails, so the allocation is released and profit recorded
+            //Each step runs even if an earlier one fails, so the allocation is released
             await RunFinishStep("cleaning dust", async () =>
             {
                 var coinsToSell = Math.Min(HeldAmount, maxCoinsToSell ?? HeldAmount);
@@ -657,14 +668,10 @@ namespace SpreadBot.Logic
                 if (coinsToSell > 0 && !halted)
                     await CleanDust(coinsToSell);
             });
+            //Unallocating records the bot's end and profit
             await RunFinishStep("unallocating", () =>
             {
                 unallocateBotCallback(this);
-                return Task.CompletedTask;
-            });
-            await RunFinishStep("recording profit", () =>
-            {
-                NetProfitRecorder.Instance.RecordProfit(botContext.spreadConfiguration, this);
                 return Task.CompletedTask;
             });
 

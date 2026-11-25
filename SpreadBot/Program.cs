@@ -2,6 +2,7 @@
 using Newtonsoft.Json;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Ccxt;
+using SpreadBot.Infrastructure.Persistence;
 using SpreadBot.Logic;
 using System;
 using System.IO;
@@ -62,15 +63,14 @@ namespace SpreadBot
 
             watcher.Changed += reloadAppSettings;
 
-            NetProfitRecorder.Instance.AppSettings = appSettings;
-
             var exchange = new CcxtExchange(appSettings.ExchangeId, appSettings.ApiKey, appSettings.ApiSecret, appSettings.UseSandbox);
             await exchange.Setup(watchedBaseMarkets);
 
             var dataRepository = new DataRepository(exchange, appSettings);
             dataRepository.StartConsumingData();
 
-            var coordinatorContext = new FileCoordinatorContext();
+            var databasePath = Path.Combine(Path.GetDirectoryName(appSettingsPath), appSettings.DatabasePath);
+            using var coordinatorContext = SqliteCoordinatorContext.Open(databasePath);
 
             var coordinator = new Coordinator(appSettings, dataRepository, coordinatorContext);
             coordinator.Start();

@@ -19,6 +19,8 @@ namespace SpreadBot.Infrastructure
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
         public int ResyncIntervalMs { get; set; }
+        //The SQLite database with the bots, their orders and dust; a relative path is relative to the settings file
+        public string DatabasePath { get; set; } = "spreadbot.db";
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 

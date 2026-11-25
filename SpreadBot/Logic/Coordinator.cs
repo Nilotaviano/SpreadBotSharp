@@ -110,7 +110,8 @@ namespace SpreadBot.Logic
                         if (botContext.HeldAmount > 0)
                             context.AddDustForMarket(botContext.LatestMarketData.Symbol, botContext.HeldAmount);
 
-                        Logger.Instance.LogError($"A bot on {botContext.LatestMarketData.Symbol} was saved while finishing; not restoring it. Its {botContext.HeldAmount}{botContext.LatestMarketData.Target} are recorded as dust and its profit may not have been recorded");
+                        context.RemoveBot(botContext.Guid);
+                        Logger.Instance.LogError($"A bot on {botContext.LatestMarketData.Symbol} was saved while finishing; not restoring it. Its {botContext.HeldAmount}{botContext.LatestMarketData.Target} are recorded as dust and its profit as of that save");
                         continue;
                     }
 
