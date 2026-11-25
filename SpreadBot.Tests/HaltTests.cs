@@ -107,7 +107,7 @@ namespace SpreadBot.Tests
                 .SetupSequence(e => e.CancelOrder(BuyOrderId, Symbol))
                 .ThrowsAsync(new ApiException(ApiErrorType.RetryLater, "server busy"))
                 .ReturnsAsync(CancelledBuy(filled: 0));
-            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { CancelRetryDelay = TimeSpan.FromMilliseconds(10) };
 
             await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 
@@ -121,7 +121,7 @@ namespace SpreadBot.Tests
         {
             var (exchange, repository, context) = OpenBuy();
             exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.RetryLater, "server busy"));
-            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { CancelRetryDelay = TimeSpan.FromMilliseconds(10) };
 
             var halting = bot.Halt(retryUntil: DateTime.UtcNow.AddMilliseconds(300));
 
@@ -135,7 +135,7 @@ namespace SpreadBot.Tests
         {
             var (exchange, repository, context) = OpenBuy();
             exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new InvalidOperationException("not an ApiException"));
-            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { CancelRetryDelay = TimeSpan.FromMilliseconds(10) };
 
             await bot.Halt(retryUntil: DateTime.UtcNow);
 
@@ -180,7 +180,7 @@ namespace SpreadBot.Tests
             var (exchange, repository, context) = OpenBuy();
             exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.OrderNotOpen, "Unknown order sent."));
             exchange.Mock.Setup(e => e.GetOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.Unauthorized, "Invalid API-key"));
-            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { CancelRetryDelay = TimeSpan.FromMilliseconds(10) };
 
             await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 
@@ -193,7 +193,7 @@ namespace SpreadBot.Tests
         {
             var (exchange, repository, context) = OpenBuy();
             exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.Unauthorized, "Invalid API-key"));
-            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { CancelRetryDelay = TimeSpan.FromMilliseconds(10) };
 
             await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 

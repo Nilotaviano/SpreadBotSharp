@@ -20,6 +20,11 @@ namespace SpreadBot.Infrastructure
             Task.Factory.StartNew(ConsumePendingLogs, System.Threading.CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
+        /// <summary>
+        /// Raised on the logger's thread after each log is written (e.g. for the dashboard's live log).
+        /// </summary>
+        public event Action<LogEntry> Logged;
+
         public static Logger Instance
         {
             get
@@ -67,6 +72,7 @@ namespace SpreadBot.Infrastructure
                     continue;
                 }
 
+                var at = DateTime.UtcNow;
                 switch (log.LogLevel)
                 {
                     case LogLevel.Message:
@@ -88,6 +94,16 @@ namespace SpreadBot.Infrastructure
                         Console.Error.WriteLine(log.Content);
                         break;
                 }
+
+                try
+                {
+                    Logged?.Invoke(new LogEntry(at, log.LogLevel.ToString(), log.Content));
+                }
+                catch (Exception e)
+                {
+                    //Writing it here would raise Logged again
+                    Console.Error.WriteLine($"A log listener failed: {e}");
+                }
             }
         }
 
@@ -104,6 +120,8 @@ namespace SpreadBot.Infrastructure
             //A flush marker rather than a log
             public ManualResetEventSlim Written { get; set; }
         }
+
+        public record LogEntry(DateTime At, string Level, string Content);
 
         private enum LogLevel
         {

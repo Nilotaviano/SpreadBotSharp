@@ -28,6 +28,8 @@ namespace SpreadBot.Logic
         internal static readonly TimeSpan HaltTimeout = TimeSpan.FromSeconds(60);
         //Under allocationLock
         private bool halted;
+        private string haltReason;
+        private bool allocationPaused;
         private DateTime haltRetryUntil;
         private readonly List<Task> haltingBots = new List<Task>();
         //Set once Start's restore is over, so a halt knows every bot it must wait for
@@ -67,6 +69,57 @@ namespace SpreadBot.Logic
         /// Completes once a halt has stopped the bots (or <see cref="HaltTimeout"/> passed).
         /// </summary>
         public Task Halted => haltCompleted.Task;
+
+        public bool IsHalted
+        {
+            get { lock (allocationLock) return halted; }
+        }
+
+        public string HaltReason
+        {
+            get { lock (allocationLock) return haltReason; }
+        }
+
+        public bool IsAllocationPaused
+        {
+            get { lock (allocationLock) return allocationPaused; }
+        }
+
+        public IEnumerable<SpreadConfiguration> Configurations
+        {
+            get { lock (allocationLock) return configurationsByBaseMarket.Values.SelectMany(group => group).ToList(); }
+        }
+
+        /// <summary>
+        /// While paused no new bot is allocated; running bots carry on.
+        /// </summary>
+        public void SetAllocationPaused(bool paused)
+        {
+            lock (allocationLock)
+                allocationPaused = paused;
+
+            Logger.Instance.LogMessage(paused ? "Allocation paused" : "Allocation resumed");
+        }
+
+        /// <summary>
+        /// Asks one bot to stop: see <see cref="Bot.RequestFinish"/>. False if no such bot is allocated.
+        /// </summary>
+        public bool FinishBot(Guid botId)
+        {
+            var bot = context.GetBots().FirstOrDefault(b => b.Guid == botId);
+            if (bot == null)
+                return false;
+
+            Logger.Instance.LogMessage($"Finishing bot {botId} on {bot.MarketSymbol} on request");
+            _ = Task.Run(bot.RequestFinish);
+            return true;
+        }
+
+        /// <summary>
+        /// Why <paramref name="market"/> can't get a bot of <paramref name="configuration"/>, or null if it can (balance and bot slots aside).
+        /// </summary>
+        public static string WhyNotAllocatable(MarketData market, SpreadConfiguration configuration) =>
+            ViabilityRejection(market) ?? ConfigurationRejection(market, configuration);
 
         public void Start()
         {
@@ -154,7 +207,7 @@ namespace SpreadBot.Logic
 
         private void EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas, List<Bot> allocatedBots)
         {
-            if (halted || context.GetBotCount() >= appSettings.MaxNumberOfBots)
+            if (halted || allocationPaused || context.GetBotCount() >= appSettings.MaxNumberOfBots)
                 return;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
@@ -172,7 +225,7 @@ namespace SpreadBot.Logic
 
                 foreach (var market in orderedMarkets)
                 {
-                    if (!IsViableMarket(market))
+                    if (ViabilityRejection(market) != null)
                         continue;
 
                     // Optimization for stop looking for markets if is not possible to allocate any configuration
@@ -239,6 +292,7 @@ namespace SpreadBot.Logic
                     return;
 
                 halted = true;
+                haltReason = reason;
                 //A cancel is up to three requests (cancel, fetch, the fill's trades) of up to 10 s each; one started by then answers within HaltTimeout
                 haltRetryUntil = DateTime.UtcNow + HaltTimeout - TimeSpan.FromSeconds(30);
                 //Off the caller's thread: it may be a bot's failing request, holding the semaphore that bot's halt waits for
@@ -301,10 +355,16 @@ namespace SpreadBot.Logic
             return task.IsCompleted;
         }
 
-        private bool IsViableMarket(MarketData market)
+        private static string ViabilityRejection(MarketData market)
         {
+            if (!string.IsNullOrWhiteSpace(market.Notice))
+                return $"notice: {market.Notice}";
+            if (market.Status != EMarketStatus.Online)
+                return "offline";
             //The strategies can't quote a market without a tick, so its bot would hold a slot and its balance forever
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online && market.PriceTick > 0;
+            if (!(market.PriceTick > 0))
+                return "no price tick";
+            return null;
         }
 
         private void ReportBalance()
@@ -320,28 +380,30 @@ namespace SpreadBot.Logic
 
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
-            if (marketData.LastTradeRate < spreadConfiguration.MinimumPrice)
-                return false;
+            var rejection = ConfigurationRejection(marketData, spreadConfiguration);
+            if (rejection == null)
+                return true;
 
-            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
-                return false;
-            }
+            //Most markets are below the minimum price; logging each would drown the rest
+            if (!(marketData.LastTradeRate < spreadConfiguration.MinimumPrice))
+                Logger.Instance.LogMessage($"Market {marketData.Symbol}: {rejection}");
 
-            if (marketData.PercentChange > spreadConfiguration.MaxPercentChangeFromPreviousDay)
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is pumping {marketData.PercentChange}%");
-                return false;
-            }
+            return false;
+        }
 
-            if(spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
-                return false;
-            }
-
-            return true;
+        private static string ConfigurationRejection(MarketData market, SpreadConfiguration configuration)
+        {
+            if (market.LastTradeRate < configuration.MinimumPrice)
+                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
+            if (market.SpreadPercentage < configuration.MinimumSpreadPercentage)
+                return $"spread {market.SpreadPercentage:0.###}% below the minimum {configuration.MinimumSpreadPercentage}%";
+            if (market.QuoteVolume < configuration.MinimumQuoteVolume)
+                return $"volume {market.QuoteVolume:0.####} below the minimum {configuration.MinimumQuoteVolume}";
+            if (market.PercentChange > configuration.MaxPercentChangeFromPreviousDay)
+                return $"up {market.PercentChange:0.##}% in 24 h, above the maximum {configuration.MaxPercentChangeFromPreviousDay}%";
+            if (configuration.AvoidTokenizedSecurities && market.IsTokenizedSecurity.GetValueOrDefault())
+                return "a tokenized security";
+            return null;
         }
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)

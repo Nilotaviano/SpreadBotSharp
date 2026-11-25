@@ -37,6 +37,24 @@ namespace SpreadBot.Infrastructure
 
         public IExchange Exchange { get; }
 
+        //When each stream last delivered (or a resync refreshed it), and the resyncs: for the dashboard's health view
+        private long lastBalanceUpdateTicks, lastMarketUpdateTicks, lastOrderUpdateTicks, lastResyncTicks;
+        private int resyncCount;
+
+        public DateTime? LastBalanceUpdate => FromTicks(ref lastBalanceUpdateTicks);
+        public DateTime? LastMarketUpdate => FromTicks(ref lastMarketUpdateTicks);
+        public DateTime? LastOrderUpdate => FromTicks(ref lastOrderUpdateTicks);
+        public DateTime? LastResync => FromTicks(ref lastResyncTicks);
+        public int ResyncCount => System.Threading.Volatile.Read(ref resyncCount);
+
+        private static DateTime? FromTicks(ref long ticks)
+        {
+            var value = System.Threading.Interlocked.Read(ref ticks);
+            return value == 0 ? null : new DateTime(value, DateTimeKind.Utc);
+        }
+
+        private static void Stamp(ref long ticks) => System.Threading.Interlocked.Exchange(ref ticks, DateTime.UtcNow.Ticks);
+
         /// <summary>
         /// BalanceData dictionary indexed by CurrencyAbbreviation
         /// </summary>
@@ -202,12 +220,14 @@ namespace SpreadBot.Infrastructure
 
         private void UpdateBalanceData(BalanceData balance)
         {
+            Stamp(ref lastBalanceUpdateTicks);
             BalancesData[balance.CurrencyAbbreviation] = balance;
             InvokeHandlers(BalanceHandlers, balance.CurrencyAbbreviation, balance);
         }
 
         private void UpdateOrderData(OrderData order)
         {
+            Stamp(ref lastOrderUpdateTicks);
             //A closed order is final; a late open update must not reopen it
             var current = OrdersData.AddOrUpdate(order.ClientOrderId, order, (id, existing) => existing.Status == OrderStatus.CLOSED ? existing : order);
 
@@ -216,6 +236,7 @@ namespace SpreadBot.Infrastructure
 
         private void UpdateMarketData(IEnumerable<MarketData> marketData)
         {
+            Stamp(ref lastMarketUpdateTicks);
             var updated = marketData
                 .Select(data => MarketsData.AddOrUpdate(data.Symbol, data, (key, existingData) => MergeMarketData(existingData, data)))
                 .ToList();
@@ -318,7 +339,7 @@ namespace SpreadBot.Infrastructure
         /// One resync runs at a time. A request made while one runs (e.g. a stream recovering after the running one took its
         /// snapshot) gets one more run after it; requests made during the same run share it.
         /// </summary>
-        private void RequestResync()
+        public void RequestResync()
         {
             resyncTimer.Stop();
 
@@ -365,6 +386,8 @@ namespace SpreadBot.Infrastructure
             try
             {
                 Logger.Instance.LogMessage("Resyncing data");
+                System.Threading.Interlocked.Increment(ref resyncCount);
+                Stamp(ref lastResyncTicks);
 
                 var markets = Exchange.GetMarkets().Result;
 

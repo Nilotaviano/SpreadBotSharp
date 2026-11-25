@@ -32,7 +32,7 @@ namespace SpreadBot.Logic
 
         //Set by Halt: the bot places nothing more
         private volatile bool halted;
-        internal TimeSpan HaltCancelRetryDelay { get; init; } = TimeSpan.FromSeconds(3);
+        internal TimeSpan CancelRetryDelay { get; init; } = TimeSpan.FromSeconds(3);
 
         //Only read and written under BotContext.Semaphore
         private MarketData lastProcessedMarketData;
@@ -468,46 +468,7 @@ namespace SpreadBot.Logic
                     return;
                 }
 
-                while (IsOpenOnExchange(botContext.CurrentOrderData))
-                {
-                    var order = botContext.CurrentOrderData;
-                    var refused = false;
-
-                    LogMessage($"Halting: cancelling order {order.Id}");
-                    try
-                    {
-                        await ExecuteOrderFunction(async () => await exchange.CancelOrder(order.Id, MarketSymbol));
-                    }
-                    catch (ApiException e) when (e.ApiErrorType == ApiErrorType.OrderNotOpen)
-                    {
-                        //It filled: its fills are fetched and booked. The other arms are about failed placements and could finish the bot
-                        try
-                        {
-                            await HandleApiException(e);
-                        }
-                        catch (Exception lookupError)
-                        {
-                            LogError($"Fetching order {order.Id}, which is no longer open, to halt failed: {lookupError.Message}");
-                            refused = lookupError is ApiException { ApiErrorType: ApiErrorType.Unauthorized };
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        LogError($"Cancelling order {order.Id} to halt failed: {e.Message}");
-                        refused = e is ApiException { ApiErrorType: ApiErrorType.Unauthorized };
-                    }
-
-                    if (!IsOpenOnExchange(botContext.CurrentOrderData))
-                        break;
-
-                    if (refused || DateTime.UtcNow + HaltCancelRetryDelay >= retryUntil)
-                    {
-                        LogUnexpectedError($"Halting with order {order.Id} on {MarketSymbol} still open");
-                        break;
-                    }
-
-                    await Task.Delay(HaltCancelRetryDelay);
-                }
+                await CancelCurrentOrder("halt", retryUntil);
             }
             catch (Exception e)
             {
@@ -517,6 +478,90 @@ namespace SpreadBot.Logic
             {
                 botContext.Semaphore.Release();
             }
+        }
+
+        /// <summary>
+        /// Stops this bot on request (e.g. from the dashboard): its open order is cancelled and its fills booked, then it finishes as
+        /// usual, market-selling what it holds. An order whose placement is unknown, or one that can't be cancelled, keeps it running.
+        /// </summary>
+        public async Task RequestFinish()
+        {
+            await botContext.Semaphore.WaitAsync();
+            try
+            {
+                if (botContext.BotState == BotState.FinishedWork)
+                    return;
+
+                if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN)
+                {
+                    LogError($"Not finishing while order {botContext.CurrentOrderData.ClientOrderId}, whose placement is unknown, may be live; try again once it's resolved");
+                    return;
+                }
+
+                if (!await CancelCurrentOrder("finish", DateTime.UtcNow + TimeSpan.FromSeconds(15)))
+                    return;
+
+                //The cancel's booking may have finished it already
+                await FinishWork();
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedError($"Error while finishing on request: {e}");
+            }
+            finally
+            {
+                botContext.Semaphore.Release();
+            }
+        }
+
+        /// <summary>
+        /// Under the semaphore: cancels the open order, if any, retrying until <paramref name="retryUntil"/> unless the account is refused.
+        /// </summary>
+        /// <returns>True once no order of the bot is open on the exchange</returns>
+        private async Task<bool> CancelCurrentOrder(string purpose, DateTime retryUntil)
+        {
+            while (IsOpenOnExchange(botContext.CurrentOrderData))
+            {
+                var order = botContext.CurrentOrderData;
+                var refused = false;
+
+                LogMessage($"Cancelling order {order.Id} to {purpose}");
+                try
+                {
+                    await ExecuteOrderFunction(async () => await exchange.CancelOrder(order.Id, MarketSymbol));
+                }
+                catch (ApiException e) when (e.ApiErrorType == ApiErrorType.OrderNotOpen)
+                {
+                    //It filled: its fills are fetched and booked. The other arms are about failed placements and could finish the bot
+                    try
+                    {
+                        await HandleApiException(e);
+                    }
+                    catch (Exception lookupError)
+                    {
+                        LogError($"Fetching order {order.Id}, which is no longer open, to {purpose} failed: {lookupError.Message}");
+                        refused = lookupError is ApiException { ApiErrorType: ApiErrorType.Unauthorized };
+                    }
+                }
+                catch (Exception e)
+                {
+                    LogError($"Cancelling order {order.Id} to {purpose} failed: {e.Message}");
+                    refused = e is ApiException { ApiErrorType: ApiErrorType.Unauthorized };
+                }
+
+                if (!IsOpenOnExchange(botContext.CurrentOrderData))
+                    break;
+
+                if (refused || DateTime.UtcNow + CancelRetryDelay >= retryUntil)
+                {
+                    LogUnexpectedError($"Gave up cancelling order {order.Id} on {MarketSymbol} to {purpose}; it's still open");
+                    return false;
+                }
+
+                await Task.Delay(CancelRetryDelay);
+            }
+
+            return true;
         }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
