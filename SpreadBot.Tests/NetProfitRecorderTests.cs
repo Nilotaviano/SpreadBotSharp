@@ -23,6 +23,7 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(2, records.Count);
             Assert.AreEqual(0.00003m, records.Single(r => r.BaseMarket == "BTC").Profit);
+            Assert.IsTrue(records.Single(r => r.BaseMarket == "BTC").IsActive, "active if any of them was");
             Assert.AreEqual(0.005m, records.Single(r => r.BaseMarket == "ETH").Profit);
             Assert.IsTrue(records.Single(r => r.BaseMarket == "BTC").Equals(new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.001m }), "matches the configuration it records");
         }

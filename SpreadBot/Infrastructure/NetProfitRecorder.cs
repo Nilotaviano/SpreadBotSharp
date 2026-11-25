@@ -61,6 +61,7 @@ namespace SpreadBot.Infrastructure
                 {
                     var merged = records.First();
                     merged.Profit = records.Sum(record => record.Profit);
+                    merged.IsActive = records.Any(record => record.IsActive);
                     return merged;
                 })
                 .ToHashSet();
