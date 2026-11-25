@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SpreadBot.Infrastructure;
 using SpreadBot.Logic;
 using SpreadBot.Models.Repository;
+using System.Linq;
 
 namespace SpreadBot.Tests
 {
@@ -69,6 +70,15 @@ namespace SpreadBot.Tests
             StringAssert.StartsWith(filters.BuyingRejection(Market(ask: 0.0001001m), Configuration(), restingBuyLimit: null), "spread ");
             Assert.IsNull(filters.BuyingRejection(Market(volume: 10), Configuration(), restingBuyLimit: null), "entry only");
             StringAssert.StartsWith(filters.Rejection(Market(volume: 10), Configuration()), "volume ");
+        }
+
+        [TestMethod]
+        public void UnmatchedBlacklistEntries_AreTheOnesNamingNoMarketOrCoin()
+        {
+            var filters = Filters("nmr", "NMRBTC", "xyz/eth", "ABC", "NMR-BTC");
+
+            CollectionAssert.AreEqual(new[] { "NMRBTC", "ABC", "NMR-BTC" },
+                filters.UnmatchedBlacklistEntries(new[] { Market("NMR/BTC"), Market("XYZ/ETH") }).ToArray());
         }
 
         [TestMethod]

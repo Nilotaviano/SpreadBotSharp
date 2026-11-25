@@ -56,6 +56,20 @@ namespace SpreadBot.Tests
             Assert.AreEqual("offline", coordinator.WhyNotAllocatable(Market(status: EMarketStatus.Offline), Configuration()));
         }
 
+        [TestMethod]
+        public void WhyNotAllocatable_NamesThePerMarketCap_ToOtherConfigurations()
+        {
+            var (_, _, bots, coordinator) = Started(Symbol);
+            coordinator.Start();
+            lock (bots)
+                Assert.AreEqual(1, bots.Count);
+            var other = Configuration();
+            other.MinutesForLoss = 60;
+
+            Assert.IsNull(coordinator.WhyNotAllocatable(Market(), Configuration()), "its own bot's market is never refused to it");
+            StringAssert.StartsWith(coordinator.WhyNotAllocatable(Market(), other), "has 1 bot(s), the most per market");
+        }
+
         private static (MockExchange exchange, DataRepository repository, List<Bot> bots, Coordinator coordinator) Started(params string[] symbols)
         {
             var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Total = 1, Amount = 1 });

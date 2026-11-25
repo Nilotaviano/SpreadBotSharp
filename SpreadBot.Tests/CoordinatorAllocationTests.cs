@@ -49,9 +49,10 @@ namespace SpreadBot.Tests
         private static Mock<ICoordinatorContext> InMemoryContext(List<Bot> bots, decimal dust = 0, PreviousSessionContext previousSession = null)
         {
             var context = new Mock<ICoordinatorContext>();
-            context.Setup(c => c.GetBotCount()).Returns(() => bots.Count);
-            context.Setup(c => c.GetBots()).Returns(() => bots.ToList());
-            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bots.Add);
+            //Bots are added on the market consumer's thread and removed on theirs, while the test reads them
+            context.Setup(c => c.GetBotCount()).Returns(() => { lock (bots) return bots.Count; });
+            context.Setup(c => c.GetBots()).Returns(() => { lock (bots) return bots.ToList(); });
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bot => { lock (bots) bots.Add(bot); });
             context.Setup(c => c.RemoveDustForMarket(It.IsAny<string>())).Returns(dust);
             context.Setup(c => c.GetPreviousSessionContext()).Returns(previousSession);
             return context;
@@ -133,7 +134,7 @@ namespace SpreadBot.Tests
                 .ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m });
             var bots = new List<Bot>();
             var context = InMemoryContext(bots);
-            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => bots.RemoveAll(b => b.Guid == id) > 0);
+            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => { lock (bots) return bots.RemoveAll(b => b.Guid == id) > 0; });
             var patient = Configuration(0.2m);
             patient.MinutesForLoss = 60;
             var settings = Settings(Configuration(0.2m));
@@ -141,15 +142,19 @@ namespace SpreadBot.Tests
             settings.MaxNumberOfBots = 4;
             var coordinator = new Coordinator(settings, repository, context.Object);
             coordinator.Start();
-            Assert.AreEqual(1, bots.Count, "the cap of 1 keeps the second configuration off the market");
-            var first = bots[0];
+            Bot first;
+            lock (bots)
+            {
+                Assert.AreEqual(1, bots.Count, "the cap of 1 keeps the second configuration off the market");
+                first = bots[0];
+            }
             WaitUntil(() => first.botContext.BotState == BotState.BuyOrderActive && first.botContext.SemaphoreCurrentCount == 1, "the first bot's buy rests");
 
             coordinator.FinishBot(first.Guid);
-            WaitUntil(() => !bots.Contains(first), "the first bot leaves");
+            WaitUntil(() => { lock (bots) return !bots.Contains(first); }, "the first bot leaves");
             exchange.PushTicker(MockExchange.Ticker("NMR/BTC", ask: 0.00010102m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
 
-            WaitUntil(() => bots.Count == 1 && bots[0] != first, "the market takes a new bot");
+            WaitUntil(() => { lock (bots) return bots.Count == 1 && bots[0] != first; }, "the market takes a new bot");
         }
 
         [TestMethod]
@@ -193,12 +198,14 @@ namespace SpreadBot.Tests
                     new BotContext(patient, market, BotState.Buying, 0) { Balance = 0.2m }
                 }
             };
-            var settings = Settings(Configuration(0.2m), restore: true);
+            // A configuration with no restored bot, which the 0.6 BTC left could fund: only the cap keeps it off the market
+            var settings = Settings(Configuration(0.3m), restore: true);
             settings.MaxNumberOfBotsPerMarket = 1;
 
             new Coordinator(settings, repository, InMemoryContext(bots, previousSession: previousSession).Object).Start();
 
-            Assert.AreEqual(2, bots.Count);
+            lock (bots)
+                Assert.AreEqual(2, bots.Count);
         }
 
         [TestMethod]
@@ -255,6 +262,21 @@ namespace SpreadBot.Tests
             context.Verify(c => c.AddDustForMarket(failedSymbol, 1m), Times.Once, "the dust the failed bot took is recorded again");
             WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.BuyLimit) && (string)i.Arguments[0] == symbol),
                 "the allocated bot starts and places its buy");
+        }
+
+        [TestMethod]
+        public void AllocationFailing_PropagatesItsOwnError_EvenWhenUndoingItFailsToo()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("NMR", 2, 2) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots, dust: 1);
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Throws(new InvalidOperationException("the allocation fails"));
+            context.Setup(c => c.AddDustForMarket(It.IsAny<string>(), It.IsAny<decimal>())).Throws(new ArgumentException("giving the dust back fails too"));
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
+
+            Assert.IsFalse(coordinator.AllocatedMarketsPerSpreadConfiguration.Values.Any(markets => markets.ContainsKey("NMR/BTC")), "released before giving the dust back");
         }
 
         [TestMethod]

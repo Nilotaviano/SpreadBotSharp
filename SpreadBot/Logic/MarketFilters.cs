@@ -1,6 +1,7 @@
 using SpreadBot.Infrastructure;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace SpreadBot.Logic
@@ -55,10 +56,24 @@ namespace SpreadBot.Logic
             return null;
         }
 
+        /// <summary>
+        /// The blacklist entries that name none of <paramref name="markets"/> or their coins, which blacklist nothing (e.g. "NMRBTC", the
+        /// exchange's own spelling of NMR/BTC).
+        /// </summary>
+        public IReadOnlyList<string> UnmatchedBlacklistEntries(IEnumerable<MarketData> markets)
+        {
+            var known = markets.ToList();
+            return (appSettings.BlacklistedMarkets ?? Enumerable.Empty<string>())
+                .Where(entry => !known.Any(market => Names(entry, market)))
+                .ToList();
+        }
+
         private bool IsBlacklisted(MarketData market) =>
-            appSettings.BlacklistedMarkets?.Any(entry =>
-                string.Equals(entry, market.Target, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(entry, market.Symbol, StringComparison.OrdinalIgnoreCase)) == true;
+            appSettings.BlacklistedMarkets?.Any(entry => Names(entry, market)) == true;
+
+        private static bool Names(string entry, MarketData market) =>
+            string.Equals(entry, market.Target, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry, market.Symbol, StringComparison.OrdinalIgnoreCase);
 
         private static string EntryRejection(MarketData market, SpreadConfiguration configuration)
         {

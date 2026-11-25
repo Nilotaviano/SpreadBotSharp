@@ -66,6 +66,10 @@ namespace SpreadBot.Logic
 
             lock (allocationLock)
                 configurationsByBaseMarket = regrouped;
+
+            //A misspelled entry blacklists nothing, and the bot would trade the coin the operator meant to keep it off
+            if (!dataRepository.MarketsData.IsEmpty && marketFilters.UnmatchedBlacklistEntries(dataRepository.MarketsData.Values) is { Count: > 0 } unmatched)
+                Logger.Instance.LogError($"{nameof(AppSettings.BlacklistedMarkets)} entries {string.Join(", ", unmatched)} name no watched market or coin (e.g. NMR or NMR/BTC), so they blacklist nothing");
         }
 
         /// <summary>
@@ -119,10 +123,29 @@ namespace SpreadBot.Logic
         }
 
         /// <summary>
-        /// Why <paramref name="market"/> can't get a bot of <paramref name="configuration"/>, or null if it can (balance and bot slots aside).
+        /// Why <paramref name="market"/> can't get a bot of <paramref name="configuration"/>, or null if it can (balance and
+        /// <see cref="AppSettings.MaxNumberOfBots"/> aside).
         /// </summary>
         public string WhyNotAllocatable(MarketData market, SpreadConfiguration configuration) =>
-            marketFilters.Rejection(market, configuration);
+            marketFilters.Rejection(market, configuration) ?? CapRejection(market.Symbol, configuration);
+
+        /// <summary>
+        /// The per-market cap's verdict for <paramref name="configuration"/>, which never refuses it the market its own bot is on.
+        /// </summary>
+        private string CapRejection(string symbol, SpreadConfiguration configuration)
+        {
+            if (HasBotOn(configuration, symbol))
+                return null;
+
+            //Bots of two configurations on one market would outbid each other
+            var bots = BotCountOnMarket(symbol);
+            return bots >= appSettings.MaxNumberOfBotsPerMarket
+                ? $"has {bots} bot(s), the most per market ({appSettings.MaxNumberOfBotsPerMarket})"
+                : null;
+        }
+
+        private bool HasBotOn(SpreadConfiguration configuration, string symbol) =>
+            AllocatedMarketsPerSpreadConfiguration.TryGetValue(configuration, out var markets) && markets.ContainsKey(symbol);
 
         public void Start()
         {
@@ -266,20 +289,21 @@ namespace SpreadBot.Logic
                         if (!EvaluateMarketBasedOnConfiguration(market, configuration))
                             continue;
 
-                        //Bots of two configurations on one market would outbid each other
-                        if (BotCountOnMarket(market.Symbol) >= appSettings.MaxNumberOfBotsPerMarket)
-                        {
-                            Logger.Instance.LogMessage($"Market {market.Symbol} already has the most bots allowed per market ({appSettings.MaxNumberOfBotsPerMarket})");
-                            continue;
-                        }
-
-                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
-
-                        if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
+                        if (HasBotOn(configuration, market.Symbol))
                         {
                             Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
                             continue;
                         }
+
+                        if (CapRejection(market.Symbol, configuration) is string capRejection)
+                        {
+                            Logger.Instance.LogMessage($"Market {market.Symbol}: {capRejection}");
+                            continue;
+                        }
+
+                        //Free, as both checks ran under the allocation lock
+                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
+                        allocatedMarketsForConfiguration[market.Symbol] = true;
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
@@ -295,15 +319,23 @@ namespace SpreadBot.Logic
                         }
                         catch
                         {
-                            //Stored before the failure, the bot holds its allocation, so it must run like the others (the caller starts it)
-                            if (bot != null && context.GetBots().Contains(bot))
-                                allocatedBots.Add(bot);
-                            else
+                            //Its own failures are logged, so the allocation's failure is the one that propagates
+                            try
                             {
-                                //Left reserved without a bot, the market would count against the cap for every configuration until a restart
-                                allocatedMarketsForConfiguration.TryRemove(market.Symbol, out _);
-                                if (existingDust > 0)
-                                    context.AddDustForMarket(market.Symbol, existingDust);
+                                //Stored before the failure, the bot holds its allocation, so it must run like the others (the caller starts it)
+                                if (bot != null && context.GetBots().Contains(bot))
+                                    allocatedBots.Add(bot);
+                                else
+                                {
+                                    //Left reserved without a bot, the market would count against the cap for every configuration until a restart
+                                    allocatedMarketsForConfiguration.TryRemove(market.Symbol, out _);
+                                    if (existingDust > 0)
+                                        context.AddDustForMarket(market.Symbol, existingDust);
+                                }
+                            }
+                            catch (Exception cleanupError)
+                            {
+                                Logger.Instance.LogUnexpectedError($"Error while undoing the failed allocation on {market.Symbol}: {cleanupError}");
                             }
                             throw;
                         }

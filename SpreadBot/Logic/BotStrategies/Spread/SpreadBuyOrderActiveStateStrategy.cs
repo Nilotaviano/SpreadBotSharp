@@ -23,7 +23,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
             if (marketFilters.BuyingRejection(botContext.LatestMarketData, botContext.spreadConfiguration, botContext.CurrentOrderData.Limit) != null)
             {
-                //Cancel order and exit: back in Buying, the bot leaves the market
+                //Cancel the buy: back in Buying the bot leaves the market, or, if the buy filled enough to sell, it sells first and leaves after
                 await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id, botContext.LatestMarketData.Symbol));
             }
             else if (botContext.LatestMarketData.BidRate - botContext.CurrentOrderData.Limit >= botContext.spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)
