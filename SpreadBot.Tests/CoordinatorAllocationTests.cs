@@ -102,6 +102,50 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        [DataRow(1, 2)]
+        [DataRow(2, 4)]
+        public void TwoConfigurationsOnOneBaseMarket_ShareEachMarketUpToTheCap(int maxBotsPerMarket, int expectedBots)
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA/BTC", "BBB/BTC");
+            var bots = new List<Bot>();
+            var patient = Configuration(0.2m);
+            patient.MinutesForLoss = 60;
+            var settings = Settings(Configuration(0.2m));
+            settings.SpreadConfigurations = new[] { Configuration(0.2m), patient };
+            settings.MaxNumberOfBots = 4;
+            settings.MaxNumberOfBotsPerMarket = maxBotsPerMarket;
+
+            new Coordinator(settings, repository, InMemoryContext(bots).Object).Start();
+
+            Assert.AreEqual(expectedBots, bots.Count);
+            Assert.IsTrue(bots.GroupBy(b => b.MarketSymbol).All(market => market.Count() == maxBotsPerMarket));
+        }
+
+        [TestMethod]
+        public void RestoredSession_KeepsMoreBotsOnAMarketThanTheCap_AndAddsNone()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var patient = Configuration(0.2m);
+            patient.MinutesForLoss = 60;
+            var market = new MarketData { Symbol = "NMR/BTC", PriceTick = MockExchange.Tick };
+            var previousSession = new PreviousSessionContext
+            {
+                BotContexts = new List<BotContext>
+                {
+                    new BotContext(Configuration(0.2m), market, BotState.Buying, 0) { Balance = 0.2m },
+                    new BotContext(patient, market, BotState.Buying, 0) { Balance = 0.2m }
+                }
+            };
+            var settings = Settings(Configuration(0.2m), restore: true);
+            settings.MaxNumberOfBotsPerMarket = 1;
+
+            new Coordinator(settings, repository, InMemoryContext(bots, previousSession: previousSession).Object).Start();
+
+            Assert.AreEqual(2, bots.Count);
+        }
+
+        [TestMethod]
         public void DoesNotAllocate_AMarketWithoutAPriceTick()
         {
             var exchange = new MockExchange(Balance("BTC", 1, 1));

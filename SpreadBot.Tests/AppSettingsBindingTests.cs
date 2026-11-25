@@ -130,12 +130,14 @@ namespace SpreadBot.Tests
             var settings = Bind(SettingsJson);
             var reloadedRaised = false;
             settings.Reloaded += (sender, e) => reloadedRaised = true;
-            const string updatedJson = @"{ ""ApiKey"": ""other-key"", ""MaxNumberOfBots"": 7, ""BlacklistedMarkets"": [ ""ABC"" ], ""SpreadConfigurations"": [ { ""BaseMarket"": ""USDT"", ""AllocatedAmountOfBaseCurrency"": 25.5 } ] }";
+            Assert.AreEqual(1, settings.MaxNumberOfBotsPerMarket, "the default");
+            const string updatedJson = @"{ ""ApiKey"": ""other-key"", ""MaxNumberOfBots"": 7, ""MaxNumberOfBotsPerMarket"": 2, ""BlacklistedMarkets"": [ ""ABC"" ], ""SpreadConfigurations"": [ { ""BaseMarket"": ""USDT"", ""AllocatedAmountOfBaseCurrency"": 25.5 } ] }";
 
             settings.Reload(JsonConvert.DeserializeObject<AppSettings>(updatedJson));
 
             Assert.IsTrue(reloadedRaised);
             Assert.AreEqual(7, settings.MaxNumberOfBots);
+            Assert.AreEqual(2, settings.MaxNumberOfBotsPerMarket);
             CollectionAssert.AreEqual(new[] { "ABC" }, settings.BlacklistedMarkets.ToArray());
             var usdt = settings.SpreadConfigurations.Single();
             Assert.AreEqual("USDT", usdt.BaseMarket);

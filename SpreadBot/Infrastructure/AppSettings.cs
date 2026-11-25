@@ -19,6 +19,8 @@ namespace SpreadBot.Infrastructure
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
+        //Counts every configuration's bots; a restored session keeps the bots it had
+        public int MaxNumberOfBotsPerMarket { get; set; } = 1;
         //Coins (NMR) or markets (NMR/BTC), in any case, that get no bot
         public IEnumerable<string> BlacklistedMarkets { get; set; }
         public int ResyncIntervalMs { get; set; }
@@ -46,6 +48,7 @@ namespace SpreadBot.Infrastructure
             //No reason to reload ApiKey and ApiSecret atm
 
             MaxNumberOfBots = newSettings.MaxNumberOfBots;
+            MaxNumberOfBotsPerMarket = newSettings.MaxNumberOfBotsPerMarket;
             BlacklistedMarkets = newSettings.BlacklistedMarkets;
             SpreadConfigurations = newSettings.SpreadConfigurations;
 

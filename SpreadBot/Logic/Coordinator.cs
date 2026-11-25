@@ -247,6 +247,13 @@ namespace SpreadBot.Logic
                         if (!EvaluateMarketBasedOnConfiguration(market, configuration))
                             continue;
 
+                        //Bots of two configurations on one market would outbid each other
+                        if (BotCountOnMarket(market.Symbol) >= appSettings.MaxNumberOfBotsPerMarket)
+                        {
+                            Logger.Instance.LogMessage($"Market {market.Symbol} already has the most bots allowed per market ({appSettings.MaxNumberOfBotsPerMarket})");
+                            continue;
+                        }
+
                         var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
 
                         if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
@@ -381,6 +388,9 @@ namespace SpreadBot.Logic
 
             return false;
         }
+
+        private int BotCountOnMarket(string symbol) =>
+            AllocatedMarketsPerSpreadConfiguration.Values.Count(markets => markets.ContainsKey(symbol));
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
