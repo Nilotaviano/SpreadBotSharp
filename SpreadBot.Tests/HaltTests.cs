@@ -63,7 +63,7 @@ namespace SpreadBot.Tests
             };
             var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
 
-            await bot.Halt();
+            await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 
             exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Once);
             Assert.AreEqual(BotState.Bought, context.BotState, "the fills are booked");
@@ -109,11 +109,38 @@ namespace SpreadBot.Tests
                 .ReturnsAsync(CancelledBuy(filled: 0));
             var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
 
-            await bot.Halt();
+            await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 
             exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Exactly(2));
             Assert.IsNull(context.CurrentOrderData);
             Assert.AreEqual(BotState.Buying, context.BotState);
+        }
+
+        [TestMethod]
+        public void Halt_StopsRetryingAtTheDeadline()
+        {
+            var (exchange, repository, context) = OpenBuy();
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.RetryLater, "server busy"));
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+
+            var halting = bot.Halt(retryUntil: DateTime.UtcNow.AddMilliseconds(300));
+
+            Assert.IsTrue(halting.Wait(TimeSpan.FromSeconds(2)), "the halt ends");
+            Assert.IsTrue(OrderRequests(exchange, nameof(IExchange.CancelOrder)) > 1, "retried until then");
+            Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status, "still open, so the next session fetches it");
+        }
+
+        [TestMethod]
+        public async Task Halt_PastTheDeadline_CancelsOnce()
+        {
+            var (exchange, repository, context) = OpenBuy();
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new InvalidOperationException("not an ApiException"));
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+
+            await bot.Halt(retryUntil: DateTime.UtcNow);
+
+            exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Once);
+            Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status);
         }
 
         [TestMethod]
@@ -123,7 +150,7 @@ namespace SpreadBot.Tests
             exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.Unauthorized, "Invalid API-key"));
             var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
 
-            await bot.Halt();
+            await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 
             exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Once);
             Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status, "still open, so the next session fetches it");
@@ -136,7 +163,7 @@ namespace SpreadBot.Tests
             context.CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN };
             var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
 
-            await bot.Halt();
+            await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 
             exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
             Assert.AreEqual(OrderStatus.UNKNOWN, context.CurrentOrderData.Status);
@@ -151,7 +178,7 @@ namespace SpreadBot.Tests
             var unallocated = false;
             var bot = new Bot(repository, context, _ => unallocated = true, new BotStrategiesFactory(), TestLedger.Empty(repository));
 
-            await bot.Halt();
+            await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
 
             Assert.AreEqual(BotState.FinishedWork, context.BotState);
             Assert.IsTrue(unallocated);

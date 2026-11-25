@@ -211,7 +211,7 @@ namespace SpreadBot.Logic
 
                 //Only a restore allocates after a halt: the bot is kept, so it's saved for the next session, but it doesn't trade
                 if (halted)
-                    _ = bot.Halt();
+                    _ = bot.Halt(HaltRetryDeadline());
             }
         }
 
@@ -237,11 +237,15 @@ namespace SpreadBot.Logic
             _ = Task.Run(() => HaltBots(bots));
         }
 
+        //Half the timeout, so a cancel started by then has the rest to answer (requests time out in 10 s)
+        private static DateTime HaltRetryDeadline() => DateTime.UtcNow + HaltTimeout / 2;
+
         private async Task HaltBots(List<Bot> bots)
         {
             try
             {
-                var halting = Task.WhenAll(bots.Select(bot => bot.Halt()));
+                var retryUntil = HaltRetryDeadline();
+                var halting = Task.WhenAll(bots.Select(bot => bot.Halt(retryUntil)));
 
                 if (await Task.WhenAny(halting, Task.Delay(HaltTimeout)) == halting)
                     await halting;

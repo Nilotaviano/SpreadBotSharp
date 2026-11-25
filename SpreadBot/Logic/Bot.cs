@@ -32,8 +32,6 @@ namespace SpreadBot.Logic
 
         //Set by Halt: the bot places nothing more
         private volatile bool halted;
-        //A halt retries a failed cancel, mostly within Coordinator.HaltTimeout
-        private const int HaltCancelAttempts = 3;
         internal TimeSpan HaltCancelRetryDelay { get; init; } = TimeSpan.FromSeconds(3);
 
         //Only read and written under BotContext.Semaphore
@@ -439,11 +437,12 @@ namespace SpreadBot.Logic
 
         /// <summary>
         /// Stops trading for good, for a halt (see <see cref="Coordinator.Halt"/>): market data is ignored from now on and the open
-        /// order, if any, is cancelled (retried <see cref="HaltCancelAttempts"/> times unless the exchange refuses the account) and its
-        /// fills booked. The bot keeps its state and allocation, so the saved session resumes it; one the booking leaves with nothing to
-        /// trade finishes as usual. An order whose placement is unknown has no id to cancel; the next session looks it up.
+        /// order, if any, is cancelled and its fills booked. The bot keeps its state and allocation, so the saved session resumes it; one
+        /// the booking leaves with nothing to trade finishes as usual. An order whose placement is unknown has no id to cancel; the next
+        /// session looks it up.
         /// </summary>
-        public async Task Halt()
+        /// <param name="retryUntil">A failed cancel is tried again until then, unless the exchange refuses the account</param>
+        public async Task Halt(DateTime retryUntil)
         {
             //Before waiting: messages queued behind the one being processed must not trade either
             halted = true;
@@ -460,7 +459,7 @@ namespace SpreadBot.Logic
                     return;
                 }
 
-                for (var attempt = 1; IsOpenOnExchange(botContext.CurrentOrderData); attempt++)
+                while (IsOpenOnExchange(botContext.CurrentOrderData))
                 {
                     var order = botContext.CurrentOrderData;
                     var refused = false;
@@ -470,18 +469,21 @@ namespace SpreadBot.Logic
                     {
                         await ExecuteOrderFunction(async () => await exchange.CancelOrder(order.Id, MarketSymbol));
                     }
-                    catch (ApiException e)
+                    catch (ApiException e) when (e.ApiErrorType == ApiErrorType.OrderNotOpen)
                     {
-                        LogError($"Cancelling order {order.Id} to halt failed: {e.ApiErrorType} {e.Message}");
-                        refused = e.ApiErrorType == ApiErrorType.Unauthorized;
-                        //e.g. OrderNotOpen: it filled, so its fills are fetched and booked
+                        //It filled: its fills are fetched and booked. The other arms are about failed placements and could finish the bot
                         await HandleApiException(e);
+                    }
+                    catch (Exception e)
+                    {
+                        LogError($"Cancelling order {order.Id} to halt failed: {e.Message}");
+                        refused = e is ApiException { ApiErrorType: ApiErrorType.Unauthorized };
                     }
 
                     if (!IsOpenOnExchange(botContext.CurrentOrderData))
                         break;
 
-                    if (refused || attempt == HaltCancelAttempts)
+                    if (refused || DateTime.UtcNow + HaltCancelRetryDelay >= retryUntil)
                     {
                         LogUnexpectedError($"Halting with order {order.Id} on {MarketSymbol} still open");
                         break;
