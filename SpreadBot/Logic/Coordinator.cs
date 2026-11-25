@@ -181,8 +181,27 @@ namespace SpreadBot.Logic
                     bot.Start();
 
                     Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
+
+                    if (!dataRepository.MarketsData.ContainsKey(bot.MarketSymbol))
+                        LeaveUnlistedMarket(bot);
                 }
             }
+        }
+
+        /// <summary>
+        /// A restored bot whose market isn't in the market data gets no market update, so it would hold its balance and its slot for good.
+        /// </summary>
+        private void LeaveUnlistedMarket(Bot bot)
+        {
+            //Only the configured base markets' markets are loaded (and only at startup), so there the exchange no longer lists it, e.g. it
+            //was delisted while the bot was stopped. Finishing cancels its order if the exchange still takes that, and records its coins as dust
+            if (configurationsByBaseMarket.ContainsKey(bot.BaseMarket))
+            {
+                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange; finishing it");
+                _ = Task.Run(bot.RequestFinish);
+            }
+            else
+                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid} trades {bot.MarketSymbol}, but its base market {bot.BaseMarket} isn't configured, so its markets aren't watched and it won't trade; configure {bot.BaseMarket} and restart, or finish it from the dashboard");
         }
 
         /// <summary>

@@ -153,6 +153,31 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        [DataRow("GONE/BTC", true)] // BTC's markets are loaded, and this one isn't among them: delisted
+        [DataRow("NMR/ETH", false)] // ETH isn't configured, so its markets aren't loaded at all
+        public void RestoredBot_OnAMarketNotInTheMarketData(string symbol, bool expectFinished)
+        {
+            var (_, repository) = StartedRepository(0, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var configuration = Configuration(0.3m);
+            configuration.BaseMarket = symbol.Split('/')[1];
+            var restored = new BotContext(configuration, new MarketData { Symbol = symbol, PriceTick = MockExchange.Tick }, BotState.Buying, 0) { Balance = 0.3m };
+            var context = InMemoryContext(bots, previousSession: new PreviousSessionContext { BotContexts = new List<BotContext> { restored } });
+            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => { lock (bots) return bots.RemoveAll(b => b.Guid == id) > 0; });
+
+            new Coordinator(Settings(Configuration(0.3m), restore: true), repository, context.Object).Start();
+
+            if (expectFinished)
+                WaitUntil(() => { lock (bots) return bots.Count == 0; }, "the bot on the delisted market finishes");
+            else
+            {
+                Thread.Sleep(200);
+                lock (bots)
+                    Assert.AreEqual(1, bots.Count, "kept, since nothing shows its market is gone");
+            }
+        }
+
+        [TestMethod]
         public void RestoredSession_KeepsMoreBotsOnAMarketThanTheCap_AndAddsNone()
         {
             var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
