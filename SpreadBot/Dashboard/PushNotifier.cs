@@ -38,6 +38,8 @@ namespace SpreadBot.Dashboard
         private readonly Channel<PushMessage> queue = Channel.CreateBounded<PushMessage>(new BoundedChannelOptions(100) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
         private readonly CancellationTokenSource stopping = new CancellationTokenSource();
         private readonly Task sender;
+        //The halt's send, outside the queue: Dispose waits for it before cancelling anything
+        private Task urgent = Task.CompletedTask;
         private readonly object subscribing = new object();
         //Endpoint -> refusals in a row (401/403): one may be the bot's own key or clock, several mean the subscription is dead
         private readonly Dictionary<string, int> refusals = new Dictionary<string, int>();
@@ -141,10 +143,14 @@ namespace SpreadBot.Dashboard
         /// <summary>
         /// Sends now, ahead of the queue: for the halt, the last thing the bot reports before it exits.
         /// </summary>
-        public async Task NotifyNow(string category, string title, string body, string tag = null)
+        public Task NotifyNow(string category, string title, string body, string tag = null)
         {
-            if (Available)
-                await SendNow(Message(category, title, body, tag, "/"));
+            if (!Available)
+                return Task.CompletedTask;
+
+            var send = SendNow(Message(category, title, body, tag, "/"));
+            urgent = send;
+            return send;
         }
 
         private PushMessage Message(string category, string title, string body, string tag, string path) =>
@@ -216,6 +222,11 @@ namespace SpreadBot.Dashboard
                         if (count >= RefusalsBeforeDropping)
                             gone.Add(subscription.Endpoint);
                     }
+                    //Cut short by shutdown: not a failure
+                    catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+                    {
+                        break;
+                    }
                     catch (Exception e)
                     {
                         //Not an unexpected error: those are pushed, and this one would push itself
@@ -237,10 +248,11 @@ namespace SpreadBot.Dashboard
             if (stopping.IsCancellationRequested)
                 return;
 
-            //What's queued isn't sent once the bot exits; a send under way is cancelled
+            //The halt gets its chance first; then what's queued isn't sent once the bot exits, and a send under way is cancelled
+            urgent.Wait(TimeSpan.FromSeconds(10));
             queue.Writer.TryComplete();
             stopping.Cancel();
-            if (!sender.Wait(TimeSpan.FromSeconds(15)))
+            if (!sender.Wait(TimeSpan.FromSeconds(15)) || !urgent.Wait(TimeSpan.FromSeconds(5)))
             {
                 //Still using the client: leave it to the process exit rather than dispose it under a send
                 Logger.Instance.LogError("Push notifications were still sending when the dashboard stopped");
