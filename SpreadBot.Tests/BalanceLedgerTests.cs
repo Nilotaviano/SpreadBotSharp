@@ -161,6 +161,7 @@ namespace SpreadBot.Tests
         /// </summary>
         private static (Bot bot, BotContext context, BalanceLedger ledger) BotWithAnOpenBuy(MockExchange exchange)
         {
+            exchange.WithMarkets("NMR/BTC");
             var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
             repository.StartConsumingData();
 

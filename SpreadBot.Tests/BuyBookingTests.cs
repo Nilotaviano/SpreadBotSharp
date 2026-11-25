@@ -27,6 +27,7 @@ namespace SpreadBot.Tests
                 .Setup(e => e.CancelOrder(BuyOrderId, Symbol))
                 .ReturnsAsync(new OrderData { Id = BuyOrderId, ClientOrderId = BuyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.00009000m });
 
+            exchange.WithMarkets(Symbol);
             var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
             dataRepository.StartConsumingData();
 

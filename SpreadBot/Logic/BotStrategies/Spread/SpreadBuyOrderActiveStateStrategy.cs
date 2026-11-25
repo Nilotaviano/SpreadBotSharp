@@ -16,6 +16,11 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
         public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
+            //The exchange refuses requests on an offline market (e.g. a symbol restricted for the account), so a cancel would fail on
+            //every update. The buy rests; the order stream or a resync books it if it fills or the exchange cancels it
+            if (botContext.LatestMarketData.Status != EMarketStatus.Online)
+                return;
+
             if (marketFilters.BuyingRejection(botContext.LatestMarketData, botContext.spreadConfiguration) != null)
             {
                 //Cancel order and exit: back in Buying, the bot leaves the market

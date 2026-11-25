@@ -141,6 +141,25 @@ namespace SpreadBot.Tests
             exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.Once);
         }
 
+        [TestMethod]
+        public async Task BuyOrderActive_SendsNoCancel_WhileItsMarketIsOffline()
+        {
+            // Outbid too, on a market the exchange refuses requests for: every cancel would fail
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
+            var market = Market(ask: Bid + 6 * MockExchange.Tick);
+            market.BidRate = Bid + 2 * MockExchange.Tick;
+            market.Status = EMarketStatus.Offline;
+            var context = new BotContext(configuration, market, BotState.BuyOrderActive, 0)
+            {
+                CurrentOrderData = new OrderData { Id = "buy-1", Status = OrderStatus.OPEN, Limit = Bid }
+            };
+
+            await new SpreadBuyOrderActiveStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+
+            exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
+
         /// <summary>
         /// Price and volume only decide allocation: a market drifting around them would make the bot leave and come back on every trade.
         /// </summary>
