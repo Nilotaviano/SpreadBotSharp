@@ -50,6 +50,26 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void BuyingRejection_JudgesEverythingButTheQuote_UntilTheMarketShowsOne()
+        {
+            var filters = Filters();
+            var unquoted = Market();
+            unquoted.BidRate = null;
+            unquoted.AskRate = null;
+            var pumping = Market(change: 80);
+            pumping.BidRate = null;
+            pumping.AskRate = null;
+            var oneSided = Market();
+            oneSided.AskRate = null;
+
+            Assert.IsNull(filters.BuyingRejection(unquoted, Configuration()), "waits for a quote");
+            Assert.AreEqual("no bid or no ask", filters.Rejection(unquoted, Configuration()), "allocation never takes it");
+            StringAssert.StartsWith(filters.BuyingRejection(pumping, Configuration()), "up 80");
+            Assert.AreEqual("no bid or no ask", filters.BuyingRejection(oneSided, Configuration()));
+            StringAssert.StartsWith(filters.BuyingRejection(Market(ask: 0.0001001m), Configuration()), "spread ");
+        }
+
+        [TestMethod]
         public void BlacklistedCoin_RejectsEveryMarketTradingIt()
         {
             var filters = Filters("nmr");

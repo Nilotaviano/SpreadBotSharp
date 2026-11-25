@@ -24,15 +24,17 @@ namespace SpreadBot.Logic
         /// (balance and bot slots aside).
         /// </summary>
         public string Rejection(MarketData market, SpreadConfiguration configuration) =>
-            ViabilityRejection(market) ?? ConfigurationRejection(market, configuration);
+            ViabilityRejection(market) ?? ConfigurationRejection(market, configuration) ?? QuoteRejection(market, configuration);
 
         /// <summary>
         /// Why a bot of <paramref name="configuration"/> that is still buying should leave <paramref name="market"/>, or null. Until
-        /// the market shows a bid or an ask (a restored bot's, before its first ticker) only its own state can rule it out, since
+        /// the market shows a bid or an ask (a restored bot's, before its first ticker) its quote isn't judged, since
         /// <see cref="Rejection"/> rejects a market without both.
         /// </summary>
         public string BuyingRejection(MarketData market, SpreadConfiguration configuration) =>
-            market.BidRate > 0 || market.AskRate > 0 ? Rejection(market, configuration) : ViabilityRejection(market);
+            ViabilityRejection(market)
+            ?? ConfigurationRejection(market, configuration)
+            ?? (market.BidRate > 0 || market.AskRate > 0 ? QuoteRejection(market, configuration) : null);
 
         /// <summary>
         /// Why no configuration's bot can trade <paramref name="market"/>, or null.
@@ -56,15 +58,20 @@ namespace SpreadBot.Logic
                 string.Equals(entry, market.Target, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(entry, market.Symbol, StringComparison.OrdinalIgnoreCase)) == true;
 
-        private static string ConfigurationRejection(MarketData market, SpreadConfiguration configuration)
+        private static string QuoteRejection(MarketData market, SpreadConfiguration configuration)
         {
-            if (market.LastTradeRate < configuration.MinimumPrice)
-                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
             //Its spread reads as zero, which a minimum of zero would let through
             if (!(market.BidRate > 0) || !(market.AskRate > 0))
                 return "no bid or no ask";
             if (market.SpreadPercentage < configuration.MinimumSpreadPercentage)
                 return $"spread {market.SpreadPercentage:0.###}% below the minimum {configuration.MinimumSpreadPercentage}%";
+            return null;
+        }
+
+        private static string ConfigurationRejection(MarketData market, SpreadConfiguration configuration)
+        {
+            if (market.LastTradeRate < configuration.MinimumPrice)
+                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
             if (market.QuoteVolume < configuration.MinimumQuoteVolume)
                 return $"volume {market.QuoteVolume:0.####} below the minimum {configuration.MinimumQuoteVolume}";
             if (market.PercentChange > configuration.MaxPercentChangeFromPreviousDay)

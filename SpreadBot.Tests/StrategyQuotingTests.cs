@@ -54,12 +54,16 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public async Task Buy_LeavesAMarketThatStartedPumping()
+        [DataRow(true)]
+        [DataRow(false)] // before its first quote too
+        public async Task Buy_LeavesAMarketThatStartedPumping(bool quoted)
         {
             var (repository, exchange) = Repository();
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MaxPercentChangeFromPreviousDay = 40 };
             var market = Market(ask: Bid + 3 * MockExchange.Tick);
             market.PercentChange = 80;
+            if (!quoted)
+                (market.BidRate, market.AskRate) = (null, null);
             var context = new BotContext(configuration, market, BotState.Buying, 0) { Balance = 0.001m };
             var finished = false;
 

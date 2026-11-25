@@ -291,5 +291,20 @@ namespace SpreadBot.Tests
 
             fixture.VerifyDelegated(Times.Once());
         }
+
+        [TestMethod]
+        [DataRow(BotState.Buying)]
+        [DataRow(BotState.BuyOrderActive)]
+        public async Task Calm_LeavesAMarketWithoutAQuoteYetToTheWrappedStrategy(BotState state)
+        {
+            // The wrapped Spread strategy waits for the quote; holding off as "not calm" would cancel a resting buy
+            var fixture = new CalmFixture(state);
+            fixture.Context.LatestMarketData = new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
+
+            await fixture.Strategy.ProcessMarketData(fixture.Repository, fixture.Context, placeOrder => placeOrder(), () => Task.CompletedTask);
+
+            fixture.VerifyDelegated(Times.Once());
+            fixture.Exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
     }
 }
