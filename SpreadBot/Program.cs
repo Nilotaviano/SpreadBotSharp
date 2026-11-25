@@ -81,7 +81,9 @@ namespace SpreadBot
 
             coordinator.Dispose();
             exchange.Dispose();
-            coordinatorContext.Save();
+            //A bot still halting holds its semaphore, which the save waits for; the last periodic save stands then
+            if (!Task.Run(coordinatorContext.Save).Wait(TimeSpan.FromSeconds(30)))
+                Logger.Instance.LogUnexpectedError("Timed out saving the session on exit");
             Logger.Instance.LogMessage(halted ? "Exiting after a halt" : "Exiting");
             Logger.Instance.Flush(TimeSpan.FromSeconds(5));
 

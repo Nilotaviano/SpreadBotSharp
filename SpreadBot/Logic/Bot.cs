@@ -32,6 +32,9 @@ namespace SpreadBot.Logic
 
         //Set by Halt: the bot places nothing more
         private volatile bool halted;
+        //A halt retries a failed cancel, mostly within Coordinator.HaltTimeout
+        private const int HaltCancelAttempts = 3;
+        internal TimeSpan HaltCancelRetryDelay { get; init; } = TimeSpan.FromSeconds(3);
 
         //Only read and written under BotContext.Semaphore
         private MarketData lastProcessedMarketData;
@@ -428,14 +431,17 @@ namespace SpreadBot.Logic
             await ExecuteOrderFunction(() => Task.FromResult(found));
         }
 
+        private static bool IsOpenOnExchange(OrderData order) => order?.Status == OrderStatus.OPEN && order.Id != null;
+
         //Only such a report settles an order whose placement is unknown: adopting anything less would let the strategy place another order
         private static bool ShowsOrderState(OrderData order) =>
             order?.Id != null && (order.Status == OrderStatus.OPEN || order.Status == OrderStatus.CLOSED);
 
         /// <summary>
         /// Stops trading for good, for a halt (see <see cref="Coordinator.Halt"/>): market data is ignored from now on and the open
-        /// order, if any, is cancelled and its fills booked. The bot stays allocated with what it holds, so the saved session resumes it.
-        /// An order whose placement is unknown has no id to cancel; the next session looks it up.
+        /// order, if any, is cancelled (retried <see cref="HaltCancelAttempts"/> times unless the exchange refuses the account) and its
+        /// fills booked. The bot keeps its state and allocation, so the saved session resumes it; one the booking leaves with nothing to
+        /// trade finishes as usual. An order whose placement is unknown has no id to cancel; the next session looks it up.
         /// </summary>
         public async Task Halt()
         {
@@ -445,20 +451,43 @@ namespace SpreadBot.Logic
             await botContext.Semaphore.WaitAsync();
             try
             {
-                var order = botContext.CurrentOrderData;
-                if (botContext.BotState == BotState.FinishedWork || order?.Status != OrderStatus.OPEN || order.Id == null)
+                if (botContext.BotState == BotState.FinishedWork)
                     return;
 
-                LogMessage($"Halting: cancelling order {order.Id}");
-                try
+                if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN)
                 {
-                    await ExecuteOrderFunction(async () => await exchange.CancelOrder(order.Id, MarketSymbol));
+                    LogUnexpectedError($"Halting while order {botContext.CurrentOrderData.ClientOrderId} on {MarketSymbol}, whose placement is unknown, may be live; the next session looks it up");
+                    return;
                 }
-                catch (ApiException e)
+
+                for (var attempt = 1; IsOpenOnExchange(botContext.CurrentOrderData); attempt++)
                 {
-                    LogError($"Cancelling order {order.Id} to halt failed: {e.ApiErrorType} {e.Message}");
-                    //e.g. OrderNotOpen: it filled, so its fills are fetched and booked
-                    await HandleApiException(e);
+                    var order = botContext.CurrentOrderData;
+                    var refused = false;
+
+                    LogMessage($"Halting: cancelling order {order.Id}");
+                    try
+                    {
+                        await ExecuteOrderFunction(async () => await exchange.CancelOrder(order.Id, MarketSymbol));
+                    }
+                    catch (ApiException e)
+                    {
+                        LogError($"Cancelling order {order.Id} to halt failed: {e.ApiErrorType} {e.Message}");
+                        refused = e.ApiErrorType == ApiErrorType.Unauthorized;
+                        //e.g. OrderNotOpen: it filled, so its fills are fetched and booked
+                        await HandleApiException(e);
+                    }
+
+                    if (!IsOpenOnExchange(botContext.CurrentOrderData))
+                        break;
+
+                    if (refused || attempt == HaltCancelAttempts)
+                    {
+                        LogUnexpectedError($"Halting with order {order.Id} on {MarketSymbol} still open");
+                        break;
+                    }
+
+                    await Task.Delay(HaltCancelRetryDelay);
                 }
             }
             catch (Exception e)

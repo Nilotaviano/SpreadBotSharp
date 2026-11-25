@@ -81,6 +81,117 @@ namespace SpreadBot.Tests
             exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Once);
         }
 
+        private static (MockExchange exchange, DataRepository repository, BotContext context) OpenBuy(decimal balance = 0.003m)
+        {
+            var exchange = new MockExchange();
+            exchange.WithMarkets(Symbol);
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            repository.StartConsumingData();
+            var market = new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick, BidRate = 0.00009999m, AskRate = 0.00010101m, LastTradeRate = 0.0001m };
+            var context = new BotContext(Configuration(), market, BotState.BuyOrderActive, 0)
+            {
+                Balance = balance,
+                CurrentOrderData = new OrderData { Id = BuyOrderId, ClientOrderId = BuyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m, Quantity = 30 }
+            };
+            return (exchange, repository, context);
+        }
+
+        private static OrderData CancelledBuy(decimal filled) =>
+            new OrderData { Id = BuyOrderId, ClientOrderId = BuyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m, Quantity = 30, FillQuantity = filled, Proceeds = filled * 0.0001m };
+
+        [TestMethod]
+        public async Task Halt_RetriesACancelThatFailed()
+        {
+            var (exchange, repository, context) = OpenBuy();
+            exchange.Mock
+                .SetupSequence(e => e.CancelOrder(BuyOrderId, Symbol))
+                .ThrowsAsync(new ApiException(ApiErrorType.RetryLater, "server busy"))
+                .ReturnsAsync(CancelledBuy(filled: 0));
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+
+            await bot.Halt();
+
+            exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Exactly(2));
+            Assert.IsNull(context.CurrentOrderData);
+            Assert.AreEqual(BotState.Buying, context.BotState);
+        }
+
+        [TestMethod]
+        public async Task Halt_DoesNotRetryACancelTheExchangeRefusesTheAccountFor()
+        {
+            var (exchange, repository, context) = OpenBuy();
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.Unauthorized, "Invalid API-key"));
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+
+            await bot.Halt();
+
+            exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Once);
+            Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status, "still open, so the next session fetches it");
+        }
+
+        [TestMethod]
+        public async Task Halt_LeavesAnOrderWhosePlacementIsUnknownToTheNextSession()
+        {
+            var (exchange, repository, context) = OpenBuy();
+            context.CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN };
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+
+            await bot.Halt();
+
+            exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            Assert.AreEqual(OrderStatus.UNKNOWN, context.CurrentOrderData.Status);
+        }
+
+        [TestMethod]
+        public async Task HaltedBot_LeftWithNothingToTrade_FinishesWithoutSellingItsDust()
+        {
+            // 9 coins (0.000909 BTC) and 0.0006 BTC are both below the 0.001 minimum, so the booking finishes the bot
+            var (exchange, repository, context) = OpenBuy(balance: 0.0015m);
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ReturnsAsync(CancelledBuy(filled: 9));
+            var unallocated = false;
+            var bot = new Bot(repository, context, _ => unallocated = true, new BotStrategiesFactory(), TestLedger.Empty(repository));
+
+            await bot.Halt();
+
+            Assert.AreEqual(BotState.FinishedWork, context.BotState);
+            Assert.IsTrue(unallocated);
+            Assert.AreEqual(9m, context.HeldAmount, "kept, so it's recorded as dust");
+            exchange.Mock.Verify(e => e.SellMarket(It.IsAny<string>(), It.IsAny<decimal>()), Times.Never);
+        }
+
+        [TestMethod]
+        public void BotRestoredAfterAHalt_IsHalted()
+        {
+            var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Total = 1, Amount = 1 });
+            exchange.WithMarkets(Symbol);
+            exchange.WithTickers(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ReturnsAsync(CancelledBuy(filled: 0));
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            repository.StartConsumingData();
+            var saved = new BotContext(Configuration(), new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 0)
+            {
+                CurrentOrderData = new OrderData { Id = BuyOrderId, ClientOrderId = BuyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m }
+            };
+            var bots = new List<Bot>();
+            var context = new Mock<ICoordinatorContext>();
+            context.Setup(c => c.GetBotCount()).Returns(() => bots.Count);
+            context.Setup(c => c.GetBots()).Returns(() => bots.ToList());
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bots.Add);
+            context.Setup(c => c.GetPreviousSessionContext()).Returns(new PreviousSessionContext { BotContexts = new List<BotContext> { saved } });
+            var settings = new AppSettings { MaxNumberOfBots = 3, ResyncIntervalMs = 600000, TryToRestoreSession = true, SpreadConfigurations = new[] { Configuration() } };
+            var coordinator = new Coordinator(settings, repository, context.Object);
+
+            coordinator.Halt("refused before the restore");
+            coordinator.Start();
+
+            WaitUntil(() => saved.BotState == BotState.Buying && saved.SemaphoreCurrentCount == 1, "the restored bot's buy is cancelled");
+            exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010102m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+            WaitUntil(() => saved.LatestMarketData.AskRate == 0.00010102m && saved.SemaphoreCurrentCount == 1, "the ticker is processed");
+
+            Assert.AreEqual(1, bots.Count);
+            Assert.AreEqual(0, OrderRequests(exchange, nameof(IExchange.BuyLimit)));
+        }
+
         [TestMethod]
         public async Task FatalError_StopsAllocatingAndHaltsTheBots()
         {
