@@ -28,6 +28,7 @@ namespace SpreadBot.Logic
         internal static readonly TimeSpan HaltTimeout = TimeSpan.FromSeconds(60);
         //Under allocationLock
         private bool halted;
+        private DateTime haltRetryUntil;
         private readonly List<Task> haltingBots = new List<Task>();
         //Set once Start's restore is over, so a halt knows every bot it must wait for
         private readonly TaskCompletionSource restoreDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -221,7 +222,7 @@ namespace SpreadBot.Logic
 
                 //Only a restore allocates after a halt: the bot is kept, so it's saved for the next session, but it doesn't trade
                 if (halted)
-                    haltingBots.Add(Task.Run(() => bot.Halt(HaltRetryDeadline())));
+                    haltingBots.Add(Task.Run(() => bot.Halt(haltRetryUntil)));
             }
         }
 
@@ -237,9 +238,10 @@ namespace SpreadBot.Logic
                     return;
 
                 halted = true;
-                var retryUntil = HaltRetryDeadline();
+                //A cancel is up to three requests (cancel, fetch, the fill's trades) of up to 10 s each; one started by then answers within HaltTimeout
+                haltRetryUntil = DateTime.UtcNow + HaltTimeout - TimeSpan.FromSeconds(30);
                 //Off the caller's thread: it may be a bot's failing request, holding the semaphore that bot's halt waits for
-                haltingBots.AddRange(context.GetBots().ToList().Select(bot => Task.Run(() => bot.Halt(retryUntil))));
+                haltingBots.AddRange(context.GetBots().ToList().Select(bot => Task.Run(() => bot.Halt(haltRetryUntil))));
             }
 
             Logger.Instance.LogUnexpectedError($"Halting all trading: {reason}");
@@ -247,16 +249,17 @@ namespace SpreadBot.Logic
             _ = HaltBots();
         }
 
-        //A cancel is up to three requests (cancel, fetch, the fill's trades) of up to 10 s each; one started by then answers within HaltTimeout
-        private static DateTime HaltRetryDeadline() => DateTime.UtcNow + HaltTimeout - TimeSpan.FromSeconds(30);
-
         private async Task HaltBots()
         {
             var deadline = DateTime.UtcNow + HaltTimeout;
             try
             {
                 //A restore in progress can still allocate (and halt) bots; after it, nothing allocates
-                await WaitUntil(restoreDone.Task, deadline);
+                if (!await WaitUntil(restoreDone.Task, deadline))
+                {
+                    Logger.Instance.LogUnexpectedError($"The session restore was still running {HaltTimeout.TotalSeconds}s after the halt; stopping without the bots it allocates");
+                    return;
+                }
 
                 while (true)
                 {

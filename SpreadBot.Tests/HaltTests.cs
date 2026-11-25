@@ -237,7 +237,9 @@ namespace SpreadBot.Tests
             var exchange = new MockExchange(new BalanceData { CurrencyAbbreviation = "BTC", Total = 1, Amount = 1 });
             exchange.WithMarkets(Symbol);
             exchange.WithTickers(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
-            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ReturnsAsync(CancelledBuy(filled: 0));
+            // The restored bot's cancel answers only once released, so the halt must still be waiting for it
+            var cancelAnswer = new TaskCompletionSource<OrderData>(TaskCreationOptions.RunContinuationsAsynchronously);
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).Returns(cancelAnswer.Task);
             var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
             repository.StartConsumingData();
             var saved = new BotContext(Configuration(), new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 0)
@@ -256,13 +258,16 @@ namespace SpreadBot.Tests
             coordinator.Halt("refused before the restore");
             coordinator.Start();
 
+            WaitUntil(() => OrderRequests(exchange, nameof(IExchange.CancelOrder)) == 1, "the restored bot cancels its buy");
+            Assert.IsFalse(coordinator.Halted.Wait(TimeSpan.FromMilliseconds(200)), "the halt waits for the restored bot");
+            cancelAnswer.SetResult(CancelledBuy(filled: 0));
+            Assert.IsTrue(coordinator.Halted.Wait(TimeSpan.FromSeconds(2)), "and completes once it's done");
             WaitUntil(() => saved.BotState == BotState.Buying && saved.SemaphoreCurrentCount == 1, "the restored bot's buy is cancelled");
             exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010102m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
             WaitUntil(() => saved.LatestMarketData.AskRate == 0.00010102m && saved.SemaphoreCurrentCount == 1, "the ticker is processed");
 
             Assert.AreEqual(1, bots.Count);
             Assert.AreEqual(0, OrderRequests(exchange, nameof(IExchange.BuyLimit)));
-            Assert.IsTrue(coordinator.Halted.Wait(TimeSpan.FromSeconds(2)), "the halt waits for the restored bot");
         }
 
         [TestMethod]
