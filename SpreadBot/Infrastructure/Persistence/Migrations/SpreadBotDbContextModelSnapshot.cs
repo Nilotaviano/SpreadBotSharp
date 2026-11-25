@@ -95,6 +95,56 @@ namespace SpreadBot.Infrastructure.Persistence.Migrations
                     b.ToTable("Dust", (string)null);
                 });
 
+            modelBuilder.Entity("SpreadBot.Infrastructure.Persistence.EquitySnapshotRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BaseMarket")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Bots")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("TotalValue")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Unallocated")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BaseMarket", "At");
+
+                    b.ToTable("EquitySnapshots", (string)null);
+                });
+
+            modelBuilder.Entity("SpreadBot.Infrastructure.Persistence.PushSubscriptionRow", b =>
+                {
+                    b.Property<string>("Endpoint")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Auth")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Categories")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("P256dh")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Endpoint");
+
+                    b.ToTable("PushSubscriptions", (string)null);
+                });
+
             modelBuilder.Entity("SpreadBot.Infrastructure.SpreadConfiguration", b =>
                 {
                     b.Property<int>("Id")

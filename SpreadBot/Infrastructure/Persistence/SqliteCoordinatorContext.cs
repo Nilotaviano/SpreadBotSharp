@@ -215,6 +215,9 @@ namespace SpreadBot.Infrastructure.Persistence
 
         internal int PendingWrites => writes.Count;
 
+        //For read-only queries elsewhere (the dashboard): a context per call, on its own connection
+        internal Func<SpreadBotDbContext> Database => createDb;
+
         internal void Enqueue(Action<SpreadBotDbContext> write)
         {
             //Bots can still change while the process exits; nothing is written after the context is disposed

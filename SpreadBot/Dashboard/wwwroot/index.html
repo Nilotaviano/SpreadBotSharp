@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e131f">
+  <meta name="color-scheme" content="dark light">
+  <title>SpreadBot</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#overview"><img src="/icon-192.png" alt=""><span>SpreadBot</span></a>
+    <span class="pill" id="status-pill">…</span>
+    <span class="exchange" id="exchange"></span>
+    <span class="spacer"></span>
+    <button class="icon-button" id="install" hidden title="Install the app">Install</button>
+    <span class="connection" id="connection" title="Live updates"><span class="dot"></span><span id="connection-text">Connecting</span></span>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3zm0 8h8v-6H3zm10 0h8V11h-8zm0-18v6h8V3z"/></svg><span>Overview</span></a>
+    <a href="#bots" data-tab="bots"><svg viewBox="0 0 24 24"><path d="M12 2a2 2 0 0 1 2 2 2 2 0 0 1-1 1.73V7h4a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3h4V5.73A2 2 0 0 1 10 4a2 2 0 0 1 2-2M9 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3"/></svg><span>Bots</span></a>
+    <a href="#markets" data-tab="markets"><svg viewBox="0 0 24 24"><path d="M3 3h2v16h16v2H3zm4 12 4-5 3 3 5-7 1.6 1.2-6.4 9-3-3-2.8 3.6z"/></svg><span>Markets</span></a>
+    <a href="#activity" data-tab="activity"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 1 1-8.95 10h2.02A7 7 0 1 0 13 5V3m-1 5h1.5v4.25l3.5 2.08-.75 1.23L12 13V8M2 11h7v2H2z"/></svg><span>Activity</span></a>
+    <a href="#history" data-tab="history"><svg viewBox="0 0 24 24"><path d="M4 20h16v2H4zM6 11h3v7H6zm5-4h3v11h-3zm5 6h3v5h-3z"/></svg><span>History</span></a>
+    <a href="#logs" data-tab="logs"><svg viewBox="0 0 24 24"><path d="M4 4h16v2H4zm0 4h10v2H4zm0 4h16v2H4zm0 4h10v2H4z"/></svg><span>Logs</span></a>
+    <a href="#settings" data-tab="settings"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8m8.4 5.3 1.9 1.5-2 3.4-2.3-.9a7.6 7.6 0 0 1-1.7 1l-.4 2.4H12l-.4-2.4a7.6 7.6 0 0 1-1.7-1l-2.3.9-2-3.4 1.9-1.5a7.4 7.4 0 0 1 0-2L5.6 9.8l2-3.4 2.3.9a7.6 7.6 0 0 1 1.7-1L12 3.9h3.8l.4 2.4a7.6 7.6 0 0 1 1.7 1l2.3-.9 2 3.4-1.9 1.5a7.4 7.4 0 0 1 0 2"/></svg><span>Settings</span></a>
+  </nav>
+
+  <main>
+    <section class="view" id="view-overview">
+      <div class="cards" id="overview-money"></div>
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>Equity</h2><span class="muted" id="equity-range">last 7 days</span></div>
+          <div class="chart" id="overview-equity"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Health</h2><span class="muted" id="overview-uptime"></span></div>
+          <div id="overview-health"></div>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>Bots</h2><a href="#bots" class="link">All bots →</a></div>
+          <div id="overview-bots"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Latest activity</h2><a href="#activity" class="link">All →</a></div>
+          <div id="overview-activity"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-bots" hidden>
+      <div class="toolbar">
+        <input type="search" id="bots-search" placeholder="Filter markets… ( / )" autocomplete="off">
+        <div class="segmented" id="bots-state">
+          <button data-value="" class="active">All</button>
+          <button data-value="buying">Buying</button>
+          <button data-value="selling">Selling</button>
+        </div>
+        <select id="bots-sort" aria-label="Sort bots">
+          <option value="market">Market</option>
+          <option value="pnl">Unrealized P&amp;L</option>
+          <option value="held">Time held</option>
+          <option value="spread">Spread</option>
+        </select>
+      </div>
+      <div class="bot-grid" id="bots-list"></div>
+      <div class="panel" id="dust-panel" hidden>
+        <div class="panel-head"><h2>Dust</h2><span class="muted">coins left over, inherited by the next bot on the market</span></div>
+        <div id="dust-list"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-markets" hidden>
+      <div class="toolbar">
+        <input type="search" id="markets-search" placeholder="Filter markets… ( / )" autocomplete="off">
+        <label class="check"><input type="checkbox" id="markets-eligible"> Eligible only</label>
+        <button class="button" id="markets-refresh">Refresh</button>
+        <span class="muted" id="markets-summary"></span>
+      </div>
+      <div class="table-wrap"><table class="table" id="markets-table">
+        <thead><tr>
+          <th data-sort="symbol">Market</th><th data-sort="spread" class="num">Spread</th><th data-sort="volume" class="num">Volume</th>
+          <th data-sort="change" class="num">24 h</th><th data-sort="last" class="num">Last</th><th data-sort="score" class="num">Score</th><th>Verdict</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+
+    <section class="view" id="view-activity" hidden>
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>Live</h2>
+            <div class="segmented small" id="activity-kind">
+              <button data-value="" class="active">All</button><button data-value="fill">Fills</button><button data-value="finished">Finished</button><button data-value="orders">Orders</button>
+            </div>
+          </div>
+          <div id="activity-list" class="feed"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Stored orders</h2>
+            <div class="actions"><input type="search" id="orders-market" placeholder="Market" autocomplete="off"><button class="button" id="orders-export">CSV</button></div>
+          </div>
+          <div class="table-wrap"><table class="table compact" id="orders-table">
+            <thead><tr><th>Recorded</th><th>Market</th><th>Side</th><th>Status</th><th class="num">Filled</th><th class="num">Limit</th><th class="num">Proceeds</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-history" hidden>
+      <div class="toolbar">
+        <div class="segmented" id="history-range">
+          <button data-value="7">7 d</button><button data-value="30" class="active">30 d</button><button data-value="90">90 d</button><button data-value="365">1 y</button>
+        </div>
+        <span class="spacer"></span>
+        <button class="button" id="history-export">Finished bots CSV</button>
+      </div>
+      <div class="cards" id="history-totals"></div>
+      <div class="panel">
+        <div class="panel-head"><h2>Equity</h2><span class="muted">total value per base market</span></div>
+        <div class="chart tall" id="history-equity"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Realized profit per day</h2></div>
+        <div class="chart" id="history-daily"></div>
+      </div>
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>By configuration</h2><span class="muted">strategy comparison</span></div>
+          <div id="history-configurations"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>By market</h2><span class="muted">best and worst</span></div>
+          <div id="history-markets"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Finished bots</h2></div>
+        <div class="table-wrap"><table class="table compact" id="history-bots">
+          <thead><tr><th>Finished</th><th>Market</th><th>Strategy</th><th class="num">Held</th><th class="num">Profit</th><th class="num">Return</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-logs" hidden>
+      <div class="toolbar">
+        <div class="segmented" id="logs-level">
+          <button data-value="" class="active">All</button><button data-value="Error">Errors</button><button data-value="UnexpectedError">Unexpected</button>
+        </div>
+        <input type="search" id="logs-search" placeholder="Search logs… ( / )" autocomplete="off">
+        <label class="check"><input type="checkbox" id="logs-follow" checked> Follow</label>
+      </div>
+      <div class="log" id="logs-list"></div>
+    </section>
+
+    <section class="view" id="view-settings" hidden>
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>Trading</h2></div>
+          <div class="setting">
+            <div><strong>New bots</strong><p class="muted">While paused, no market gets a new bot; running bots carry on.</p></div>
+            <button class="button" id="toggle-allocation">Pause</button>
+          </div>
+          <div class="setting">
+            <div><strong>Resync</strong><p class="muted">Refetch balances, markets, tickers and open orders from the exchange now.</p></div>
+            <button class="button" id="resync">Resync</button>
+          </div>
+          <div class="setting danger">
+            <div><strong>Halt</strong><p class="muted">Stops all trading for good: cancels every open order, saves the session, and the bot exits. Restart it to trade again.</p></div>
+            <button class="button danger" id="halt">Halt…</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Notifications</h2><span class="muted" id="push-status"></span></div>
+          <div id="push-categories" class="checks"></div>
+          <div class="setting">
+            <div><strong>This device</strong><p class="muted" id="push-device">Push needs the dashboard opened over HTTPS (e.g. tailscale serve) and Dashboard.PublicUrl set.</p></div>
+            <div class="actions"><button class="button" id="push-toggle">Enable</button><button class="button" id="push-test">Test</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>Configurations</h2></div>
+          <div id="settings-configurations"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>This app</h2></div>
+          <div class="setting">
+            <div><strong>Theme</strong></div>
+            <div class="segmented" id="theme"><button data-value="auto">Auto</button><button data-value="dark">Dark</button><button data-value="light">Light</button></div>
+          </div>
+          <div class="setting">
+            <div><strong>Keyboard</strong><p class="muted">1–7 switch sections, / searches, ? shows the shortcuts.</p></div>
+          </div>
+          <div class="setting">
+            <div><strong>Sign out</strong><p class="muted">Forget the access token on this device.</p></div>
+            <button class="button" id="sign-out">Sign out</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="login">
+    <form method="dialog" id="login-form">
+      <img src="/icon-192.png" alt="" class="login-icon">
+      <h2>SpreadBot</h2>
+      <p class="muted">Paste the access token from <code>dashboard-secrets.json</code>, next to the bot's settings file.</p>
+      <input type="password" id="login-token" placeholder="Access token" autocomplete="current-password" required>
+      <p class="error" id="login-error"></p>
+      <button class="button primary" type="submit">Sign in</button>
+    </form>
+  </dialog>
+
+  <dialog id="confirm">
+    <form method="dialog" id="confirm-form">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <label class="muted" id="confirm-label"></label>
+      <input id="confirm-input" autocomplete="off">
+      <p class="error" id="confirm-error"></p>
+      <div class="actions"><button class="button" type="button" id="confirm-cancel">Cancel</button><button class="button danger" id="confirm-ok" type="submit">Confirm</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="bot-detail" class="drawer">
+    <div class="drawer-head"><h2 id="detail-title"></h2><button class="icon-button" id="detail-close" aria-label="Close">✕</button></div>
+    <div id="detail-body"></div>
+  </dialog>
+
+  <dialog id="help">
+    <h2>Shortcuts</h2>
+    <dl class="shortcuts">
+      <dt>1 – 7</dt><dd>Overview, Bots, Markets, Activity, History, Logs, Settings</dd>
+      <dt>/</dt><dd>Search in the current section</dd>
+      <dt>r</dt><dd>Reload the current section's data</dd>
+      <dt>?</dt><dd>This help</dd>
+      <dt>Esc</dt><dd>Close dialogs</dd>
+    </dl>
+    <form method="dialog"><button class="button">Close</button></form>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

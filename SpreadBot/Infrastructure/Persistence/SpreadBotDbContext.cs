@@ -21,6 +21,8 @@ namespace SpreadBot.Infrastructure.Persistence
         public DbSet<BotRow> Bots => Set<BotRow>();
         public DbSet<OrderData> Orders => Set<OrderData>();
         public DbSet<DustRow> Dust => Set<DustRow>();
+        public DbSet<EquitySnapshotRow> EquitySnapshots => Set<EquitySnapshotRow>();
+        public DbSet<PushSubscriptionRow> PushSubscriptions => Set<PushSubscriptionRow>();
 
         protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
         {
@@ -88,6 +90,19 @@ namespace SpreadBot.Infrastructure.Persistence
                 dust.ToTable("Dust");
                 dust.HasKey(d => d.MarketSymbol);
             });
+
+            modelBuilder.Entity<EquitySnapshotRow>(snapshot =>
+            {
+                snapshot.ToTable("EquitySnapshots");
+                snapshot.HasKey(s => s.Id);
+                snapshot.HasIndex(s => new { s.BaseMarket, s.At });
+            });
+
+            modelBuilder.Entity<PushSubscriptionRow>(subscription =>
+            {
+                subscription.ToTable("PushSubscriptions");
+                subscription.HasKey(s => s.Endpoint);
+            });
         }
 
         private class UtcDateTimeConverter : ValueConverter<DateTime, DateTime>
@@ -130,6 +145,31 @@ namespace SpreadBot.Infrastructure.Persistence
     {
         public string MarketSymbol { get; set; }
         public decimal Amount { get; set; }
+    }
+
+    /// <summary>
+    /// The dashboard's equity curve: what a base market's money was worth, sampled every few minutes.
+    /// </summary>
+    internal class EquitySnapshotRow
+    {
+        public long Id { get; set; }
+        public DateTime At { get; set; }
+        public string BaseMarket { get; set; }
+        public decimal TotalValue { get; set; }
+        public decimal Unallocated { get; set; }
+        public int Bots { get; set; }
+    }
+
+    /// <summary>
+    /// A browser that asked the dashboard for push notifications, and which kinds (comma-separated categories).
+    /// </summary>
+    internal class PushSubscriptionRow
+    {
+        public string Endpoint { get; set; }
+        public string P256dh { get; set; }
+        public string Auth { get; set; }
+        public string Categories { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 
     /// <summary>

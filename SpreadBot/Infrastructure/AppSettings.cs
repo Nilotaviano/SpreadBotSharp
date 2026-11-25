@@ -21,6 +21,8 @@ namespace SpreadBot.Infrastructure
         public int ResyncIntervalMs { get; set; }
         //The SQLite database with the bots, their orders and dust; a relative path is relative to the settings file
         public string DatabasePath { get; set; } = "spreadbot.db";
+        //Read at startup only
+        public Dashboard.DashboardSettings Dashboard { get; set; } = new Dashboard.DashboardSettings();
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 

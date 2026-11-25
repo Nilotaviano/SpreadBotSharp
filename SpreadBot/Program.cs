@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
+using SpreadBot.Dashboard;
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges.Ccxt;
 using SpreadBot.Infrastructure.Persistence;
@@ -75,9 +76,14 @@ namespace SpreadBot
             var coordinator = new Coordinator(appSettings, dataRepository, coordinatorContext);
             coordinator.Start();
 
+            await using var dashboard = await StartDashboard(appSettings, Path.GetDirectoryName(appSettingsPath), dataRepository, coordinator, coordinatorContext);
+
             //Enter stops the bot; so does a halt, once the bots have cancelled their orders
             var stopRequested = Task.Run(Console.ReadLine);
             var halted = await Task.WhenAny(stopRequested, coordinator.Halted) == coordinator.Halted;
+
+            if (halted && dashboard != null)
+                await dashboard.AnnounceHalt(coordinator.HaltReason);
 
             coordinator.Dispose();
             exchange.Dispose();
@@ -89,6 +95,27 @@ namespace SpreadBot
 
             //Nonzero, so whatever supervises the process sees that it stopped on an error
             return halted ? 1 : 0;
+        }
+
+        //Off unless enabled; the bot runs on without it if it can't start
+        private static async Task<DashboardHost> StartDashboard(AppSettings appSettings, string settingsDirectory, DataRepository dataRepository, Coordinator coordinator, SqliteCoordinatorContext coordinatorContext)
+        {
+            if (appSettings.Dashboard?.Enabled != true)
+                return null;
+
+            try
+            {
+                var secrets = DashboardSecrets.LoadOrCreate(settingsDirectory);
+                var dashboard = DashboardHost.Create(appSettings.Dashboard, secrets, appSettings, dataRepository, coordinator, coordinatorContext, coordinatorContext.Database);
+                await dashboard.StartAsync();
+                Logger.Instance.LogMessage($"Dashboard on {appSettings.Dashboard.Url}; its access token is in {Path.Combine(settingsDirectory, DashboardSecrets.FileName)}");
+                return dashboard;
+            }
+            catch (Exception e)
+            {
+                Logger.Instance.LogUnexpectedError($"The dashboard didn't start; the bot runs without it: {e}");
+                return null;
+            }
         }
 
         private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
