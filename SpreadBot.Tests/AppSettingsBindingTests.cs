@@ -17,6 +17,7 @@ namespace SpreadBot.Tests
   ""ApiSecret"": ""secret"",
   ""TryToRestoreSession"": true,
   ""MaxNumberOfBots"": 3,
+  ""BlacklistedMarkets"": [ ""NMR"", ""XYZ/BTC"" ],
   ""ResyncIntervalMs"": 60000,
   ""ExchangeId"": ""kucoin"",
   ""UseSandbox"": true,
@@ -55,6 +56,7 @@ namespace SpreadBot.Tests
             Assert.AreEqual("secret", settings.ApiSecret);
             Assert.IsTrue(settings.TryToRestoreSession);
             Assert.AreEqual(3, settings.MaxNumberOfBots);
+            CollectionAssert.AreEqual(new[] { "NMR", "XYZ/BTC" }, settings.BlacklistedMarkets.ToArray());
             Assert.AreEqual(60000, settings.ResyncIntervalMs);
             Assert.AreEqual("kucoin", settings.ExchangeId);
             Assert.IsTrue(settings.UseSandbox);
@@ -114,12 +116,13 @@ namespace SpreadBot.Tests
             var settings = Bind(SettingsJson);
             var reloadedRaised = false;
             settings.Reloaded += (sender, e) => reloadedRaised = true;
-            const string updatedJson = @"{ ""ApiKey"": ""other-key"", ""MaxNumberOfBots"": 7, ""SpreadConfigurations"": [ { ""BaseMarket"": ""USDT"", ""AllocatedAmountOfBaseCurrency"": 25.5 } ] }";
+            const string updatedJson = @"{ ""ApiKey"": ""other-key"", ""MaxNumberOfBots"": 7, ""BlacklistedMarkets"": [ ""ABC"" ], ""SpreadConfigurations"": [ { ""BaseMarket"": ""USDT"", ""AllocatedAmountOfBaseCurrency"": 25.5 } ] }";
 
             settings.Reload(JsonConvert.DeserializeObject<AppSettings>(updatedJson));
 
             Assert.IsTrue(reloadedRaised);
             Assert.AreEqual(7, settings.MaxNumberOfBots);
+            CollectionAssert.AreEqual(new[] { "ABC" }, settings.BlacklistedMarkets.ToArray());
             var usdt = settings.SpreadConfigurations.Single();
             Assert.AreEqual("USDT", usdt.BaseMarket);
             Assert.AreEqual(25.5m, usdt.AllocatedAmountOfBaseCurrency);

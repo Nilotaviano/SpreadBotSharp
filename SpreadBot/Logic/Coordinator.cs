@@ -18,6 +18,7 @@ namespace SpreadBot.Logic
         private readonly DataRepository dataRepository;
         private readonly ICoordinatorContext context;
         private readonly BalanceLedger balanceLedger;
+        private readonly MarketFilters marketFilters;
         private readonly Guid guid;
         private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
@@ -44,6 +45,7 @@ namespace SpreadBot.Logic
             this.dataRepository = dataRepository;
             this.context = context;
             this.balanceLedger = new BalanceLedger(dataRepository, context);
+            this.marketFilters = new MarketFilters(appSettings);
             this.guid = Guid.NewGuid();
 
             this.appSettings.Reloaded += AppSettings_Reloaded;
@@ -118,8 +120,8 @@ namespace SpreadBot.Logic
         /// <summary>
         /// Why <paramref name="market"/> can't get a bot of <paramref name="configuration"/>, or null if it can (balance and bot slots aside).
         /// </summary>
-        public static string WhyNotAllocatable(MarketData market, SpreadConfiguration configuration) =>
-            ViabilityRejection(market) ?? ConfigurationRejection(market, configuration);
+        public string WhyNotAllocatable(MarketData market, SpreadConfiguration configuration) =>
+            marketFilters.Rejection(market, configuration);
 
         public void Start()
         {
@@ -225,7 +227,7 @@ namespace SpreadBot.Logic
 
                 foreach (var market in orderedMarkets)
                 {
-                    if (ViabilityRejection(market) != null)
+                    if (marketFilters.ViabilityRejection(market) != null)
                         continue;
 
                     // Optimization for stop looking for markets if is not possible to allocate any configuration
@@ -355,18 +357,6 @@ namespace SpreadBot.Logic
             return task.IsCompleted;
         }
 
-        private static string ViabilityRejection(MarketData market)
-        {
-            if (!string.IsNullOrWhiteSpace(market.Notice))
-                return $"notice: {market.Notice}";
-            if (market.Status != EMarketStatus.Online)
-                return "offline";
-            //The strategies can't quote a market without a tick, so its bot would hold a slot and its balance forever
-            if (!(market.PriceTick > 0))
-                return "no price tick";
-            return null;
-        }
-
         private void ReportBalance()
         {
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
@@ -380,7 +370,7 @@ namespace SpreadBot.Logic
 
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
-            var rejection = ConfigurationRejection(marketData, spreadConfiguration);
+            var rejection = marketFilters.Rejection(marketData, spreadConfiguration);
             if (rejection == null)
                 return true;
 
@@ -389,21 +379,6 @@ namespace SpreadBot.Logic
                 Logger.Instance.LogMessage($"Market {marketData.Symbol}: {rejection}");
 
             return false;
-        }
-
-        private static string ConfigurationRejection(MarketData market, SpreadConfiguration configuration)
-        {
-            if (market.LastTradeRate < configuration.MinimumPrice)
-                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
-            if (market.SpreadPercentage < configuration.MinimumSpreadPercentage)
-                return $"spread {market.SpreadPercentage:0.###}% below the minimum {configuration.MinimumSpreadPercentage}%";
-            if (market.QuoteVolume < configuration.MinimumQuoteVolume)
-                return $"volume {market.QuoteVolume:0.####} below the minimum {configuration.MinimumQuoteVolume}";
-            if (market.PercentChange > configuration.MaxPercentChangeFromPreviousDay)
-                return $"up {market.PercentChange:0.##}% in 24 h, above the maximum {configuration.MaxPercentChangeFromPreviousDay}%";
-            if (configuration.AvoidTokenizedSecurities && market.IsTokenizedSecurity.GetValueOrDefault())
-                return "a tokenized security";
-            return null;
         }
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)

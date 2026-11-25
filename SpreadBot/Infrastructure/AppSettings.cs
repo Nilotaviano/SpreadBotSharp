@@ -18,6 +18,8 @@ namespace SpreadBot.Infrastructure
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
+        //Coins (NMR) or markets (NMR/BTC), in any case, that get no bot
+        public IEnumerable<string> BlacklistedMarkets { get; set; }
         public int ResyncIntervalMs { get; set; }
         //The SQLite database with the bots, their orders and dust; a relative path is relative to the settings file
         public string DatabasePath { get; set; } = "spreadbot.db";
@@ -31,6 +33,7 @@ namespace SpreadBot.Infrastructure
             //No reason to reload ApiKey and ApiSecret atm
 
             MaxNumberOfBots = newSettings.MaxNumberOfBots;
+            BlacklistedMarkets = newSettings.BlacklistedMarkets;
             SpreadConfigurations = newSettings.SpreadConfigurations;
 
             Reloaded?.Invoke(this, EventArgs.Empty);

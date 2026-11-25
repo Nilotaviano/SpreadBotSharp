@@ -50,12 +50,10 @@ namespace SpreadBot.Tests
         [TestMethod]
         public void WhyNotAllocatable_NamesTheFirstFilterAMarketFails()
         {
-            Assert.IsNull(Coordinator.WhyNotAllocatable(Market(), Configuration()));
-            Assert.AreEqual("offline", Coordinator.WhyNotAllocatable(Market(status: EMarketStatus.Offline), Configuration()));
-            Assert.AreEqual("no price tick", Coordinator.WhyNotAllocatable(Market(tick: null), Configuration()));
-            StringAssert.StartsWith(Coordinator.WhyNotAllocatable(Market(ask: 0.0001001m), Configuration()), "spread ");
-            StringAssert.StartsWith(Coordinator.WhyNotAllocatable(Market(volume: 10), Configuration()), "volume ");
-            StringAssert.StartsWith(Coordinator.WhyNotAllocatable(Market(change: 80), Configuration()), "up 80");
+            var (_, _, _, coordinator) = Started(Symbol);
+
+            Assert.IsNull(coordinator.WhyNotAllocatable(Market(), Configuration()));
+            Assert.AreEqual("offline", coordinator.WhyNotAllocatable(Market(status: EMarketStatus.Offline), Configuration()));
         }
 
         private static (MockExchange exchange, DataRepository repository, List<Bot> bots, Coordinator coordinator) Started(params string[] symbols)

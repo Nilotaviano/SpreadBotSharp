@@ -89,6 +89,19 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void DoesNotAllocate_ABlacklistedMarket()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC", "XYZ/BTC");
+            var bots = new List<Bot>();
+            var settings = Settings(Configuration(0.3m));
+            settings.BlacklistedMarkets = new[] { "NMR" };
+
+            new Coordinator(settings, repository, InMemoryContext(bots).Object).Start();
+
+            Assert.AreEqual("XYZ/BTC", bots.Single().MarketSymbol);
+        }
+
+        [TestMethod]
         public void DoesNotAllocate_AMarketWithoutAPriceTick()
         {
             var exchange = new MockExchange(Balance("BTC", 1, 1));
