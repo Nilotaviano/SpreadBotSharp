@@ -157,6 +157,12 @@ namespace SpreadBot.Infrastructure
             saveDataTPSController.Start();
         }
 
+        public void Save()
+        {
+            saveDataTPSController.Stop();
+            SaveData();
+        }
+
         private void SaveData()
         {
             contextSemaphore.Wait();

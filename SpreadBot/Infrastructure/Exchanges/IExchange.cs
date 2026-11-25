@@ -1,4 +1,5 @@
-﻿using SpreadBot.Models.Repository;
+﻿using SpreadBot.Models;
+using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -34,6 +35,12 @@ namespace SpreadBot.Infrastructure.Exchanges
         /// Raised when a stream failed or reconnected, so updates may have been missed and state must be refetched.
         /// </summary>
         void OnStreamInterrupted(Action callback);
+
+        /// <summary>
+        /// Raised when the exchange refuses the account itself (invalid or revoked credentials, missing permissions, a suspended
+        /// account, a restricted location): no retry helps until someone acts. The failing call still throws it as usual.
+        /// </summary>
+        void OnFatalError(Action<ApiException> callback);
 
         //Snapshots
         Task<IReadOnlyList<BalanceData>> GetBalances();

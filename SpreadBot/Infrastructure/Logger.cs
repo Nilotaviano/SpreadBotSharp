@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Infrastructure
@@ -45,10 +46,27 @@ namespace SpreadBot.Infrastructure
             pendingLogs.Add(new Log() { LogLevel = LogLevel.UnexpectedError, Content = message });
         }
 
+        /// <summary>
+        /// Waits, at most <paramref name="timeout"/>, until everything logged so far is written, e.g. before the process exits
+        /// </summary>
+        public void Flush(TimeSpan timeout)
+        {
+            //Not disposed: after a timeout the consumer may still set it
+            var written = new ManualResetEventSlim();
+            pendingLogs.Add(new Log() { Written = written });
+            written.Wait(timeout);
+        }
+
         private void ConsumePendingLogs()
         {
             foreach (var log in pendingLogs.GetConsumingEnumerable())
             {
+                if (log.Written != null)
+                {
+                    log.Written.Set();
+                    continue;
+                }
+
                 switch (log.LogLevel)
                 {
                     case LogLevel.Message:
@@ -83,6 +101,8 @@ namespace SpreadBot.Infrastructure
         {
             public LogLevel LogLevel { get; set; }
             public string Content { get; set; }
+            //A flush marker rather than a log
+            public ManualResetEventSlim Written { get; set; }
         }
 
         private enum LogLevel

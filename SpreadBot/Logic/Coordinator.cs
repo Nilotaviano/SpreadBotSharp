@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SpreadBot.Logic
 {
@@ -22,6 +23,12 @@ namespace SpreadBot.Logic
 
         //Allocation decisions read the bots and balances, so allocating and unallocating must not interleave
         private readonly object allocationLock = new object();
+
+        //How long a halt waits for the bots to cancel their orders
+        internal static readonly TimeSpan HaltTimeout = TimeSpan.FromSeconds(30);
+        //Under allocationLock
+        private bool halted;
+        private readonly TaskCompletionSource haltCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfiguration { get; } = new ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>>();
 
@@ -52,8 +59,16 @@ namespace SpreadBot.Logic
                 configurationsByBaseMarket = regrouped;
         }
 
+        /// <summary>
+        /// Completes once a halt has stopped the bots (or <see cref="HaltTimeout"/> passed).
+        /// </summary>
+        public Task Halted => haltCompleted.Task;
+
         public void Start()
         {
+            //First, so restoring bots can already halt
+            dataRepository.Exchange.OnFatalError(error => Halt($"{error.ApiErrorType}: {error.Message}"));
+
             if (appSettings.TryToRestoreSession)
                 RestorePreviousSession();
 
@@ -127,7 +142,7 @@ namespace SpreadBot.Logic
 
         private void EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas, List<Bot> allocatedBots)
         {
-            if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
+            if (halted || context.GetBotCount() >= appSettings.MaxNumberOfBots)
                 return;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
@@ -193,6 +208,53 @@ namespace SpreadBot.Logic
             {
                 context.AddBot(bot);
                 Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Unallocated balance: {balanceLedger.UnallocatedBaseBalance(bot.BaseMarket)}{bot.BaseMarket}");
+
+                //Only a restore allocates after a halt: the bot is kept, so it's saved for the next session, but it doesn't trade
+                if (halted)
+                    _ = bot.Halt();
+            }
+        }
+
+        /// <summary>
+        /// Stops trading for good: no bot is allocated from now on, and every bot stops and cancels its open order. The bots stay
+        /// allocated with what they hold, so the saved session resumes them. <see cref="Halted"/> completes once they're done.
+        /// </summary>
+        public void Halt(string reason)
+        {
+            List<Bot> bots;
+            lock (allocationLock)
+            {
+                if (halted)
+                    return;
+
+                halted = true;
+                bots = context.GetBots().ToList();
+            }
+
+            Logger.Instance.LogUnexpectedError($"Halting all trading: {reason}");
+
+            //Off the caller's thread: it may be a bot's failing request, holding the semaphore that bot's halt waits for
+            _ = Task.Run(() => HaltBots(bots));
+        }
+
+        private async Task HaltBots(List<Bot> bots)
+        {
+            try
+            {
+                var halting = Task.WhenAll(bots.Select(bot => bot.Halt()));
+
+                if (await Task.WhenAny(halting, Task.Delay(HaltTimeout)) == halting)
+                    await halting;
+                else
+                    Logger.Instance.LogUnexpectedError($"Bots still halting after {HaltTimeout.TotalSeconds}s; stopping without them");
+            }
+            catch (Exception e)
+            {
+                Logger.Instance.LogUnexpectedError($"Error while halting the bots: {e}");
+            }
+            finally
+            {
+                haltCompleted.TrySetResult();
             }
         }
 

@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SpreadBot.Infrastructure.Exchanges.Ccxt;
+using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Generic;
@@ -340,6 +341,68 @@ namespace SpreadBot.Tests
             WaitUntil(() => exchange.Invocations.Count(i => i.Method.Name == nameof(ccxt.Exchange.WatchOrders)) >= 5, "the stream retries a few times");
 
             Assert.AreEqual(0, Volatile.Read(ref interruptions));
+        }
+
+        [TestMethod]
+        public async Task RequestRefusedForTheAccount_RaisesAFatalError()
+        {
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(It.IsAny<bool?>(), It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
+            exchange.Setup(e => e.FetchBalance(It.IsAny<IDictionary<string, object>>())).ThrowsAsync(new ccxt.AuthenticationError("binance {\"code\":-2015,\"msg\":\"Invalid API-key, IP, or permissions for action.\"}"));
+            using var adapter = new CcxtExchange(exchange.Object);
+            ApiException fatal = null;
+            adapter.OnFatalError(error => fatal = error);
+            await adapter.Setup(new[] { "BTC" });
+
+            var thrown = await Assert.ThrowsExactlyAsync<ApiException>(() => adapter.GetBalances());
+
+            Assert.AreEqual(ApiErrorType.Unauthorized, thrown.ApiErrorType);
+            Assert.AreSame(thrown, fatal);
+        }
+
+        [TestMethod]
+        public async Task StreamRefusedForTheAccount_RaisesAFatalError()
+        {
+            // The private streams' listen key is refused once the API key is revoked
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(It.IsAny<bool?>(), It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC")));
+            exchange.Setup(e => e.WatchBalance(It.IsAny<IDictionary<string, object>>())).ThrowsAsync(new ccxt.AuthenticationError("binance {\"code\":-2015}"));
+            using var adapter = new CcxtExchange(exchange.Object) { StreamRetryDelay = TimeSpan.FromSeconds(10) };
+            var fatalErrors = 0;
+            adapter.OnFatalError(_ => Interlocked.Increment(ref fatalErrors));
+
+            await adapter.Setup(new[] { "BTC" });
+
+            WaitUntil(() => Volatile.Read(ref fatalErrors) == 1, "the refused stream raises a fatal error");
+        }
+
+        [TestMethod]
+        public async Task OrderRefusedForTheMarket_ReportsItOfflineWithoutAFatalError()
+        {
+            // A token this account may not trade: the other markets still trade, and no bot should be allocated on it again
+            var exchange = Exchange();
+            WithIdleStreams(exchange);
+            exchange.Setup(e => e.loadMarkets(It.IsAny<bool?>(), It.IsAny<IDictionary<string, object>>())).Returns(Markets(Market("NMR/BTC"), Market("ETH/BTC")));
+            exchange
+                .Setup(e => e.CreateOrder("NMR/BTC", "limit", "buy", It.IsAny<double>(), It.IsAny<double?>(), It.IsAny<IDictionary<string, object>>()))
+                .ThrowsAsync(new ccxt.PermissionDenied("binance {\"code\":-2010,\"msg\":\"This symbol is not permitted for this account.\"}"));
+            using var adapter = new CcxtExchange(exchange.Object);
+            var fatalErrors = 0;
+            adapter.OnFatalError(_ => fatalErrors++);
+            var reported = new List<MarketData>();
+            adapter.OnMarketData(markets => reported.AddRange(markets));
+            await adapter.Setup(new[] { "BTC" });
+
+            var thrown = await Assert.ThrowsExactlyAsync<ApiException>(() => adapter.BuyLimit("NMR/BTC", 10, 0.0001m));
+
+            Assert.AreEqual(ApiErrorType.MarketOffline, thrown.ApiErrorType);
+            Assert.AreEqual(0, fatalErrors);
+            Assert.AreEqual(EMarketStatus.Offline, reported.Single(m => m.Symbol == "NMR/BTC").Status, "reported right away");
+            var markets = (await adapter.GetMarkets()).ToDictionary(m => m.Symbol);
+            Assert.AreEqual(EMarketStatus.Offline, markets["NMR/BTC"].Status, "and by every resync from then on");
+            Assert.AreEqual(EMarketStatus.Online, markets["ETH/BTC"].Status);
         }
     }
 }

@@ -87,6 +87,8 @@ namespace SpreadBot.Tests
             Assert.AreEqual(ApiErrorType.RetryLater, CcxtExchange.ToApiException(new ccxt.RequestTimeout("binance timed out")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.Unauthorized, CcxtExchange.ToApiException(new ccxt.AuthenticationError("binance Invalid API-key")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.Unauthorized, CcxtExchange.ToApiException(new ccxt.PermissionDenied("binance not permitted")).ApiErrorType);
+            Assert.AreEqual(ApiErrorType.MarketOffline, CcxtExchange.ToApiException(new ccxt.PermissionDenied("binance {\"code\":-2010,\"msg\":\"This symbol is not permitted for this account.\"}")).ApiErrorType);
+            Assert.AreEqual(ApiErrorType.MarketOffline, CcxtExchange.ToApiException(new ccxt.PermissionDenied("binance {\"code\":-2010,\"msg\":\"This symbol is restricted for this account.\"}")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.MarketOffline, CcxtExchange.ToApiException(new ccxt.BadSymbol("binance does not have market symbol")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.MarketOffline, CcxtExchange.ToApiException(new ccxt.MarketClosed("binance Market is closed.")).ApiErrorType);
             Assert.AreEqual(ApiErrorType.RetryLater, CcxtExchange.ToApiException(new ccxt.OperationRejected("binance Server is busy, please wait and try again")).ApiErrorType);

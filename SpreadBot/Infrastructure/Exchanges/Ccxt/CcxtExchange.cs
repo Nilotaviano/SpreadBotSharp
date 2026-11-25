@@ -34,6 +34,9 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         private readonly ConcurrentBag<Action<IEnumerable<MarketData>>> onMarketDataCallbacks = new ConcurrentBag<Action<IEnumerable<MarketData>>>();
         private readonly ConcurrentBag<Action<OrderData>> onOrderCallbacks = new ConcurrentBag<Action<OrderData>>();
         private readonly ConcurrentBag<Action> onStreamInterruptedCallbacks = new ConcurrentBag<Action>();
+        private readonly ConcurrentBag<Action<ApiException>> onFatalErrorCallbacks = new ConcurrentBag<Action<ApiException>>();
+        //Markets the exchange won't let this account trade, reported Offline from then on so no bot is allocated on them again
+        private readonly ConcurrentDictionary<string, bool> restrictedSymbols = new ConcurrentDictionary<string, bool>();
 
         private HashSet<string> quoteCurrencies = new HashSet<string>();
         //Spot markets of the quote currencies, active or not, so a halt or delisting reaches MarketsData as Offline
@@ -147,6 +150,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         public void OnMarketData(Action<IEnumerable<MarketData>> callback) => onMarketDataCallbacks.Add(callback);
         public void OnOrder(Action<OrderData> callback) => onOrderCallbacks.Add(callback);
         public void OnStreamInterrupted(Action callback) => onStreamInterruptedCallbacks.Add(callback);
+        public void OnFatalError(Action<ApiException> callback) => onFatalErrorCallbacks.Add(callback);
 
         public async Task<IReadOnlyList<BalanceData>> GetBalances()
         {
@@ -333,7 +337,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             }
             catch (ccxt.BaseError e)
             {
-                throw ToApiException(e);
+                throw Fail(e, marketSymbol);
             }
             //ccxt's fetch wraps only HttpRequestException/WebException/HttpListenerException; a timeout, a broken response stream
             //or a response ccxt can't parse escapes as is
@@ -369,7 +373,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 }
                 catch (Exception e)
                 {
-                    Logger.Instance.LogUnexpectedError($"Stream callback failed for {typeof(T).Name}: {e}");
+                    Logger.Instance.LogUnexpectedError($"Exchange callback failed for {typeof(T).Name}: {e}");
                 }
             }
         }
@@ -419,6 +423,10 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                     }
                     catch (Exception e) when (!streams.IsCancellationRequested)
                     {
+                        //e.g. the private streams' listen key is refused when the API key is revoked
+                        if (e is ccxt.BaseError error)
+                            Fail(error);
+
                         interrupted = true;
                         reportOnFirstUpdate = false;
                         Logger.Instance.LogError($"{name} stream failed, retrying in {StreamRetryDelay.TotalSeconds}s: {e.Message}");
@@ -440,7 +448,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
-        private static async Task<T> Call<T>(Func<Task<T>> request)
+        private async Task<T> Call<T>(Func<Task<T>> request)
         {
             try
             {
@@ -448,7 +456,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             }
             catch (ccxt.BaseError e)
             {
-                throw ToApiException(e);
+                throw Fail(e);
             }
             //ccxt's fetch wraps only HttpRequestException/WebException/HttpListenerException; a timeout or a broken response stream
             //is what its RequestTimeout/NetworkError would be
@@ -456,6 +464,26 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             {
                 throw new ApiException(ApiErrorType.RetryLater, $"{e.GetType().Name}: {e.Message}");
             }
+        }
+
+        /// <summary>
+        /// Maps the error and acts on what it says about the account: one that stops it from trading is raised to
+        /// <see cref="OnFatalError"/>, and a market it may not trade (<paramref name="marketSymbol"/>) is reported Offline.
+        /// </summary>
+        private ApiException Fail(ccxt.BaseError error, string marketSymbol = null)
+        {
+            var exception = ToApiException(error);
+
+            if (marketSymbol != null && IsMarketRestriction(error) && restrictedSymbols.TryAdd(marketSymbol, true))
+            {
+                Logger.Instance.LogError($"{exchange.id} won't let this account trade {marketSymbol}; reporting it offline: {error.Message}");
+                Dispatch(onMarketDataCallbacks, (IEnumerable<MarketData>)new[] { new MarketData { Symbol = marketSymbol, Status = EMarketStatus.Offline } });
+            }
+
+            if (exception.ApiErrorType == ApiErrorType.Unauthorized)
+                Dispatch(onFatalErrorCallbacks, exception);
+
+            return exception;
         }
 
         internal static ApiException ToApiException(ccxt.BaseError error)
@@ -469,6 +497,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
                 ccxt.RateLimitExceeded => ApiErrorType.Throttled,
                 ccxt.DDoSProtection => ApiErrorType.Throttled,
                 ccxt.NetworkError => ApiErrorType.RetryLater,
+                //A market this account may not trade, not the account: the other markets still trade
+                ccxt.PermissionDenied when IsMarketRestriction(error) => ApiErrorType.MarketOffline,
                 ccxt.AuthenticationError => ApiErrorType.Unauthorized,
                 ccxt.BadSymbol => ApiErrorType.MarketOffline,
                 ccxt.MarketClosed => ApiErrorType.MarketOffline,
@@ -487,6 +517,13 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
         //ccxt's own checks before sending: "amount of X must be greater than minimum amount precision of ..." when the amount truncates
         //to zero, and Binance's "Price * QTY is zero or less", which ccxt rewords as "order cost = amount * price is zero or less"
         private static readonly string[] BelowMinimumMarkers = { "NOTIONAL", "LOT_SIZE", "minimum amount precision", "amount * price is zero or less", "Price * QTY is zero or less" };
+
+        //Binance's per-symbol refusals (e.g. a token the account's region or quiz status doesn't allow), which ccxt maps to PermissionDenied
+        private static readonly string[] MarketRestrictionMarkers = { "This symbol is restricted for this account", "This symbol is not permitted for this account" };
+
+        private static bool IsMarketRestriction(ccxt.BaseError error) =>
+            error is ccxt.PermissionDenied && error.Message != null
+            && MarketRestrictionMarkers.Any(marker => error.Message.Contains(marker, StringComparison.OrdinalIgnoreCase));
 
         private static bool IsBelowMinimum(string message) =>
             message != null && BelowMinimumMarkers.Any(marker => message.Contains(marker, StringComparison.OrdinalIgnoreCase));
@@ -540,7 +577,7 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             return new MarketData
             {
                 Symbol = market.symbol,
-                Status = market.active == false ? EMarketStatus.Offline : EMarketStatus.Online,
+                Status = market.active == false || restrictedSymbols.ContainsKey(market.symbol) ? EMarketStatus.Offline : EMarketStatus.Online,
                 MinTradeSize = ToDecimal(market.limits?.amount?.min),
                 PriceTick = price.HasValue ? PriceTick(price.Value) : null,
                 CreatedAt = ToDateTime(market.created)

@@ -2,6 +2,7 @@
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Logic;
+using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Generic;
@@ -22,6 +23,7 @@ namespace SpreadBot.Tests
         public Action<IEnumerable<MarketData>> OnMarketData { get; private set; }
         public Action<OrderData> OnOrder { get; private set; }
         public Action OnStreamInterrupted { get; private set; }
+        public Action<ApiException> OnFatalError { get; private set; }
 
         public MockExchange(params BalanceData[] balances)
         {
@@ -37,6 +39,7 @@ namespace SpreadBot.Tests
             Mock.Setup(e => e.OnMarketData(It.IsAny<Action<IEnumerable<MarketData>>>())).Callback((Action<IEnumerable<MarketData>> a) => OnMarketData = a);
             Mock.Setup(e => e.OnOrder(It.IsAny<Action<OrderData>>())).Callback((Action<OrderData> a) => OnOrder = a);
             Mock.Setup(e => e.OnStreamInterrupted(It.IsAny<Action>())).Callback((Action a) => OnStreamInterrupted = a);
+            Mock.Setup(e => e.OnFatalError(It.IsAny<Action<ApiException>>())).Callback((Action<ApiException> a) => OnFatalError = a);
         }
 
         public IExchange Object => Mock.Object;

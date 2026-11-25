@@ -30,6 +30,9 @@ namespace SpreadBot.Logic
 
         private volatile bool orderRequestInFlight;
 
+        //Set by Halt: the bot places nothing more
+        private volatile bool halted;
+
         //Only read and written under BotContext.Semaphore
         private MarketData lastProcessedMarketData;
 
@@ -347,6 +350,9 @@ namespace SpreadBot.Logic
         {
             botContext.LatestMarketData = marketData;
 
+            if (halted)
+                return;
+
             //The strategy would place another order while this one may be live
             if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN)
             {
@@ -425,6 +431,45 @@ namespace SpreadBot.Logic
         //Only such a report settles an order whose placement is unknown: adopting anything less would let the strategy place another order
         private static bool ShowsOrderState(OrderData order) =>
             order?.Id != null && (order.Status == OrderStatus.OPEN || order.Status == OrderStatus.CLOSED);
+
+        /// <summary>
+        /// Stops trading for good, for a halt (see <see cref="Coordinator.Halt"/>): market data is ignored from now on and the open
+        /// order, if any, is cancelled and its fills booked. The bot stays allocated with what it holds, so the saved session resumes it.
+        /// An order whose placement is unknown has no id to cancel; the next session looks it up.
+        /// </summary>
+        public async Task Halt()
+        {
+            //Before waiting: messages queued behind the one being processed must not trade either
+            halted = true;
+
+            await botContext.Semaphore.WaitAsync();
+            try
+            {
+                var order = botContext.CurrentOrderData;
+                if (botContext.BotState == BotState.FinishedWork || order?.Status != OrderStatus.OPEN || order.Id == null)
+                    return;
+
+                LogMessage($"Halting: cancelling order {order.Id}");
+                try
+                {
+                    await ExecuteOrderFunction(async () => await exchange.CancelOrder(order.Id, MarketSymbol));
+                }
+                catch (ApiException e)
+                {
+                    LogError($"Cancelling order {order.Id} to halt failed: {e.ApiErrorType} {e.Message}");
+                    //e.g. OrderNotOpen: it filled, so its fills are fetched and booked
+                    await HandleApiException(e);
+                }
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedError($"Error while halting: {e}");
+            }
+            finally
+            {
+                botContext.Semaphore.Release();
+            }
+        }
 
         private async Task ExecuteOrderFunction(Func<Task<OrderData>> func)
         {
@@ -569,7 +614,8 @@ namespace SpreadBot.Logic
             await RunFinishStep("cleaning dust", async () =>
             {
                 var coinsToSell = Math.Min(HeldAmount, maxCoinsToSell ?? HeldAmount);
-                if (coinsToSell > 0)
+                //Halted, it sells nothing: the coins stay held and are recorded as dust
+                if (coinsToSell > 0 && !halted)
                     await CleanDust(coinsToSell);
             });
             await RunFinishStep("unallocating", () =>

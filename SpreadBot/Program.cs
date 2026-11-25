@@ -12,7 +12,7 @@ namespace SpreadBot
 {
     class Program
     {
-        static async Task Main(string[] args)
+        static async Task<int> Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
             string settingsFileName = "appsettings.json";
@@ -75,10 +75,18 @@ namespace SpreadBot
             var coordinator = new Coordinator(appSettings, dataRepository, coordinatorContext);
             coordinator.Start();
 
-            Console.ReadLine();
+            //Enter stops the bot; so does a halt, once the bots have cancelled their orders
+            var stopRequested = Task.Run(Console.ReadLine);
+            var halted = await Task.WhenAny(stopRequested, coordinator.Halted) == coordinator.Halted;
 
             coordinator.Dispose();
             exchange.Dispose();
+            coordinatorContext.Save();
+            Logger.Instance.LogMessage(halted ? "Exiting after a halt" : "Exiting");
+            Logger.Instance.Flush(TimeSpan.FromSeconds(5));
+
+            //Nonzero, so whatever supervises the process sees that it stopped on an error
+            return halted ? 1 : 0;
         }
 
         private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
