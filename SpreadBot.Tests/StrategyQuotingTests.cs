@@ -141,6 +141,27 @@ namespace SpreadBot.Tests
             exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.Once);
         }
 
+        /// <summary>
+        /// The bot's buy improved a 99-tick bid to 100 ticks and is now the best bid. With the ask at 103 ticks the ticker's spread is
+        /// 2.91%, below the 3% minimum, but the market the bot bid into had 3.88%: cancelling would only place the same buy again.
+        /// </summary>
+        [TestMethod]
+        [DataRow(103, false)]
+        [DataRow(102, true)] // 3 ticks over 102 is 2.94% even without the bot's improvement
+        public async Task BuyOrderActive_JudgesTheSpreadWithoutItsOwnImprovement_WhileItIsTheBestBid(int askTicks, bool expectCancel)
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 3 };
+            var context = new BotContext(configuration, Market(ask: askTicks * MockExchange.Tick), BotState.BuyOrderActive, 0)
+            {
+                CurrentOrderData = new OrderData { Id = "buy-1", Status = OrderStatus.OPEN, Limit = Bid }
+            };
+
+            await new SpreadBuyOrderActiveStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+
+            exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), expectCancel ? Times.Once() : Times.Never());
+        }
+
         [TestMethod]
         public async Task BuyOrderActive_SendsNoCancel_WhileItsMarketIsOffline()
         {

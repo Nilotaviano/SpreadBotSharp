@@ -21,7 +21,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             if (botContext.LatestMarketData.Status != EMarketStatus.Online)
                 return;
 
-            if (marketFilters.BuyingRejection(botContext.LatestMarketData, botContext.spreadConfiguration) != null)
+            if (marketFilters.BuyingRejection(botContext.LatestMarketData, botContext.spreadConfiguration, botContext.CurrentOrderData.Limit) != null)
             {
                 //Cancel order and exit: back in Buying, the bot leaves the market
                 await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id, botContext.LatestMarketData.Symbol));

@@ -62,12 +62,12 @@ namespace SpreadBot.Tests
             var oneSided = Market();
             oneSided.AskRate = null;
 
-            Assert.IsNull(filters.BuyingRejection(unquoted, Configuration()), "waits for a quote");
+            Assert.IsNull(filters.BuyingRejection(unquoted, Configuration(), restingBuyLimit: null), "waits for a quote");
             Assert.AreEqual("no bid or no ask", filters.Rejection(unquoted, Configuration()), "allocation never takes it");
-            StringAssert.StartsWith(filters.BuyingRejection(pumping, Configuration()), "up 80");
-            Assert.AreEqual("no bid or no ask", filters.BuyingRejection(oneSided, Configuration()));
-            StringAssert.StartsWith(filters.BuyingRejection(Market(ask: 0.0001001m), Configuration()), "spread ");
-            Assert.IsNull(filters.BuyingRejection(Market(volume: 10), Configuration()), "entry only");
+            StringAssert.StartsWith(filters.BuyingRejection(pumping, Configuration(), restingBuyLimit: null), "up 80");
+            Assert.AreEqual("no bid or no ask", filters.BuyingRejection(oneSided, Configuration(), restingBuyLimit: null));
+            StringAssert.StartsWith(filters.BuyingRejection(Market(ask: 0.0001001m), Configuration(), restingBuyLimit: null), "spread ");
+            Assert.IsNull(filters.BuyingRejection(Market(volume: 10), Configuration(), restingBuyLimit: null), "entry only");
             StringAssert.StartsWith(filters.Rejection(Market(volume: 10), Configuration()), "volume ");
         }
 

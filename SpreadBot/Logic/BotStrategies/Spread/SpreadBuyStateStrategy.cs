@@ -19,7 +19,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             var market = botContext.LatestMarketData;
 
             //The market no longer passes the filters it was allocated on (e.g. its spread narrowed, or it started pumping)
-            if (marketFilters.BuyingRejection(market, botContext.spreadConfiguration) is string rejection)
+            if (marketFilters.BuyingRejection(market, botContext.spreadConfiguration, restingBuyLimit: null) is string rejection)
             {
                 Logger.Instance.LogMessage($"Bot {botContext.Guid}: leaving {market.Symbol}: {rejection}");
                 await finishWorkCallBack();
