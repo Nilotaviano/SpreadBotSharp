@@ -232,7 +232,7 @@ namespace SpreadBot.Logic
             //doesn't list, so an order there can't be cancelled or looked up, and finishing the bot would fail
             if (restoredOrder?.Status is OrderStatus.OPEN or OrderStatus.UNKNOWN)
             {
-                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange, so its order {restoredOrder.Id ?? restoredOrder.ClientOrderId} can't be cancelled or looked up there; check it on the exchange (a delisting usually cancels a market's open orders). The bot keeps its allocation and its bot slot, and finishing it fails the same way");
+                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange, so its order {restoredOrder.Id ?? restoredOrder.ClientOrderId} can't be cancelled or looked up there; check it on the exchange (a delisting usually cancels a market's open orders). The bot keeps its allocation and its bot slot, finishing it fails the same way, and every resync logs failing to fetch the order");
                 return;
             }
 
