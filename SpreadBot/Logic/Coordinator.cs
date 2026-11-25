@@ -25,9 +25,12 @@ namespace SpreadBot.Logic
         private readonly object allocationLock = new object();
 
         //How long a halt waits for the bots to cancel their orders
-        internal static readonly TimeSpan HaltTimeout = TimeSpan.FromSeconds(30);
+        internal static readonly TimeSpan HaltTimeout = TimeSpan.FromSeconds(60);
         //Under allocationLock
         private bool halted;
+        private readonly List<Task> haltingBots = new List<Task>();
+        //Set once Start's restore is over, so a halt knows every bot it must wait for
+        private readonly TaskCompletionSource restoreDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource haltCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfiguration { get; } = new ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>>();
@@ -69,8 +72,15 @@ namespace SpreadBot.Logic
             //First, so restoring bots can already halt
             dataRepository.Exchange.OnFatalError(error => Halt($"{error.ApiErrorType}: {error.Message}"));
 
-            if (appSettings.TryToRestoreSession)
-                RestorePreviousSession();
+            try
+            {
+                if (appSettings.TryToRestoreSession)
+                    RestorePreviousSession();
+            }
+            finally
+            {
+                restoreDone.TrySetResult();
+            }
 
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
@@ -211,46 +221,59 @@ namespace SpreadBot.Logic
 
                 //Only a restore allocates after a halt: the bot is kept, so it's saved for the next session, but it doesn't trade
                 if (halted)
-                    _ = bot.Halt(HaltRetryDeadline());
+                    haltingBots.Add(Task.Run(() => bot.Halt(HaltRetryDeadline())));
             }
         }
 
         /// <summary>
-        /// Stops trading for good: no bot is allocated from now on, and every bot stops and cancels its open order. The bots stay
-        /// allocated with what they hold, so the saved session resumes them. <see cref="Halted"/> completes once they're done.
+        /// Stops trading for good: no bot is allocated from now on, and every bot stops and cancels its open order. The bots keep their
+        /// state and allocation, so the saved session resumes them. <see cref="Halted"/> completes once they're done.
         /// </summary>
         public void Halt(string reason)
         {
-            List<Bot> bots;
             lock (allocationLock)
             {
                 if (halted)
                     return;
 
                 halted = true;
-                bots = context.GetBots().ToList();
+                var retryUntil = HaltRetryDeadline();
+                //Off the caller's thread: it may be a bot's failing request, holding the semaphore that bot's halt waits for
+                haltingBots.AddRange(context.GetBots().ToList().Select(bot => Task.Run(() => bot.Halt(retryUntil))));
             }
 
             Logger.Instance.LogUnexpectedError($"Halting all trading: {reason}");
 
-            //Off the caller's thread: it may be a bot's failing request, holding the semaphore that bot's halt waits for
-            _ = Task.Run(() => HaltBots(bots));
+            _ = HaltBots();
         }
 
-        //Half the timeout, so a cancel started by then has the rest to answer (requests time out in 10 s)
-        private static DateTime HaltRetryDeadline() => DateTime.UtcNow + HaltTimeout / 2;
+        //A cancel is up to three requests (cancel, fetch, the fill's trades) of up to 10 s each; one started by then answers within HaltTimeout
+        private static DateTime HaltRetryDeadline() => DateTime.UtcNow + HaltTimeout - TimeSpan.FromSeconds(30);
 
-        private async Task HaltBots(List<Bot> bots)
+        private async Task HaltBots()
         {
+            var deadline = DateTime.UtcNow + HaltTimeout;
             try
             {
-                var retryUntil = HaltRetryDeadline();
-                var halting = Task.WhenAll(bots.Select(bot => bot.Halt(retryUntil)));
+                //A restore in progress can still allocate (and halt) bots; after it, nothing allocates
+                await WaitUntil(restoreDone.Task, deadline);
 
-                if (await Task.WhenAny(halting, Task.Delay(HaltTimeout)) == halting)
-                    await halting;
-                else
-                    Logger.Instance.LogUnexpectedError($"Bots still halting after {HaltTimeout.TotalSeconds}s; stopping without them");
+                while (true)
+                {
+                    Task[] halting;
+                    lock (allocationLock)
+                        halting = haltingBots.ToArray();
+
+                    if (!await WaitUntil(Task.WhenAll(halting), deadline))
+                    {
+                        Logger.Instance.LogUnexpectedError($"Bots still halting after {HaltTimeout.TotalSeconds}s; stopping without them");
+                        return;
+                    }
+
+                    lock (allocationLock)
+                        if (haltingBots.Count == halting.Length)
+                            return;
+                }
             }
             catch (Exception e)
             {
@@ -260,6 +283,18 @@ namespace SpreadBot.Logic
             {
                 haltCompleted.TrySetResult();
             }
+        }
+
+        private static async Task<bool> WaitUntil(Task task, DateTime deadline)
+        {
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining > TimeSpan.Zero && await Task.WhenAny(task, Task.Delay(remaining)) == task)
+            {
+                await task;
+                return true;
+            }
+
+            return task.IsCompleted;
         }
 
         private bool IsViableMarket(MarketData market)

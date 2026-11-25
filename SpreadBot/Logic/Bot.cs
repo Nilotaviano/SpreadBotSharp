@@ -472,7 +472,15 @@ namespace SpreadBot.Logic
                     catch (ApiException e) when (e.ApiErrorType == ApiErrorType.OrderNotOpen)
                     {
                         //It filled: its fills are fetched and booked. The other arms are about failed placements and could finish the bot
-                        await HandleApiException(e);
+                        try
+                        {
+                            await HandleApiException(e);
+                        }
+                        catch (Exception lookupError)
+                        {
+                            LogError($"Fetching order {order.Id}, which is no longer open, to halt failed: {lookupError.Message}");
+                            refused = lookupError is ApiException { ApiErrorType: ApiErrorType.Unauthorized };
+                        }
                     }
                     catch (Exception e)
                     {

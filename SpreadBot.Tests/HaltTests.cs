@@ -144,6 +144,51 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task Halt_CancelRejectedForAPlacementReason_DoesNotFinishTheBot()
+        {
+            // HandleApiException's InsufficientFunds arm would finish the bot and drop the open order
+            var (exchange, repository, context) = OpenBuy();
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.InsufficientFunds, "odd answer"));
+            var unallocated = false;
+            var bot = new Bot(repository, context, _ => unallocated = true, new BotStrategiesFactory(), TestLedger.Empty(repository));
+
+            await bot.Halt(retryUntil: DateTime.UtcNow);
+
+            Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
+            Assert.IsFalse(unallocated);
+            Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status);
+        }
+
+        [TestMethod]
+        public async Task Halt_OrderThatAlreadyFilled_IsFetchedAndBooked()
+        {
+            var (exchange, repository, context) = OpenBuy();
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.OrderNotOpen, "Unknown order sent."));
+            exchange.Mock.Setup(e => e.GetOrder(BuyOrderId, Symbol)).ReturnsAsync(CancelledBuy(filled: 20));
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+
+            await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
+
+            Assert.AreEqual(BotState.Bought, context.BotState);
+            Assert.AreEqual(20m, context.HeldAmount);
+            exchange.Mock.Verify(e => e.SellLimit(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Never);
+        }
+
+        [TestMethod]
+        public async Task Halt_FetchRefusedForTheAccount_StopsRetrying()
+        {
+            var (exchange, repository, context) = OpenBuy();
+            exchange.Mock.Setup(e => e.CancelOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.OrderNotOpen, "Unknown order sent."));
+            exchange.Mock.Setup(e => e.GetOrder(BuyOrderId, Symbol)).ThrowsAsync(new ApiException(ApiErrorType.Unauthorized, "Invalid API-key"));
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository)) { HaltCancelRetryDelay = TimeSpan.FromMilliseconds(10) };
+
+            await bot.Halt(retryUntil: DateTime.UtcNow.AddMinutes(1));
+
+            exchange.Mock.Verify(e => e.CancelOrder(BuyOrderId, Symbol), Times.Once);
+            Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status);
+        }
+
+        [TestMethod]
         public async Task Halt_DoesNotRetryACancelTheExchangeRefusesTheAccountFor()
         {
             var (exchange, repository, context) = OpenBuy();
@@ -217,6 +262,7 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(1, bots.Count);
             Assert.AreEqual(0, OrderRequests(exchange, nameof(IExchange.BuyLimit)));
+            Assert.IsTrue(coordinator.Halted.Wait(TimeSpan.FromSeconds(2)), "the halt waits for the restored bot");
         }
 
         [TestMethod]
