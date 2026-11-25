@@ -7,8 +7,8 @@ namespace SpreadBot.Logic
 {
     /// <summary>
     /// The filters a market must pass for a configuration's bot: the Coordinator allocates only on markets that pass, and a bot
-    /// still buying leaves a market that stops passing. The thresholds are the configuration's own, so a running bot keeps those it
-    /// was allocated with; the blacklist is read from the settings live, so a reload applies on the next market update.
+    /// still buying leaves a market that stops passing most of them. The thresholds are the configuration's own, so a running bot
+    /// keeps those it was allocated with; the blacklist is read from the settings live, so a reload applies on the next market update.
     /// </summary>
     public class MarketFilters
     {
@@ -24,16 +24,17 @@ namespace SpreadBot.Logic
         /// (balance and bot slots aside).
         /// </summary>
         public string Rejection(MarketData market, SpreadConfiguration configuration) =>
-            ViabilityRejection(market) ?? ConfigurationRejection(market, configuration) ?? QuoteRejection(market, configuration);
+            ViabilityRejection(market) ?? EntryRejection(market, configuration) ?? PumpRejection(market, configuration) ?? QuoteRejection(market, configuration);
 
         /// <summary>
-        /// Why a bot of <paramref name="configuration"/> that is still buying should leave <paramref name="market"/>, or null. Until
-        /// the market shows a bid or an ask (a restored bot's, before its first ticker) its quote isn't judged, since
-        /// <see cref="Rejection"/> rejects a market without both.
+        /// Why a bot of <paramref name="configuration"/> that is still buying should leave <paramref name="market"/>, or null. The
+        /// entry filters (price, volume, tokenized security) aren't judged: a market drifting around one would make the bot leave and
+        /// get allocated again on every trade. Until the market shows a bid or an ask (a restored bot's, before its first ticker) its
+        /// quote isn't judged either, since <see cref="Rejection"/> rejects a market without both.
         /// </summary>
         public string BuyingRejection(MarketData market, SpreadConfiguration configuration) =>
             ViabilityRejection(market)
-            ?? ConfigurationRejection(market, configuration)
+            ?? PumpRejection(market, configuration)
             ?? (market.BidRate > 0 || market.AskRate > 0 ? QuoteRejection(market, configuration) : null);
 
         /// <summary>
@@ -58,6 +59,22 @@ namespace SpreadBot.Logic
                 string.Equals(entry, market.Target, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(entry, market.Symbol, StringComparison.OrdinalIgnoreCase)) == true;
 
+        private static string EntryRejection(MarketData market, SpreadConfiguration configuration)
+        {
+            if (market.LastTradeRate < configuration.MinimumPrice)
+                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
+            if (market.QuoteVolume < configuration.MinimumQuoteVolume)
+                return $"volume {market.QuoteVolume:0.####} below the minimum {configuration.MinimumQuoteVolume}";
+            if (configuration.AvoidTokenizedSecurities && market.IsTokenizedSecurity.GetValueOrDefault())
+                return "a tokenized security";
+            return null;
+        }
+
+        private static string PumpRejection(MarketData market, SpreadConfiguration configuration) =>
+            market.PercentChange > configuration.MaxPercentChangeFromPreviousDay
+                ? $"up {market.PercentChange:0.##}% in 24 h, above the maximum {configuration.MaxPercentChangeFromPreviousDay}%"
+                : null;
+
         private static string QuoteRejection(MarketData market, SpreadConfiguration configuration)
         {
             //Its spread reads as zero, which a minimum of zero would let through
@@ -65,19 +82,6 @@ namespace SpreadBot.Logic
                 return "no bid or no ask";
             if (market.SpreadPercentage < configuration.MinimumSpreadPercentage)
                 return $"spread {market.SpreadPercentage:0.###}% below the minimum {configuration.MinimumSpreadPercentage}%";
-            return null;
-        }
-
-        private static string ConfigurationRejection(MarketData market, SpreadConfiguration configuration)
-        {
-            if (market.LastTradeRate < configuration.MinimumPrice)
-                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
-            if (market.QuoteVolume < configuration.MinimumQuoteVolume)
-                return $"volume {market.QuoteVolume:0.####} below the minimum {configuration.MinimumQuoteVolume}";
-            if (market.PercentChange > configuration.MaxPercentChangeFromPreviousDay)
-                return $"up {market.PercentChange:0.##}% in 24 h, above the maximum {configuration.MaxPercentChangeFromPreviousDay}%";
-            if (configuration.AvoidTokenizedSecurities && market.IsTokenizedSecurity.GetValueOrDefault())
-                return "a tokenized security";
             return null;
         }
     }

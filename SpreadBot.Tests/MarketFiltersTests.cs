@@ -50,7 +50,7 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public void BuyingRejection_JudgesEverythingButTheQuote_UntilTheMarketShowsOne()
+        public void BuyingRejection_SkipsTheEntryFilters_AndTheQuoteUntilTheMarketShowsOne()
         {
             var filters = Filters();
             var unquoted = Market();
@@ -67,6 +67,8 @@ namespace SpreadBot.Tests
             StringAssert.StartsWith(filters.BuyingRejection(pumping, Configuration()), "up 80");
             Assert.AreEqual("no bid or no ask", filters.BuyingRejection(oneSided, Configuration()));
             StringAssert.StartsWith(filters.BuyingRejection(Market(ask: 0.0001001m), Configuration()), "spread ");
+            Assert.IsNull(filters.BuyingRejection(Market(volume: 10), Configuration()), "entry only");
+            StringAssert.StartsWith(filters.Rejection(Market(volume: 10), Configuration()), "volume ");
         }
 
         [TestMethod]

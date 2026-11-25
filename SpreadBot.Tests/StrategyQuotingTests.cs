@@ -126,11 +126,11 @@ namespace SpreadBot.Tests
         [TestMethod]
         public async Task BuyOrderActive_CancelsItsBuy_WhenTheMarketStopsPassingTheFilters()
         {
-            // Spread and price are fine and the buy is still the best bid, but the volume dropped below the minimum
+            // The spread is fine and the buy is still the best bid, but the market started pumping
             var (repository, exchange) = Repository();
-            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MinimumQuoteVolume = 150 };
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MaxPercentChangeFromPreviousDay = 40 };
             var market = Market(ask: Bid + 3 * MockExchange.Tick);
-            market.QuoteVolume = 10;
+            market.PercentChange = 80;
             var context = new BotContext(configuration, market, BotState.BuyOrderActive, 0)
             {
                 CurrentOrderData = new OrderData { Id = "buy-1", Status = OrderStatus.OPEN, Limit = Bid }
@@ -139,6 +139,32 @@ namespace SpreadBot.Tests
             await new SpreadBuyOrderActiveStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.Once);
+        }
+
+        /// <summary>
+        /// Price and volume only decide allocation: a market drifting around them would make the bot leave and come back on every trade.
+        /// </summary>
+        [TestMethod]
+        [DataRow(BotState.Buying)]
+        [DataRow(BotState.BuyOrderActive)]
+        public async Task BuyingBot_StaysOnAMarketBelowItsEntryMinimums(BotState state)
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MinimumQuoteVolume = 150, MinimumPrice = Bid * 2 };
+            var market = Market(ask: Bid + 3 * MockExchange.Tick);
+            market.QuoteVolume = 10;
+            market.LastTradeRate = Bid;
+            var context = new BotContext(configuration, market, state, 0) { Balance = 0.001m };
+            if (state == BotState.BuyOrderActive)
+                context.CurrentOrderData = new OrderData { Id = "buy-1", Status = OrderStatus.OPEN, Limit = Bid };
+            var finished = false;
+            var strategy = new SpreadStrategy(new BreakEvenSellFloor(), TestStrategies.Filters());
+
+            await strategy.ProcessMarketData(repository, context, PlaceOrder, () => { finished = true; return Task.CompletedTask; });
+
+            Assert.IsFalse(finished);
+            exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>()), state == BotState.Buying ? Times.Once() : Times.Never());
         }
 
         [TestMethod]
