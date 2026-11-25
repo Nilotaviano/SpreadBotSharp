@@ -9,7 +9,7 @@ using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Linq;
-using System.Threading;
+using System.Threading.Tasks;
 
 namespace SpreadBot.Tests
 {
@@ -147,22 +147,62 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public void CurrentOrderThatWasntStored_IsRestoredAsAnExpiredUnknownOrder()
+        public void CurrentOrderNeverRecorded_IsStoredWithTheBot()
         {
-            // Looking it up by client order id is the only safe way on: placing again could duplicate a live order
             var saved = Holding();
-            saved.CurrentOrderData = Sell("sell-lost");
+            saved.CurrentOrderData = Sell("sell-1", filled: 0.1m);
             var context = Context();
 
             context.AddBot(Bot(saved));
             context.Save();
 
             var order = Context().GetPreviousSessionContext().BotContexts.Single().CurrentOrderData;
+            Assert.AreEqual(OrderStatus.OPEN, order.Status);
+            Assert.AreEqual("order-sell-1", order.Id);
+            Assert.AreEqual(0.1m, order.FillQuantity);
+        }
+
+        [TestMethod]
+        public void CurrentOrderTheDatabaseLost_IsRestoredAsAnUnknownOrderSentNow()
+        {
+            // Looking it up by client order id is the only safe way on: placing again could duplicate a live order, and the request may
+            // have been sent just before the restart, so it can only be given up a whole request lifetime from now
+            var context = Context();
+            context.AddBot(Bot(Holding()));
+            context.Save();
+            using (var db = Db())
+            {
+                db.Bots.Single().CurrentOrderClientId = "sell-lost";
+                db.SaveChanges();
+            }
+
+            var before = DateTime.UtcNow;
+            var order = Context().GetPreviousSessionContext().BotContexts.Single().CurrentOrderData;
 
             Assert.AreEqual(OrderStatus.UNKNOWN, order.Status);
             Assert.AreEqual("sell-lost", order.ClientOrderId);
             Assert.AreEqual(Symbol, order.MarketSymbol);
-            Assert.IsTrue(DateTime.UtcNow - order.CreatedAt > TimeSpan.FromDays(1));
+            Assert.IsTrue(order.CreatedAt >= before);
+        }
+
+        [TestMethod]
+        public void BotReaddedAfterASnapshotClosedIt_IsOpenAgain()
+        {
+            // A snapshot during a restore can close a restored bot before the restore adds it
+            var saved = Holding();
+            var first = Context();
+            first.AddBot(Bot(saved));
+            first.Save();
+
+            var second = Context();
+            second.Save();
+            using (var db = Db())
+                Assert.IsNotNull(db.Bots.Single().FinishedAt);
+
+            second.AddBot(Bot(saved));
+            second.Save();
+
+            Assert.AreEqual(saved.Guid, Context().GetPreviousSessionContext().BotContexts.Single().Guid);
         }
 
         [TestMethod]
@@ -251,7 +291,8 @@ namespace SpreadBot.Tests
             context.RecordOrder(bot, Sell("sell-1"));
             context.RecordOrder(bot, Sell("sell-1"));
             context.RecordOrder(bot, Sell("sell-1", filled: 0.1m));
-            // Booked without ever being the current order
+            // Applied as the current order and then booked: the same state twice
+            context.RecordOrder(bot, Sell("sell-1", OrderStatus.CLOSED, filled: 0.25m));
             context.RecordOrder(bot, Sell("sell-1", OrderStatus.CLOSED, filled: 0.25m));
             context.Save();
 
@@ -285,15 +326,14 @@ namespace SpreadBot.Tests
 
             // Halfway through a change, as the bot would be while processing a message: its sell is placed but not yet its current order
             saved.Semaphore.Wait();
+            Task saving;
             try
             {
                 context.AddBot(bot);
                 saved.BotState = BotState.SellOrderActive;
-                Thread.Sleep(1500); // past the 1 s save debounce
-                context.Flush();
 
-                using (var db = Db())
-                    Assert.AreEqual(BotState.Bought, db.Bots.Single().State, "the snapshot must wait for the bot to finish its change");
+                saving = Task.Run(context.Save);
+                Assert.IsFalse(saving.Wait(TimeSpan.FromMilliseconds(300)), "the snapshot must wait for the bot to finish its change");
 
                 saved.CurrentOrderData = Sell("sell-1");
             }
@@ -302,7 +342,7 @@ namespace SpreadBot.Tests
                 saved.Semaphore.Release();
             }
 
-            context.Save();
+            Assert.IsTrue(saving.Wait(TimeSpan.FromSeconds(2)));
 
             using var after = Db();
             var row = after.Bots.Single();

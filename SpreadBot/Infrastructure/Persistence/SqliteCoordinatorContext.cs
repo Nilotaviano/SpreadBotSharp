@@ -26,8 +26,9 @@ namespace SpreadBot.Infrastructure.Persistence
         private readonly Func<SpreadBotDbContext> createDb;
         private readonly ConcurrentDictionary<Guid, Bot> allocatedBots = new ConcurrentDictionary<Guid, Bot>();
         private readonly ConcurrentDictionary<string, decimal> dustPerMarket = new ConcurrentDictionary<string, decimal>();
-        //Client order id -> the last state appended, so a state applied twice is stored once
-        private readonly ConcurrentDictionary<string, string> recordedOrderStates = new ConcurrentDictionary<string, string>();
+        //Client order id -> the bot and the last state appended, so a state applied twice is stored once; a bot's entries go when it does
+        private readonly ConcurrentDictionary<string, (Guid bot, string state)> recordedOrderStates = new ConcurrentDictionary<string, (Guid, string)>();
+        private volatile bool disposed;
 
         //A null write is a flush marker: its event is set once everything queued before it is written (or failed)
         private readonly BlockingCollection<(Action<SpreadBotDbContext> write, ManualResetEventSlim written)> writes = new BlockingCollection<(Action<SpreadBotDbContext>, ManualResetEventSlim)>();
@@ -92,7 +93,7 @@ namespace SpreadBot.Infrastructure.Persistence
             {
                 var currentOrder = LatestOrderState(db, row);
                 if (currentOrder != null)
-                    recordedOrderStates[currentOrder.ClientOrderId] = StateKey(currentOrder);
+                    recordedOrderStates[currentOrder.ClientOrderId] = (row.Id, StateKey(currentOrder));
 
                 botContexts.Add(ToBotContext(row, currentOrder));
             }
@@ -115,13 +116,13 @@ namespace SpreadBot.Infrastructure.Persistence
         {
             var market = new MarketData { Symbol = row.MarketSymbol, BidRate = row.BidRate, AskRate = row.AskRate, LastTradeRate = row.LastTradeRate, PriceTick = row.PriceTick };
 
-            //Each state is appended before the snapshot that names it, so this only happens if that write failed: the bot can't know
-            //whether the order is live, which is what an unknown placement is; it's looked up by client order id and dropped only once
-            //the exchange confirms it absent
+            //A row that names an order is written with that order's state, so this means the database lost it. The bot can't know whether
+            //the order is live, which is what an unknown placement is: it's looked up by client order id, and dropped only once the exchange
+            //confirms it absent a whole request lifetime from now, as the request may have been sent just before the restart
             if (row.CurrentOrderClientId != null && currentOrder == null)
             {
                 Logger.Instance.LogUnexpectedError($"Bot {row.Id}'s current order {row.CurrentOrderClientId} wasn't stored; restoring it as an order whose placement is unknown");
-                currentOrder = new OrderData { ClientOrderId = row.CurrentOrderClientId, MarketSymbol = row.MarketSymbol, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc) };
+                currentOrder = new OrderData { ClientOrderId = row.CurrentOrderClientId, MarketSymbol = row.MarketSymbol, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow };
             }
 
             return new BotContext(row.Configuration, market, row.State, row.HeldAmount)
@@ -170,10 +171,11 @@ namespace SpreadBot.Infrastructure.Persistence
             bot.botContext.ContextChanged += BotContext_ContextChanged;
             bot.OrderUpdated += RecordOrder;
 
-            //Right away rather than with the next snapshot: its orders reference it. It hasn't started, so nothing is changing it
-            var row = ToRow(bot.botContext);
-            var configuration = bot.botContext.spreadConfiguration;
-            Enqueue(db => Upsert(db, row, configuration, allocatedAt: DateTime.UtcNow));
+            //Right away rather than with the next snapshot: its orders reference it. It hasn't started, so nothing is changing it.
+            //Allocated, it's open, even if a snapshot taken while it was being restored closed it as a bot this session didn't resume
+            var snapshot = Snapshot(bot.botContext);
+            var allocatedAt = DateTime.UtcNow;
+            Enqueue(db => Upsert(db, snapshot, allocatedAt, reopen: true));
         }
 
         /// <summary>
@@ -192,15 +194,16 @@ namespace SpreadBot.Infrastructure.Persistence
 
             bot.botContext.ContextChanged -= BotContext_ContextChanged;
             bot.OrderUpdated -= RecordOrder;
+            foreach (var order in recordedOrderStates.Where(entry => entry.Value.bot == botId).Select(entry => entry.Key).ToList())
+                recordedOrderStates.TryRemove(order, out _);
 
-            var row = ToRow(bot.botContext);
-            var configuration = bot.botContext.spreadConfiguration;
+            var snapshot = Snapshot(bot.botContext);
             Enqueue(db =>
             {
-                Upsert(db, row, configuration, allocatedAt: finishedAt);
+                Upsert(db, snapshot, allocatedAt: finishedAt, reopen: false);
                 var stored = db.Bots.Find(botId);
                 stored.FinishedAt = finishedAt;
-                stored.Profit = row.Balance - configuration.AllocatedAmountOfBaseCurrency;
+                stored.Profit = snapshot.Row.Balance - snapshot.Configuration.AllocatedAmountOfBaseCurrency;
             });
             RequestSave();
 
@@ -225,14 +228,19 @@ namespace SpreadBot.Infrastructure.Persistence
             written.Wait();
         }
 
-        private void Enqueue(Action<SpreadBotDbContext> write) => writes.Add((write, null));
+        private void Enqueue(Action<SpreadBotDbContext> write)
+        {
+            //Bots can still change while the process exits; nothing is written after the context is disposed
+            if (!disposed)
+                writes.Add((write, null));
+        }
 
         private void BotContext_ContextChanged(object sender, EventArgs e) => RequestSave();
 
         private void RequestSave()
         {
             //An enabled timer is about to save everything anyway
-            if (!saveTimer.Enabled)
+            if (!disposed && !saveTimer.Enabled)
                 saveTimer.Start();
         }
 
@@ -245,25 +253,16 @@ namespace SpreadBot.Infrastructure.Persistence
                     return;
 
                 var state = StateKey(order);
-                if (recordedOrderStates.TryGetValue(order.ClientOrderId, out var recorded) && recorded == state)
+                if (recordedOrderStates.TryGetValue(order.ClientOrderId, out var recorded) && recorded.state == state)
                     return;
 
-                //A closed order is booked once; dropping its entry keeps the map to the orders still in play
-                if (order.Status == OrderStatus.CLOSED)
-                    recordedOrderStates.TryRemove(order.ClientOrderId, out _);
-                else
-                    recordedOrderStates[order.ClientOrderId] = state;
+                recordedOrderStates[order.ClientOrderId] = (bot.Guid, state);
 
                 //A copy: the bot may hold the instance, and the writer stores it later
-                var copy = JsonConvert.DeserializeObject<OrderData>(JsonConvert.SerializeObject(order));
+                var copy = Copy(order);
                 var botId = bot.Guid;
                 var recordedAt = DateTime.UtcNow;
-                Enqueue(db =>
-                {
-                    db.Orders.Add(copy);
-                    db.Entry(copy).Property("BotId").CurrentValue = botId;
-                    db.Entry(copy).Property("RecordedAt").CurrentValue = recordedAt;
-                });
+                Enqueue(db => AddOrder(db, copy, botId, recordedAt));
             }
             catch (Exception e)
             {
@@ -281,7 +280,7 @@ namespace SpreadBot.Infrastructure.Persistence
             {
                 try
                 {
-                    var rows = new List<(BotRow row, SpreadConfiguration configuration)>();
+                    var snapshots = new List<BotSnapshot>();
                     foreach (var bot in allocatedBots.Values)
                     {
                         //Under the bot's own semaphore, so a snapshot never catches a bot halfway through a change (e.g. SellOrderActive without its order)
@@ -290,7 +289,7 @@ namespace SpreadBot.Infrastructure.Persistence
                         {
                             //Finished while this waited: RemoveBot records it
                             if (bot.botContext.BotState != BotState.FinishedWork)
-                                rows.Add((ToRow(bot.botContext), bot.botContext.spreadConfiguration));
+                                snapshots.Add(Snapshot(bot.botContext));
                         }
                         finally
                         {
@@ -303,11 +302,11 @@ namespace SpreadBot.Infrastructure.Persistence
 
                     Enqueue(db =>
                     {
-                        foreach (var (row, configuration) in rows)
-                            Upsert(db, row, configuration, allocatedAt: snapshotAt);
+                        foreach (var snapshot in snapshots)
+                            Upsert(db, snapshot, allocatedAt: snapshotAt, reopen: false);
 
                         //The allocated bots are exactly the ones above: any other row still open is a previous session's bot this one didn't resume
-                        var current = rows.Select(r => r.row.Id).ToHashSet();
+                        var current = snapshots.Select(snapshot => snapshot.Row.Id).ToHashSet();
                         foreach (var stale in db.Bots.Where(b => b.FinishedAt == null).ToList().Where(b => !current.Contains(b.Id) && !allocatedBots.ContainsKey(b.Id)))
                             stale.FinishedAt = snapshotAt;
 
@@ -329,6 +328,15 @@ namespace SpreadBot.Infrastructure.Persistence
             }
         }
 
+        //What's written about a bot, taken on the caller's thread: the writer runs later, while the bot keeps changing
+        private sealed record BotSnapshot(BotRow Row, SpreadConfiguration Configuration, OrderData CurrentOrder);
+
+        private static BotSnapshot Snapshot(BotContext context) =>
+            new BotSnapshot(ToRow(context), context.spreadConfiguration, Copy(context.CurrentOrderData));
+
+        private static OrderData Copy(OrderData order) =>
+            order == null ? null : JsonConvert.DeserializeObject<OrderData>(JsonConvert.SerializeObject(order));
+
         private static BotRow ToRow(BotContext context) => new BotRow
         {
             Id = context.Guid,
@@ -345,15 +353,26 @@ namespace SpreadBot.Infrastructure.Persistence
             PriceTick = context.LatestMarketData.PriceTick
         };
 
-        private void Upsert(SpreadBotDbContext db, BotRow row, SpreadConfiguration configuration, DateTime allocatedAt)
+        private void Upsert(SpreadBotDbContext db, BotSnapshot snapshot, DateTime allocatedAt, bool reopen)
         {
+            var row = snapshot.Row;
             var stored = db.Bots.Find(row.Id);
             if (stored == null)
             {
-                row.ConfigurationId = ConfigurationId(db, configuration);
+                //Before anything else is added: a new configuration is saved at once
+                row.ConfigurationId = ConfigurationId(db, snapshot.Configuration);
                 row.AllocatedAt = allocatedAt;
                 db.Bots.Add(row);
+                StoreCurrentOrder(db, snapshot, allocatedAt);
                 return;
+            }
+
+            StoreCurrentOrder(db, snapshot, allocatedAt);
+
+            if (reopen)
+            {
+                stored.FinishedAt = null;
+                stored.Profit = null;
             }
 
             //A snapshot taken before the bot finished must not overwrite how it ended
@@ -370,6 +389,22 @@ namespace SpreadBot.Infrastructure.Persistence
             stored.AskRate = row.AskRate;
             stored.LastTradeRate = row.LastTradeRate;
             stored.PriceTick = row.PriceTick;
+        }
+
+        //A row that names an order goes with that order's state, so a restore never has to guess it
+        private static void StoreCurrentOrder(SpreadBotDbContext db, BotSnapshot snapshot, DateTime recordedAt)
+        {
+            if (snapshot.CurrentOrder is OrderData order
+                && !db.Orders.Local.Any(o => o.ClientOrderId == order.ClientOrderId)
+                && !db.Orders.Any(o => o.ClientOrderId == order.ClientOrderId))
+                AddOrder(db, order, snapshot.Row.Id, recordedAt);
+        }
+
+        private static void AddOrder(SpreadBotDbContext db, OrderData order, Guid botId, DateTime recordedAt)
+        {
+            db.Orders.Add(order);
+            db.Entry(order).Property("BotId").CurrentValue = botId;
+            db.Entry(order).Property("RecordedAt").CurrentValue = recordedAt;
         }
 
         private static void CloseStoredBot(SpreadBotDbContext db, Guid botId, DateTime finishedAt)
@@ -434,6 +469,7 @@ namespace SpreadBot.Infrastructure.Persistence
 
         public void Dispose()
         {
+            disposed = true;
             saveTimer.Dispose();
             writes.CompleteAdding();
             if (!writer.Wait(TimeSpan.FromSeconds(30)))
