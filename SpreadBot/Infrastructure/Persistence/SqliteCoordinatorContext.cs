@@ -6,6 +6,7 @@ using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -260,7 +261,12 @@ namespace SpreadBot.Infrastructure.Persistence
         }
 
         private static string StateKey(OrderData order) =>
-            order == null ? null : $"{order.Id}|{order.Status}|{order.Quantity}|{order.Limit}|{order.FillQuantity}|{order.Proceeds}|{order.Commission}|{order.CoinCommission}";
+            order == null ? null : string.Join("|", order.Id, order.Status,
+                Normalized(order.Quantity), Normalized(order.Limit), Normalized(order.FillQuantity), Normalized(order.Proceeds), Normalized(order.Commission), Normalized(order.CoinCommission));
+
+        //SQLite gives a decimal back without the trailing zeros it was stored with (1.50 comes back 1.5), and a stored state must
+        //still match the bot's: otherwise every snapshot appends the same state again
+        private static string Normalized(decimal value) => (value / 1.000000000000000000000000000000000m).ToString(CultureInfo.InvariantCulture);
 
         private void WriteSnapshot()
         {

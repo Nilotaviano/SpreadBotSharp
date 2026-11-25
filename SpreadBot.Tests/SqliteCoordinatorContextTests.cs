@@ -164,6 +164,27 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void CurrentOrderWithTrailingZeros_IsStoredOnce()
+        {
+            // 0.30 comes back from SQLite as 0.3; the bot still holds 0.30, and every snapshot compares the two
+            var saved = Holding();
+            saved.BotState = BotState.SellOrderActive;
+            var order = Sell("sell-1", filled: 0.30m);
+            order.Quantity = 0.250m;
+            saved.CurrentOrderData = order;
+            var bot = Bot(saved);
+            var context = Context();
+            context.AddBot(bot);
+
+            context.Save();
+            context.Save();
+            context.Save();
+
+            using var db = Db();
+            Assert.AreEqual(1, db.Orders.Count());
+        }
+
+        [TestMethod]
         public void CurrentOrderRecordedFirst_IsLinkedRatherThanStoredAgain()
         {
             var saved = Holding();
