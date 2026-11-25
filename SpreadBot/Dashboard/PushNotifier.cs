@@ -155,7 +155,10 @@ namespace SpreadBot.Dashboard
             lock (urgent)
             {
                 if (closing)
+                {
+                    Logger.Instance.LogError($"The {category} push notification wasn't sent: the dashboard is stopping");
                     return Task.CompletedTask;
+                }
 
                 urgent.RemoveAll(task => task.IsCompleted);
                 var send = Task.Run(() => SendNow(message));
