@@ -189,7 +189,7 @@ namespace SpreadBot.Tests
             var gate = new ManualResetEventSlim();
             context.Enqueue(_ => gate.Wait());
 
-            SpinWait.SpinUntil(() => context.PendingWrites == 0); // the writer holds the gate
+            Assert.IsTrue(SpinWait.SpinUntil(() => context.PendingWrites == 0, TimeSpan.FromSeconds(2)), "the writer holds the gate");
             var first = Holding(Configuration(BotStrategyType.PatientSpread));
             context.AddBot(Bot(first)); // saves its new configuration midway
             context.Enqueue(_ => throw new InvalidOperationException("the disk is full"));
@@ -221,12 +221,13 @@ namespace SpreadBot.Tests
             var gate = new ManualResetEventSlim();
             context.Enqueue(_ => gate.Wait());
 
-            SpinWait.SpinUntil(() => context.PendingWrites == 0); // the writer holds the gate
+            Assert.IsTrue(SpinWait.SpinUntil(() => context.PendingWrites == 0, TimeSpan.FromSeconds(2)), "the writer holds the gate");
             context.AddBot(bot);
             saved.CurrentOrderData = Sell("sell-1");
             context.RecordOrder(bot, saved.CurrentOrderData);
             var saving = Task.Run(context.Save); // its snapshot and flush marker join the queue
-            Assert.IsTrue(SpinWait.SpinUntil(() => context.PendingWrites == 4, TimeSpan.FromSeconds(2)));
+            //At least: the debounced snapshot the order change requested may join them, in the same batch
+            Assert.IsTrue(SpinWait.SpinUntil(() => context.PendingWrites >= 4, TimeSpan.FromSeconds(2)));
             gate.Set();
             Assert.IsTrue(saving.Wait(TimeSpan.FromSeconds(5)));
 
