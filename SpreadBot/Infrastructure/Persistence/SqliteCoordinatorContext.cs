@@ -28,7 +28,9 @@ namespace SpreadBot.Infrastructure.Persistence
         private readonly ConcurrentDictionary<string, decimal> dustPerMarket = new ConcurrentDictionary<string, decimal>();
         //Client order id -> the bot and the last state appended, so a state applied twice is stored once; a bot's entries go when it does
         private readonly ConcurrentDictionary<string, (Guid bot, string state)> recordedOrderStates = new ConcurrentDictionary<string, (Guid, string)>();
-        private volatile bool disposed;
+        //Guards disposed with every enqueue and timer start, so nothing races Dispose into a completed queue or a disposed timer
+        private readonly object lifecycle = new object();
+        private bool disposed;
 
         //A null write is a flush marker: its event is set once everything queued before it is written (or failed)
         private readonly BlockingCollection<(Action<SpreadBotDbContext> write, ManualResetEventSlim written)> writes = new BlockingCollection<(Action<SpreadBotDbContext>, ManualResetEventSlim)>();
@@ -122,7 +124,19 @@ namespace SpreadBot.Infrastructure.Persistence
             if (row.CurrentOrderClientId != null && currentOrder == null)
             {
                 Logger.Instance.LogUnexpectedError($"Bot {row.Id}'s current order {row.CurrentOrderClientId} wasn't stored; restoring it as an order whose placement is unknown");
-                currentOrder = new OrderData { ClientOrderId = row.CurrentOrderClientId, MarketSymbol = row.MarketSymbol, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow };
+                //Side and size as the bot's state implies, at the largest it could be, so BalanceLedger claims what the order may have brought in
+                var selling = row.State == BotState.Bought || row.State == BotState.SellOrderActive;
+                currentOrder = new OrderData
+                {
+                    ClientOrderId = row.CurrentOrderClientId,
+                    MarketSymbol = row.MarketSymbol,
+                    Status = OrderStatus.UNKNOWN,
+                    CreatedAt = DateTime.UtcNow,
+                    Direction = selling ? OrderDirection.SELL : OrderDirection.BUY,
+                    Type = OrderType.LIMIT,
+                    Quantity = selling ? row.HeldAmount : row.BidRate > 0 ? row.Balance / row.BidRate.Value : 0,
+                    Limit = (selling ? row.AskRate : row.BidRate) ?? 0
+                };
             }
 
             return new BotContext(row.Configuration, market, row.State, row.HeldAmount)
@@ -224,15 +238,21 @@ namespace SpreadBot.Infrastructure.Persistence
         {
             //Not disposed: the writer may still set it if a caller stopped waiting
             var written = new ManualResetEventSlim();
-            writes.Add((null, written));
+            lock (lifecycle)
+            {
+                if (disposed)
+                    return;
+                writes.Add((null, written));
+            }
             written.Wait();
         }
 
         private void Enqueue(Action<SpreadBotDbContext> write)
         {
             //Bots can still change while the process exits; nothing is written after the context is disposed
-            if (!disposed)
-                writes.Add((write, null));
+            lock (lifecycle)
+                if (!disposed)
+                    writes.Add((write, null));
         }
 
         private void BotContext_ContextChanged(object sender, EventArgs e) => RequestSave();
@@ -240,8 +260,9 @@ namespace SpreadBot.Infrastructure.Persistence
         private void RequestSave()
         {
             //An enabled timer is about to save everything anyway
-            if (!disposed && !saveTimer.Enabled)
-                saveTimer.Start();
+            lock (lifecycle)
+                if (!disposed && !saveTimer.Enabled)
+                    saveTimer.Start();
         }
 
         internal void RecordOrder(Bot bot, OrderData order)
@@ -249,7 +270,8 @@ namespace SpreadBot.Infrastructure.Persistence
             //Raised in the middle of the bot's work: failing here must not fail it
             try
             {
-                if (order?.ClientOrderId == null)
+                //Removed while this was raised; its last states went with its final write
+                if (order?.ClientOrderId == null || !allocatedBots.ContainsKey(bot.Guid))
                     return;
 
                 var state = StateKey(order);
@@ -367,8 +389,6 @@ namespace SpreadBot.Infrastructure.Persistence
                 return;
             }
 
-            StoreCurrentOrder(db, snapshot, allocatedAt);
-
             if (reopen)
             {
                 stored.FinishedAt = null;
@@ -378,6 +398,8 @@ namespace SpreadBot.Infrastructure.Persistence
             //A snapshot taken before the bot finished must not overwrite how it ended
             if (stored.FinishedAt != null)
                 return;
+
+            StoreCurrentOrder(db, snapshot, allocatedAt);
 
             stored.State = row.State;
             stored.Balance = row.Balance;
@@ -391,12 +413,21 @@ namespace SpreadBot.Infrastructure.Persistence
             stored.PriceTick = row.PriceTick;
         }
 
-        //A row that names an order goes with that order's state, so a restore never has to guess it
+        //A row that names an order goes with that order's latest state, so a restore never has to guess it, even if recording a state failed
         private static void StoreCurrentOrder(SpreadBotDbContext db, BotSnapshot snapshot, DateTime recordedAt)
         {
-            if (snapshot.CurrentOrder is OrderData order
-                && !db.Orders.Local.Any(o => o.ClientOrderId == order.ClientOrderId)
-                && !db.Orders.Any(o => o.ClientOrderId == order.ClientOrderId))
+            if (!(snapshot.CurrentOrder is OrderData order))
+                return;
+
+            var latest = db.Orders.Local
+                .Where(o => o.ClientOrderId == order.ClientOrderId && db.Entry(o).State == EntityState.Added)
+                .LastOrDefault()
+                ?? db.Orders.AsNoTracking()
+                    .Where(o => o.ClientOrderId == order.ClientOrderId)
+                    .OrderByDescending(o => EF.Property<long>(o, "RecordId"))
+                    .FirstOrDefault();
+
+            if (StateKey(latest) != StateKey(order))
                 AddOrder(db, order, snapshot.Row.Id, recordedAt);
         }
 
@@ -469,9 +500,15 @@ namespace SpreadBot.Infrastructure.Persistence
 
         public void Dispose()
         {
-            disposed = true;
-            saveTimer.Dispose();
-            writes.CompleteAdding();
+            lock (lifecycle)
+            {
+                if (disposed)
+                    return;
+                disposed = true;
+                saveTimer.Dispose();
+                writes.CompleteAdding();
+            }
+
             if (!writer.Wait(TimeSpan.FromSeconds(30)))
                 Logger.Instance.LogError("Timed out writing the last changes to the database");
         }

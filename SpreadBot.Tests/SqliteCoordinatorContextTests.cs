@@ -183,6 +183,48 @@ namespace SpreadBot.Tests
             Assert.AreEqual("sell-lost", order.ClientOrderId);
             Assert.AreEqual(Symbol, order.MarketSymbol);
             Assert.IsTrue(order.CreatedAt >= before);
+            // A Bought bot's order is a sell of what it holds, so BalanceLedger claims what it may have brought in
+            Assert.AreEqual(OrderDirection.SELL, order.Direction);
+            Assert.AreEqual(0.25m, order.Quantity);
+            Assert.AreEqual(0.00010101m, order.Limit);
+        }
+
+        [TestMethod]
+        public void CurrentOrderStateThatWasntRecorded_IsStoredWithTheBot()
+        {
+            // e.g. the batch that recorded it failed: the snapshot stores the state the bot holds
+            var saved = Holding();
+            saved.BotState = BotState.SellOrderActive;
+            var bot = Bot(saved);
+            var context = Context();
+            context.AddBot(bot);
+            context.RecordOrder(bot, Sell("sell-1"));
+            context.Flush();
+
+            saved.CurrentOrderData = Sell("sell-1", filled: 0.1m);
+            context.Save();
+
+            Assert.AreEqual(0.1m, Context().GetPreviousSessionContext().BotContexts.Single().CurrentOrderData.FillQuantity);
+        }
+
+        [TestMethod]
+        public void AfterDispose_BotChangesWriteNothingAndDontThrow()
+        {
+            var saved = Holding();
+            var bot = Bot(saved);
+            var context = Context();
+            context.AddBot(bot);
+            context.Save();
+
+            context.Dispose();
+            saved.BotState = BotState.Buying;
+            context.RecordOrder(bot, Sell("sell-late"));
+            context.Save();
+            context.RemoveBot(saved.Guid);
+
+            using var db = Db();
+            Assert.AreEqual(BotState.Bought, db.Bots.Single().State);
+            Assert.AreEqual(0, db.Orders.Count());
         }
 
         [TestMethod]
