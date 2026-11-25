@@ -16,7 +16,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
         public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
-            if (marketFilters.Rejection(botContext.LatestMarketData, botContext.spreadConfiguration) != null)
+            if (marketFilters.BuyingRejection(botContext.LatestMarketData, botContext.spreadConfiguration) != null)
             {
                 //Cancel order and exit: back in Buying, the bot leaves the market
                 await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id, botContext.LatestMarketData.Symbol));

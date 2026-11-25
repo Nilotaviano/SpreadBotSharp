@@ -138,6 +138,25 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        [DataRow(true, false, 0, true)] // a bid but no ask, even when any spread will do
+        [DataRow(false, false, 0, false)] // no quote yet: the buy keeps resting
+        [DataRow(false, false, 1, false)]
+        public async Task BuyOrderActive_OnAMarketWithoutABidOrAnAsk(bool hasBid, bool hasAsk, int minimumSpreadPercentage, bool expectCancel)
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = minimumSpreadPercentage };
+            var market = new MarketData { Symbol = Symbol, BidRate = hasBid ? Bid : null, AskRate = hasAsk ? Bid + 3 * MockExchange.Tick : null, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
+            var context = new BotContext(configuration, market, BotState.BuyOrderActive, 0)
+            {
+                CurrentOrderData = new OrderData { Id = "buy-1", Status = OrderStatus.OPEN, Limit = Bid }
+            };
+
+            await new SpreadBuyOrderActiveStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+
+            exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), expectCancel ? Times.Once() : Times.Never());
+        }
+
+        [TestMethod]
         public async Task Sell_JoinsTheAsk_WhenTheSpreadIsOneTick()
         {
             var (repository, exchange) = Repository();

@@ -41,7 +41,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             var now = utcNow();
             Watch(market, now);
 
-            //On a market failing the filters the wrapped strategy finishes or cancels the bot's buy anyway
+            //On a market failing the filters the wrapped strategy finishes or cancels the bot's buy anyway, and on one without a quote yet it waits
             var wouldBid = marketFilters.Rejection(market, botContext.spreadConfiguration) == null;
 
             if (wouldBid && !IsCalm(botContext.spreadConfiguration, now))

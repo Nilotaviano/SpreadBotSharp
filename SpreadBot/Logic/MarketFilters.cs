@@ -27,6 +27,14 @@ namespace SpreadBot.Logic
             ViabilityRejection(market) ?? ConfigurationRejection(market, configuration);
 
         /// <summary>
+        /// Why a bot of <paramref name="configuration"/> that is still buying should leave <paramref name="market"/>, or null. Until
+        /// the market shows a bid or an ask (a restored bot's, before its first ticker) only its own state can rule it out, since
+        /// <see cref="Rejection"/> rejects a market without both.
+        /// </summary>
+        public string BuyingRejection(MarketData market, SpreadConfiguration configuration) =>
+            market.BidRate > 0 || market.AskRate > 0 ? Rejection(market, configuration) : ViabilityRejection(market);
+
+        /// <summary>
         /// Why no configuration's bot can trade <paramref name="market"/>, or null.
         /// </summary>
         public string ViabilityRejection(MarketData market)
