@@ -76,6 +76,10 @@ namespace SpreadBot.Dashboard
 
         private bool Store(PushSubscriptionRequest request, string categories)
         {
+            //Subscribing again starts over
+            lock (refusals)
+                refusals.Remove(request.Endpoint);
+
             using var db = database();
             var stored = db.PushSubscriptions.Find(request.Endpoint);
             if (stored == null && db.PushSubscriptions.Count() >= MaxSubscriptions)
@@ -101,6 +105,9 @@ namespace SpreadBot.Dashboard
 
         public bool Unsubscribe(string endpoint)
         {
+            lock (refusals)
+                refusals.Remove(endpoint);
+
             using var db = database();
             var stored = db.PushSubscriptions.Find(endpoint);
             if (stored == null)
@@ -184,9 +191,12 @@ namespace SpreadBot.Dashboard
 
                 foreach (var subscription in subscriptions)
                 {
+                    if (stopping.IsCancellationRequested)
+                        break;
+
                     try
                     {
-                        await client.SendNotificationAsync(new PushSubscription(subscription.Endpoint, subscription.P256dh, subscription.Auth), message.Payload, vapid);
+                        await client.SendNotificationAsync(new PushSubscription(subscription.Endpoint, subscription.P256dh, subscription.Auth), message.Payload, vapid, stopping.Token);
                         lock (refusals)
                             refusals.Remove(subscription.Endpoint);
                     }
@@ -224,13 +234,20 @@ namespace SpreadBot.Dashboard
 
         public void Dispose()
         {
-            //What's queued isn't sent once the bot exits; the sender stops before the client it uses goes
+            if (stopping.IsCancellationRequested)
+                return;
+
+            //What's queued isn't sent once the bot exits; a send under way is cancelled
             queue.Writer.TryComplete();
             stopping.Cancel();
-            sender.Wait(TimeSpan.FromSeconds(15));
+            if (!sender.Wait(TimeSpan.FromSeconds(15)))
+            {
+                //Still using the client: leave it to the process exit rather than dispose it under a send
+                Logger.Instance.LogError("Push notifications were still sending when the dashboard stopped");
+                return;
+            }
             client.Dispose();
             http.Dispose();
-            stopping.Dispose();
         }
     }
 }

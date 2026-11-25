@@ -175,8 +175,10 @@ namespace SpreadBot.Dashboard
 
             var generation = System.Threading.Interlocked.Read(ref historyGeneration);
             var view = ReadHistory(days);
-            if (System.Threading.Interlocked.Read(ref historyGeneration) == generation)
-                historyCache[days] = (DateTime.UtcNow, view);
+            historyCache[days] = (DateTime.UtcNow, view);
+            //Checked after storing: HistoryChanged bumps the generation before clearing, so a change during the read is always seen here
+            if (System.Threading.Interlocked.Read(ref historyGeneration) != generation)
+                historyCache.TryRemove(days, out _);
             return view;
         }
 

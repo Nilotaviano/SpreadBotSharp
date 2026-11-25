@@ -284,6 +284,7 @@ namespace SpreadBot.Tests
             var bot = context.GetBots().Single();
             context.RemoveBot(bot.Guid);
             context.Save();
+            context.Flush();
             host.Monitor.Poll();
 
             Assert.AreEqual(1, (await Get("/api/history")).GetProperty("finishedBots").GetArrayLength(), "the finish cleared the cache");
@@ -292,7 +293,7 @@ namespace SpreadBot.Tests
         [TestMethod]
         public async Task Activity_ReportsABotWhoseFinishWasWrittenLate()
         {
-            // Stamped before a later-stamped bot's row was written: still within the lookback
+            // Stamped minutes before its row was written (the writer's queue, SQLite's busy waits): the cursor has moved past it
             await Start();
             coordinator.SetAllocationPaused(true);
             WaitUntil(() => context.GetBots().Any(), "a bot is allocated, storing its configuration");
@@ -301,7 +302,7 @@ namespace SpreadBot.Tests
             using (var db = context.Database())
             {
                 var configuration = db.Configurations.First();
-                db.Bots.Add(new BotRow { Id = Guid.NewGuid(), ConfigurationId = db.Entry(configuration).Property<int>("Id").CurrentValue, MarketSymbol = "LATE/BTC", State = BotState.FinishedWork, AllocatedAt = DateTime.UtcNow.AddMinutes(-20), FinishedAt = DateTime.UtcNow.AddSeconds(-30), Profit = 0.0001m });
+                db.Bots.Add(new BotRow { Id = Guid.NewGuid(), ConfigurationId = db.Entry(configuration).Property<int>("Id").CurrentValue, MarketSymbol = "LATE/BTC", State = BotState.FinishedWork, AllocatedAt = DateTime.UtcNow.AddMinutes(-20), FinishedAt = DateTime.UtcNow.AddMinutes(-5), Profit = 0.0001m });
                 db.SaveChanges();
             }
 
@@ -309,6 +310,35 @@ namespace SpreadBot.Tests
             host.Monitor.Poll();
 
             Assert.AreEqual(1, (await Get("/api/activity")).EnumerateArray().Count(a => a.GetProperty("kind").GetString() == "finished" && a.GetProperty("market").GetString() == "LATE/BTC"));
+        }
+
+        [TestMethod]
+        public async Task Activity_DoesNotAnnounceAgainWhatFinishedBeforeARestart()
+        {
+            await Start();
+            coordinator.SetAllocationPaused(true);
+            WaitUntil(() => context.GetBots().Any(), "a bot is allocated");
+            var bot = context.GetBots().Single();
+            context.RemoveBot(bot.Guid);
+            context.Save();
+            context.Flush();
+            host.Monitor.Poll();
+            Assert.AreEqual(1, (await Get("/api/activity")).EnumerateArray().Count(a => a.GetProperty("kind").GetString() == "finished"));
+
+            // The bot restarts: a new monitor over the same database
+            var feed = new LiveFeed(DashboardHost.Json);
+            using var push = new PushNotifier(context.Database, new DashboardSecrets(), null, DashboardHost.Json);
+            var restarted = new ActivityMonitor(new DashboardService(new AppSettings { SpreadConfigurations = new[] { Configuration() } }, repository, coordinator, context, context.Database, false), feed, push);
+            restarted.Start();
+            try
+            {
+                restarted.Poll();
+                Assert.AreEqual(0, feed.RecentActivity().Count(a => a.Kind == "finished"), "already announced before the restart");
+            }
+            finally
+            {
+                restarted.Dispose();
+            }
         }
 
         [TestMethod]

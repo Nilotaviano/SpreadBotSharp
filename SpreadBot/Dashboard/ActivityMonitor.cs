@@ -52,10 +52,15 @@ namespace SpreadBot.Dashboard
 
         public void Start()
         {
-            //Only what happens from now on is news
-            using (var db = service.Database())
-                lastOrderRecordId = db.Orders.Select(o => EF.Property<long>(o, "RecordId")).OrderByDescending(id => id).FirstOrDefault();
+            //Only what happens from now on is news; the lookback would otherwise announce again the bots that finished just before a restart
             lastFinishedAt = DateTime.UtcNow;
+            using (var db = service.Database())
+            {
+                lastOrderRecordId = db.Orders.Select(o => EF.Property<long>(o, "RecordId")).OrderByDescending(id => id).FirstOrDefault();
+                var since = lastFinishedAt - FinishedLookback;
+                foreach (var bot in db.Bots.AsNoTracking().Where(b => b.FinishedAt > since).Select(b => new { b.Id, b.FinishedAt }).ToList())
+                    reportedFinished[bot.Id] = bot.FinishedAt.Value;
+            }
             nextEquitySample = DateTime.UtcNow;
 
             Logger.Instance.Logged += OnLogged;
@@ -275,6 +280,9 @@ namespace SpreadBot.Dashboard
 
         public void Dispose()
         {
+            if (stopping.IsCancellationRequested)
+                return;
+
             Logger.Instance.Logged -= OnLogged;
             stopping.Cancel();
             try
