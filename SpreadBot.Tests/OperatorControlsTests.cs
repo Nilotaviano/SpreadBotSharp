@@ -163,23 +163,37 @@ namespace SpreadBot.Tests
         [TestMethod]
         public void FinishWhoseCancelKeepsFailing_LeavesTheBotTrading()
         {
-            var (exchange, context, bot, unallocations, repository) = BotWithOpenBuy(
+            var (exchange, context, bot, unallocations, _) = BotWithOpenBuy(
                 mock => mock.Setup(e => e.CancelOrder("buy-1", Symbol)).ThrowsAsync(new ApiException(ApiErrorType.RetryLater, "server busy")),
                 cancelBudget: TimeSpan.FromMilliseconds(100));
-            // The bid moved above the buy: trading on, the strategy cancels it to re-quote
-            exchange.WithMarkets(Symbol);
-            repository.StartConsumingData();
-            exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010300m, bid: 0.00010100m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
-            WaitUntil(() => repository.MarketsData[Symbol].BidRate == 0.00010100m, "the update is cached");
 
             bot.RequestFinish().Wait();
-            var cancelsByTheFinish = exchange.Mock.Invocations.Count(i => i.Method.Name == nameof(IExchange.CancelOrder));
 
-            Assert.IsTrue(cancelsByTheFinish >= 2, "retried");
             Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
             Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status);
             Assert.AreEqual(0, unallocations());
-            WaitUntil(() => exchange.Mock.Invocations.Count(i => i.Method.Name == nameof(IExchange.CancelOrder)) > cancelsByTheFinish, "the strategy acts on the update it skipped");
+            exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.AtLeast(2));
+        }
+
+        [TestMethod]
+        public void RefusedFinish_ActsOnTheMarketUpdateItSkipped()
+        {
+            // Only the replayed update can make this bot look its unknown order up: it hasn't started, so nothing else reaches it
+            var exchange = new MockExchange();
+            exchange.WithMarkets(Symbol);
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            repository.StartConsumingData();
+            exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+            WaitUntil(() => repository.MarketsData[Symbol].AskRate == 0.00010101m, "the update is cached");
+            var context = new BotContext(Configuration(), Market(), BotState.BuyOrderActive, 0)
+            {
+                CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow }
+            };
+            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+
+            bot.RequestFinish().Wait();
+
+            WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(IExchange.GetOrderByClientId)), "the replayed update looks the order up");
         }
 
         [TestMethod]
