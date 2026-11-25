@@ -52,6 +52,9 @@ namespace SpreadBot.Logic
         {
             if (market.LastTradeRate < configuration.MinimumPrice)
                 return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
+            //Its spread reads as zero, which a minimum of zero would let through
+            if (!(market.BidRate > 0) || !(market.AskRate > 0))
+                return "no bid or no ask";
             if (market.SpreadPercentage < configuration.MinimumSpreadPercentage)
                 return $"spread {market.SpreadPercentage:0.###}% below the minimum {configuration.MinimumSpreadPercentage}%";
             if (market.QuoteVolume < configuration.MinimumQuoteVolume)

@@ -208,9 +208,10 @@ namespace SpreadBot.Tests
         [TestMethod]
         public void AllocationFailingPartway_StillStartsTheBotsAlreadyAllocated()
         {
-            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA/BTC", "BBB/BTC");
+            // Each market inherits 1 coin of recorded dust
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("AAA", 2, 2), Balance("BBB", 2, 2) }, "AAA/BTC", "BBB/BTC");
             var bots = new List<Bot>();
-            var context = InMemoryContext(bots);
+            var context = InMemoryContext(bots, dust: 1);
             context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bot =>
             {
                 if (bots.Count == 1)
@@ -223,10 +224,36 @@ namespace SpreadBot.Tests
 
             Assert.AreEqual(1, bots.Count);
             var symbol = bots[0].MarketSymbol;
+            var failedSymbol = symbol == "AAA/BTC" ? "BBB/BTC" : "AAA/BTC";
             CollectionAssert.AreEqual(new[] { symbol }, coordinator.AllocatedMarketsPerSpreadConfiguration.Values.SelectMany(markets => markets.Keys).ToArray(),
                 "the failed market isn't left reserved, where it would count against the per-market cap");
+            context.Verify(c => c.AddDustForMarket(failedSymbol, 1m), Times.Once, "the dust the failed bot took is recorded again");
             WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.BuyLimit) && (string)i.Arguments[0] == symbol),
                 "the allocated bot starts and places its buy");
+        }
+
+        [TestMethod]
+        public void AllocationFailingAfterTheBotIsStored_KeepsItReservedAndStartsIt()
+        {
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA/BTC", "BBB/BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots);
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bot =>
+            {
+                bots.Add(bot);
+                if (bots.Count == 2)
+                    throw new InvalidOperationException("the second bot is stored, then saving it fails");
+            });
+
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
+
+            Assert.AreEqual(2, bots.Count);
+            CollectionAssert.AreEquivalent(bots.Select(b => b.MarketSymbol).ToArray(), coordinator.AllocatedMarketsPerSpreadConfiguration.Values.SelectMany(markets => markets.Keys).ToArray(),
+                "a stored bot keeps its market reserved");
+            foreach (var symbol in bots.Select(b => b.MarketSymbol))
+                WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.BuyLimit) && (string)i.Arguments[0] == symbol),
+                    $"the bot on {symbol} starts and places its buy");
         }
 
         [TestMethod]

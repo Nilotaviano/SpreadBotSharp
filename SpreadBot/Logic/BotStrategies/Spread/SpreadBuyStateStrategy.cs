@@ -19,8 +19,8 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             var market = botContext.LatestMarketData;
 
             //The market no longer passes the filters it was allocated on (e.g. its spread narrowed, or it started pumping). Before it
-            //shows a bid or an ask (a restored bot's market) only its own state can rule it out: no quote at all would read as a zero
-            //spread. A one-sided quote is judged in full, and its zero spread leaves
+            //shows a bid or an ask (a restored bot's market) only its own state can rule it out: the filters would reject a market
+            //without a quote yet. A one-sided quote is judged in full, which leaves it
             var quoted = market.BidRate > 0 || market.AskRate > 0;
             var rejection = quoted ? marketFilters.Rejection(market, botContext.spreadConfiguration) : marketFilters.ViabilityRejection(market);
             if (rejection != null)

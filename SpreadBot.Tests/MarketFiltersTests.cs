@@ -39,6 +39,17 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void OneSidedQuote_IsRejected_EvenWhenAnySpreadWillDo()
+        {
+            var configuration = Configuration();
+            configuration.MinimumSpreadPercentage = 0;
+            var market = Market();
+            market.AskRate = null;
+
+            Assert.AreEqual("no bid or no ask", Filters().Rejection(market, configuration));
+        }
+
+        [TestMethod]
         public void BlacklistedCoin_RejectsEveryMarketTradingIt()
         {
             var filters = Filters("nmr");

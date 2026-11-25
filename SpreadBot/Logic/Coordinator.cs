@@ -264,18 +264,28 @@ namespace SpreadBot.Logic
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
+                        Bot bot = null;
+                        var existingDust = 0m;
                         try
                         {
-                            var existingDust = GetInheritableDust(market);
-                            var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory, balanceLedger);
+                            existingDust = GetInheritableDust(market);
+                            bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory, balanceLedger);
 
                             AllocateBot(bot);
                             allocatedBots.Add(bot);
                         }
                         catch
                         {
-                            //Left reserved without a bot, the market would count against the cap for every configuration until a restart
-                            allocatedMarketsForConfiguration.TryRemove(market.Symbol, out _);
+                            //Stored before the failure, the bot holds its allocation, so it must run like the others (the caller starts it)
+                            if (bot != null && context.GetBots().Contains(bot))
+                                allocatedBots.Add(bot);
+                            else
+                            {
+                                //Left reserved without a bot, the market would count against the cap for every configuration until a restart
+                                allocatedMarketsForConfiguration.TryRemove(market.Symbol, out _);
+                                if (existingDust > 0)
+                                    context.AddDustForMarket(market.Symbol, existingDust);
+                            }
                             throw;
                         }
                     }

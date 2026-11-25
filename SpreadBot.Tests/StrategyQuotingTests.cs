@@ -101,13 +101,14 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        [DataRow(true, false, true)] // a bid but no ask: a zero spread
-        [DataRow(false, true, true)]
-        [DataRow(false, false, false)] // no quote yet: waits for one
-        public async Task Buy_OnAMarketWithoutABidOrAnAsk(bool hasBid, bool hasAsk, bool expectLeaves)
+        [DataRow(true, false, 1, true)] // a bid but no ask
+        [DataRow(false, true, 1, true)]
+        [DataRow(true, false, 0, true)] // even when any spread will do
+        [DataRow(false, false, 1, false)] // no quote yet: waits for one
+        public async Task Buy_OnAMarketWithoutABidOrAnAsk(bool hasBid, bool hasAsk, int minimumSpreadPercentage, bool expectLeaves)
         {
             var (repository, exchange) = Repository();
-            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = minimumSpreadPercentage };
             var market = new MarketData { Symbol = Symbol, BidRate = hasBid ? Bid : null, AskRate = hasAsk ? Bid + 3 * MockExchange.Tick : null, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
             var context = new BotContext(configuration, market, BotState.Buying, 0) { Balance = 0.001m };
             var finished = false;
