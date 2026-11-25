@@ -49,20 +49,21 @@ namespace SpreadBot.Infrastructure
             if (!File.Exists(PROFIT_PER_CONFIGURATION_FILE_PATH))
                 netProfitPerSpreadConfiguration = new HashSet<SpreadConfigurationNetProfit>();
             else
-            {
-                List<SpreadConfigurationNetProfit> list = JsonConvert.DeserializeObject<List<SpreadConfigurationNetProfit>>(File.ReadAllText(PROFIT_PER_CONFIGURATION_FILE_PATH));
+                netProfitPerSpreadConfiguration = ParseConfigurationProfits(File.ReadAllText(PROFIT_PER_CONFIGURATION_FILE_PATH));
+        }
 
-                //A file written when configurations compared other fields can hold several records of what is now one configuration
-                netProfitPerSpreadConfiguration = list
-                    .GroupBy(record => record)
-                    .Select(records =>
-                    {
-                        var merged = records.First();
-                        merged.Profit = records.Sum(record => record.Profit);
-                        return merged;
-                    })
-                    .ToHashSet();
-            }
+        internal static HashSet<SpreadConfigurationNetProfit> ParseConfigurationProfits(string json)
+        {
+            //A file written when configurations compared other fields can hold several records of what is now one configuration
+            return JsonConvert.DeserializeObject<List<SpreadConfigurationNetProfit>>(json)
+                .GroupBy(record => record)
+                .Select(records =>
+                {
+                    var merged = records.First();
+                    merged.Profit = records.Sum(record => record.Profit);
+                    return merged;
+                })
+                .ToHashSet();
         }
 
         private void ConsumePendingData()
@@ -116,7 +117,7 @@ namespace SpreadBot.Infrastructure
         }
 
         //Inherits the configuration's fields and equality, so a record matches its configuration and the file keeps one flat object per record
-        private class SpreadConfigurationNetProfit : SpreadConfiguration
+        internal class SpreadConfigurationNetProfit : SpreadConfiguration
         {
             public static SpreadConfigurationNetProfit For(SpreadConfiguration spreadConfiguration) =>
                 JsonConvert.DeserializeObject<SpreadConfigurationNetProfit>(JsonConvert.SerializeObject(spreadConfiguration));

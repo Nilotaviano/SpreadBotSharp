@@ -114,8 +114,9 @@ namespace SpreadBot.Infrastructure
         }
 
         /// <summary>
-        /// The lowest sell price that recovers what the held coins cost, with both the buy and the sell charged <paramref name="feeRate"/>.
-        /// A buy fee taken from the coins (B / (1 - fee) per coin held) costs more than one charged on top (B × (1 + fee)), so it assumes the former.
+        /// The lowest sell price that recovers what coins bought at <see cref="BoughtPrice"/> cost, with both the buy and the sell charged
+        /// <paramref name="feeRate"/>. A buy fee taken from the coins (B / (1 - fee) per coin held) costs more than one charged on top
+        /// (B × (1 + fee)), so it assumes the former. Inherited dust is priced at the bot's last buy too: its real cost isn't known.
         /// </summary>
         public decimal BreakEvenPrice(decimal feeRate)
         {

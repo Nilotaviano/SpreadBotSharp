@@ -117,6 +117,8 @@ namespace SpreadBot.Infrastructure.Exchanges.Ccxt
             var takerFees = tradedMarkets.Where(m => m.active != false).Select(m => m.taker).Where(fee => fee.HasValue).Select(fee => fee.Value).ToList();
             if (takerFees.Count > 0)
                 FeeRate = (decimal)takerFees.Max();
+            else
+                Logger.Instance.LogError($"{exchange.id} reports no taker fee for the traded markets; assuming {FeeRate:P2} for order sizes and sell floors");
 
             Logger.Instance.LogMessage($"Loaded {tradedMarkets.Count} markets from {exchange.id} with quote {string.Join(",", this.quoteCurrencies)}; watching the {watchedSymbols.Count} active ones");
 

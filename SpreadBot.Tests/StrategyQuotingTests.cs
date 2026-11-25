@@ -84,9 +84,10 @@ namespace SpreadBot.Tests
         /// The ask fell below the bot's sell order, still above what the coins were bought at.
         /// </summary>
         [TestMethod]
-        [DataRow(0.01, false)] // 101 ticks is below the 102.03-tick break-even: re-quoting would sell at a loss
-        [DataRow(0.0, true)]
-        public async Task SellOrderActive_RequotesBelowItsOrder_OnlyAboveBreakEven(double feeRate, bool expectCancel)
+        [DataRow(0.01, 0, false)] // 101 ticks is below the 102.03-tick break-even: re-quoting would sell at a loss
+        [DataRow(0.0, 0, true)]
+        [DataRow(0.01, 31, true)] // past MinutesForLoss: any price
+        public async Task SellOrderActive_RequotesBelowItsOrder_OnlyAboveBreakEven(double feeRate, int heldMinutes, bool expectCancel)
         {
             var (repository, exchange) = Repository((decimal)feeRate);
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinutesForLoss = 30 };
@@ -94,7 +95,7 @@ namespace SpreadBot.Tests
             var context = new BotContext(configuration, Market(ask), BotState.SellOrderActive, 10)
             {
                 BoughtPrice = Bid,
-                BuyFilledAt = DateTime.UtcNow,
+                BuyFilledAt = DateTime.UtcNow.AddMinutes(-heldMinutes),
                 CurrentOrderData = new OrderData { Id = "sell-1", Status = OrderStatus.OPEN, Limit = Bid + 5 * MockExchange.Tick }
             };
 
