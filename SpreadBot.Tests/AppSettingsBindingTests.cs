@@ -2,6 +2,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Newtonsoft.Json;
 using SpreadBot.Infrastructure;
+using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -44,7 +45,20 @@ namespace SpreadBot.Tests
         private static AppSettings Bind(string json)
         {
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-            return new ConfigurationBuilder().AddJsonStream(stream).Build().Get<AppSettings>();
+            return AppSettings.FromConfiguration(new ConfigurationBuilder().AddJsonStream(stream).Build());
+        }
+
+        [TestMethod]
+        public void Get_LeavesNothingBlacklisted_WhenTheListIsEmptyOrMissing()
+        {
+            Assert.IsFalse(Bind(@"{ ""BlacklistedMarkets"": [] }").BlacklistedMarkets?.Any() ?? false);
+            Assert.IsNull(Bind(@"{ ""MaxNumberOfBots"": 1 }").BlacklistedMarkets);
+        }
+
+        [TestMethod]
+        public void Get_RefusesABlacklistThatIsNotAList()
+        {
+            Assert.ThrowsExactly<InvalidOperationException>(() => Bind(@"{ ""BlacklistedMarkets"": ""NMR"" }"));
         }
 
         [TestMethod]

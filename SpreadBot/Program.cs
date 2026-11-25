@@ -28,10 +28,9 @@ namespace SpreadBot
 
             string appSettingsPath = settingsFileName.ToLocalFilePath();
             Console.WriteLine(appSettingsPath);
-            var appSettings = new ConfigurationBuilder()
+            var appSettings = AppSettings.FromConfiguration(new ConfigurationBuilder()
                 .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
-                .Build()
-                .Get<AppSettings>();
+                .Build());
 
             //Held until exit: a FileSystemWatcher references itself only weakly, so an unreferenced one is collected and stops raising events
             using var watcher = new FileSystemWatcher(Path.GetDirectoryName(appSettingsPath));

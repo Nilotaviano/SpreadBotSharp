@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using SpreadBot.Logic.BotStrategies;
 using System;
@@ -27,6 +28,18 @@ namespace SpreadBot.Infrastructure
         public Dashboard.DashboardSettings Dashboard { get; set; } = new Dashboard.DashboardSettings();
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
+
+        /// <summary>
+        /// The settings in <paramref name="configuration"/>, as loaded at startup (a reload deserializes the file with Newtonsoft instead).
+        /// </summary>
+        public static AppSettings FromConfiguration(IConfiguration configuration)
+        {
+            //The binder skips a single string where a list belongs: a blacklist of one coin written without brackets would blacklist nothing
+            if (!string.IsNullOrEmpty(configuration[nameof(BlacklistedMarkets)]))
+                throw new InvalidOperationException($"{nameof(BlacklistedMarkets)} must be a list, e.g. [\"NMR\"]");
+
+            return configuration.Get<AppSettings>();
+        }
 
         public void Reload(AppSettings newSettings)
         {
