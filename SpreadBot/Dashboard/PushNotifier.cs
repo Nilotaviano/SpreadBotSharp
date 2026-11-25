@@ -38,8 +38,8 @@ namespace SpreadBot.Dashboard
         private readonly Channel<PushMessage> queue = Channel.CreateBounded<PushMessage>(new BoundedChannelOptions(100) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
         private readonly CancellationTokenSource stopping = new CancellationTokenSource();
         private readonly Task sender;
-        //The halt's send, outside the queue: Dispose waits for it before cancelling anything
-        private Task urgent = Task.CompletedTask;
+        //Sends outside the queue (the halt), under their own lock: Dispose waits for them before cancelling anything
+        private readonly List<Task> urgent = new List<Task>();
         private readonly object subscribing = new object();
         //Endpoint -> refusals in a row (401/403): one may be the bot's own key or clock, several mean the subscription is dead
         private readonly Dictionary<string, int> refusals = new Dictionary<string, int>();
@@ -149,7 +149,11 @@ namespace SpreadBot.Dashboard
                 return Task.CompletedTask;
 
             var send = SendNow(Message(category, title, body, tag, "/"));
-            urgent = send;
+            lock (urgent)
+            {
+                urgent.RemoveAll(task => task.IsCompleted);
+                urgent.Add(send);
+            }
             return send;
         }
 
@@ -249,10 +253,13 @@ namespace SpreadBot.Dashboard
                 return;
 
             //The halt gets its chance first; then what's queued isn't sent once the bot exits, and a send under way is cancelled
-            urgent.Wait(TimeSpan.FromSeconds(10));
+            Task urgentSends;
+            lock (urgent)
+                urgentSends = Task.WhenAll(urgent);
+            urgentSends.Wait(TimeSpan.FromSeconds(10));
             queue.Writer.TryComplete();
             stopping.Cancel();
-            if (!sender.Wait(TimeSpan.FromSeconds(15)) || !urgent.Wait(TimeSpan.FromSeconds(5)))
+            if (!sender.Wait(TimeSpan.FromSeconds(15)) || !urgentSends.Wait(TimeSpan.FromSeconds(5)))
             {
                 //Still using the client: leave it to the process exit rather than dispose it under a send
                 Logger.Instance.LogError("Push notifications were still sending when the dashboard stopped");
