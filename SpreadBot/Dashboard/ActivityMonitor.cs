@@ -22,8 +22,10 @@ namespace SpreadBot.Dashboard
         private static readonly TimeSpan EquityInterval = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan QuietStream = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan ErrorPushWindow = TimeSpan.FromMinutes(10);
-        //A bot's FinishedAt is stamped before its row is queued, and two bots can be queued out of stamp order: look back this far
-        private static readonly TimeSpan FinishedLookback = TimeSpan.FromMinutes(1);
+        //A bot's FinishedAt is stamped before its row is queued, and written after the queue and SQLite's busy waits: look back this far
+        private static readonly TimeSpan FinishedLookback = TimeSpan.FromMinutes(10);
+        //The loop and callers (tests) poll; two at once would report the same rows twice
+        private readonly object polling = new object();
 
         private readonly DashboardService service;
         private readonly LiveFeed feed;
@@ -85,6 +87,12 @@ namespace SpreadBot.Dashboard
         }
 
         internal void Poll()
+        {
+            lock (polling)
+                PollSteps();
+        }
+
+        private void PollSteps()
         {
             //Each on its own: one failing must not silence the others
             Step("state", () =>
@@ -251,7 +259,7 @@ namespace SpreadBot.Dashboard
         public async Task AnnounceHalt(string reason)
         {
             feed.Activity(new ActivityView("halt", DateTime.UtcNow, "Trading halted", reason, null, null, null));
-            await Task.WhenAny(push.Notify("halt", "Trading halted", reason ?? "The bot stopped trading and is exiting", tag: "halt"), Task.Delay(TimeSpan.FromSeconds(10)));
+            await Task.WhenAny(push.NotifyNow("halt", "Trading halted", reason ?? "The bot stopped trading and is exiting", tag: "halt"), Task.Delay(TimeSpan.FromSeconds(10)));
         }
 
         private static (string coin, string quote) Split(string symbol)

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using WebPush;
@@ -33,8 +34,14 @@ namespace SpreadBot.Dashboard
         private readonly HttpClient http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         private readonly WebPushClient client;
         private readonly JsonSerializerOptions json;
-        private readonly Channel<PushMessage> queue = Channel.CreateBounded<PushMessage>(new BoundedChannelOptions(100) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
+        //Full, a new message is refused (and completed) rather than an old one dropped unseen
+        private readonly Channel<PushMessage> queue = Channel.CreateBounded<PushMessage>(new BoundedChannelOptions(100) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
+        private readonly CancellationTokenSource stopping = new CancellationTokenSource();
         private readonly Task sender;
+        private readonly object subscribing = new object();
+        //Endpoint -> refusals in a row (401/403): one may be the bot's own key or clock, several mean the subscription is dead
+        private readonly Dictionary<string, int> refusals = new Dictionary<string, int>();
+        private const int RefusalsBeforeDropping = 3;
 
         private record PushMessage(string Category, string Payload, TaskCompletionSource Sent);
 
@@ -50,7 +57,7 @@ namespace SpreadBot.Dashboard
         }
 
         public static bool IsPushService(Uri endpoint) =>
-            endpoint.Scheme == Uri.UriSchemeHttps
+            endpoint.Scheme == Uri.UriSchemeHttps && endpoint.IsDefaultPort && string.IsNullOrEmpty(endpoint.UserInfo)
             && (PushHosts.Contains(endpoint.Host, StringComparer.OrdinalIgnoreCase) || PushHostSuffixes.Any(suffix => endpoint.Host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
 
         public bool Available => vapid != null;
@@ -62,6 +69,13 @@ namespace SpreadBot.Dashboard
         {
             var categories = string.Join(",", (request.Categories ?? Categories).Where(Categories.Contains).Distinct());
 
+            //The cap is a count then an insert
+            lock (subscribing)
+                return Store(request, categories);
+        }
+
+        private bool Store(PushSubscriptionRequest request, string categories)
+        {
             using var db = database();
             var stored = db.PushSubscriptions.Find(request.Endpoint);
             if (stored == null && db.PushSubscriptions.Count() >= MaxSubscriptions)
@@ -111,26 +125,48 @@ namespace SpreadBot.Dashboard
             if (!Available)
                 return Task.CompletedTask;
 
-            var payload = JsonSerializer.Serialize(new { title, body, tag = tag ?? category, category, url = publicUrl + path }, json);
-            var message = new PushMessage(category, payload, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+            var message = Message(category, title, body, tag, path);
             if (!queue.Writer.TryWrite(message))
                 message.Sent.TrySetResult();
             return message.Sent.Task;
         }
 
+        /// <summary>
+        /// Sends now, ahead of the queue: for the halt, the last thing the bot reports before it exits.
+        /// </summary>
+        public async Task NotifyNow(string category, string title, string body, string tag = null)
+        {
+            if (Available)
+                await SendNow(Message(category, title, body, tag, "/"));
+        }
+
+        private PushMessage Message(string category, string title, string body, string tag, string path) =>
+            new PushMessage(category, JsonSerializer.Serialize(new { title, body, tag = tag ?? category, category, url = publicUrl + path }, json),
+                new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+
         private async Task Send()
         {
-            await foreach (var message in queue.Reader.ReadAllAsync())
+            try
             {
-                try
+                await foreach (var message in queue.Reader.ReadAllAsync(stopping.Token))
                 {
-                    await SendNow(message);
-                }
-                finally
-                {
-                    message.Sent.TrySetResult();
+                    try
+                    {
+                        await SendNow(message);
+                    }
+                    finally
+                    {
+                        message.Sent.TrySetResult();
+                    }
                 }
             }
+            catch (OperationCanceledException)
+            {
+            }
+
+            //Stopped with messages left: they're not sent, but nobody waits on them forever
+            while (queue.Reader.TryRead(out var left))
+                left.Sent.TrySetResult();
         }
 
         private async Task SendNow(PushMessage message)
@@ -151,11 +187,24 @@ namespace SpreadBot.Dashboard
                     try
                     {
                         await client.SendNotificationAsync(new PushSubscription(subscription.Endpoint, subscription.P256dh, subscription.Auth), message.Payload, vapid);
+                        lock (refusals)
+                            refusals.Remove(subscription.Endpoint);
                     }
-                    //The browser dropped the subscription (uninstalled, permission revoked), or it was made with other keys (a new secrets file)
-                    catch (WebPushException e) when (e.StatusCode is HttpStatusCode.Gone or HttpStatusCode.NotFound or HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
+                    //The browser dropped the subscription (uninstalled, permission revoked)
+                    catch (WebPushException e) when (e.StatusCode is HttpStatusCode.Gone or HttpStatusCode.NotFound)
                     {
                         gone.Add(subscription.Endpoint);
+                    }
+                    //Made with other keys (a new secrets file), or the bot's own key or clock is off: only repeated refusals drop it
+                    catch (WebPushException e) when (e.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
+                    {
+                        int count;
+                        lock (refusals)
+                            refusals[subscription.Endpoint] = count = refusals.GetValueOrDefault(subscription.Endpoint) + 1;
+
+                        Logger.Instance.LogError($"Push service {new Uri(subscription.Endpoint).Host} refused a notification ({(int)e.StatusCode}), {count} in a row{(count >= RefusalsBeforeDropping ? "; dropping that device" : "")}");
+                        if (count >= RefusalsBeforeDropping)
+                            gone.Add(subscription.Endpoint);
                     }
                     catch (Exception e)
                     {
@@ -175,10 +224,13 @@ namespace SpreadBot.Dashboard
 
         public void Dispose()
         {
+            //What's queued isn't sent once the bot exits; the sender stops before the client it uses goes
             queue.Writer.TryComplete();
-            sender.Wait(TimeSpan.FromSeconds(10));
+            stopping.Cancel();
+            sender.Wait(TimeSpan.FromSeconds(15));
             client.Dispose();
             http.Dispose();
+            stopping.Dispose();
         }
     }
 }

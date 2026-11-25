@@ -64,6 +64,20 @@ namespace SpreadBot.Dashboard
             }
 
             var push = new PushNotifier(database, secrets, publicUrl, Json);
+            try
+            {
+                return Build(settings, secrets, appSettings, dataRepository, coordinator, context, database, configureHost, push);
+            }
+            catch
+            {
+                push.Dispose();
+                throw;
+            }
+        }
+
+        private static DashboardHost Build(DashboardSettings settings, DashboardSecrets secrets, AppSettings appSettings, DataRepository dataRepository,
+            Coordinator coordinator, ICoordinatorContext context, Func<SpreadBotDbContext> database, Action<IWebHostBuilder> configureHost, PushNotifier push)
+        {
             var service = new DashboardService(appSettings, dataRepository, coordinator, context, database, push.Available);
             var feed = new LiveFeed(Json);
             var monitor = new ActivityMonitor(service, feed, push);
@@ -237,16 +251,15 @@ namespace SpreadBot.Dashboard
 
         public async Task StartAsync()
         {
-            await app.StartAsync();
+            //Not left running when it isn't whole: the caller gets no host to dispose
             try
             {
+                await app.StartAsync();
                 monitor.Start();
             }
-            //Not left serving the controls when it isn't whole: the caller gets no host to dispose
             catch
             {
-                await app.StopAsync();
-                await app.DisposeAsync();
+                await DisposeAsync();
                 throw;
             }
         }

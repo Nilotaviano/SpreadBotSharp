@@ -27,6 +27,8 @@ namespace SpreadBot.Dashboard
         //History reads every finished bot; it changes only when one finishes (or equity is sampled), and the app asks often
         private static readonly TimeSpan HistoryLifetime = TimeSpan.FromSeconds(60);
         private readonly ConcurrentDictionary<int, (DateTime at, HistoryView view)> historyCache = new ConcurrentDictionary<int, (DateTime, HistoryView)>();
+        //Bumped by HistoryChanged: a read that started before it doesn't store what it read
+        private long historyGeneration;
 
         public DateTime StartedAt { get; } = DateTime.UtcNow;
 
@@ -171,12 +173,18 @@ namespace SpreadBot.Dashboard
             if (historyCache.TryGetValue(days, out var cached) && DateTime.UtcNow - cached.at < HistoryLifetime)
                 return cached.view;
 
+            var generation = System.Threading.Interlocked.Read(ref historyGeneration);
             var view = ReadHistory(days);
-            historyCache[days] = (DateTime.UtcNow, view);
+            if (System.Threading.Interlocked.Read(ref historyGeneration) == generation)
+                historyCache[days] = (DateTime.UtcNow, view);
             return view;
         }
 
-        public void HistoryChanged() => historyCache.Clear();
+        public void HistoryChanged()
+        {
+            System.Threading.Interlocked.Increment(ref historyGeneration);
+            historyCache.Clear();
+        }
 
         private HistoryView ReadHistory(int days)
         {

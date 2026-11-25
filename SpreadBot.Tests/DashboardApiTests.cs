@@ -253,12 +253,62 @@ namespace SpreadBot.Tests
             CollectionAssert.AreEqual(new[] { "halt", "fills" }, lookup.GetProperty("categories").EnumerateArray().Select(c => c.GetString()).ToArray());
 
             // The bot POSTs to the endpoint: anything but a browser's push service is refused
-            foreach (var other in new[] { "https://evil.example/hook", "http://fcm.googleapis.com/fcm/send/abc", "https://fcm.googleapis.com.evil.example/x", "https://127.0.0.1/x" })
+            foreach (var other in new[] { "https://evil.example/hook", "http://fcm.googleapis.com/fcm/send/abc", "https://fcm.googleapis.com.evil.example/x", "https://127.0.0.1/x", "https://fcm.googleapis.com:8443/x", "https://user@fcm.googleapis.com/x" })
                 Assert.AreEqual(HttpStatusCode.BadRequest, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", new { endpoint = other, keys = new { p256dh = "key", auth = "auth" } }))).StatusCode, other);
 
             Assert.AreEqual(HttpStatusCode.OK, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions/remove", new { endpoint }))).StatusCode);
             using var db = context.Database();
             Assert.AreEqual(0, db.PushSubscriptions.Count());
+        }
+
+        [TestMethod]
+        public async Task Push_AcceptsAtMostTwentyDevices()
+        {
+            await Start(publicUrl: "https://box.example.ts.net");
+
+            for (var i = 0; i < 20; i++)
+                Assert.AreEqual(HttpStatusCode.OK, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", new { endpoint = $"https://fcm.googleapis.com/fcm/send/{i}", keys = new { p256dh = "key", auth = "auth" } }))).StatusCode);
+
+            Assert.AreEqual(HttpStatusCode.BadRequest, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", new { endpoint = "https://fcm.googleapis.com/fcm/send/21", keys = new { p256dh = "key", auth = "auth" } }))).StatusCode);
+            Assert.AreEqual(HttpStatusCode.OK, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", new { endpoint = "https://fcm.googleapis.com/fcm/send/3", keys = new { p256dh = "key", auth = "auth" }, categories = new[] { "halt" } }))).StatusCode, "a known device can still change its choice");
+        }
+
+        [TestMethod]
+        public async Task History_ShowsABotThatFinishedAfterItWasRead()
+        {
+            await Start();
+            coordinator.SetAllocationPaused(true);
+            WaitUntil(() => context.GetBots().Any(), "a bot is allocated");
+            Assert.AreEqual(0, (await Get("/api/history")).GetProperty("finishedBots").GetArrayLength(), "read, and cached");
+
+            var bot = context.GetBots().Single();
+            context.RemoveBot(bot.Guid);
+            context.Save();
+            host.Monitor.Poll();
+
+            Assert.AreEqual(1, (await Get("/api/history")).GetProperty("finishedBots").GetArrayLength(), "the finish cleared the cache");
+        }
+
+        [TestMethod]
+        public async Task Activity_ReportsABotWhoseFinishWasWrittenLate()
+        {
+            // Stamped before a later-stamped bot's row was written: still within the lookback
+            await Start();
+            coordinator.SetAllocationPaused(true);
+            WaitUntil(() => context.GetBots().Any(), "a bot is allocated, storing its configuration");
+            context.Flush();
+            host.Monitor.Poll();
+            using (var db = context.Database())
+            {
+                var configuration = db.Configurations.First();
+                db.Bots.Add(new BotRow { Id = Guid.NewGuid(), ConfigurationId = db.Entry(configuration).Property<int>("Id").CurrentValue, MarketSymbol = "LATE/BTC", State = BotState.FinishedWork, AllocatedAt = DateTime.UtcNow.AddMinutes(-20), FinishedAt = DateTime.UtcNow.AddSeconds(-30), Profit = 0.0001m });
+                db.SaveChanges();
+            }
+
+            host.Monitor.Poll();
+            host.Monitor.Poll();
+
+            Assert.AreEqual(1, (await Get("/api/activity")).EnumerateArray().Count(a => a.GetProperty("kind").GetString() == "finished" && a.GetProperty("market").GetString() == "LATE/BTC"));
         }
 
         [TestMethod]
