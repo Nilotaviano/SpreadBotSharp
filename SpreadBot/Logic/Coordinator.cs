@@ -12,7 +12,7 @@ namespace SpreadBot.Logic
 {
     public class Coordinator : IDisposable
     {
-        private readonly BotStrategiesFactory botStrategiesFactory = new BotStrategiesFactory();
+        private readonly BotStrategiesFactory botStrategiesFactory;
         private readonly IComparer<(decimal, decimal)> marketComparer = GetMarketComparer();
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
@@ -46,6 +46,7 @@ namespace SpreadBot.Logic
             this.context = context;
             this.balanceLedger = new BalanceLedger(dataRepository, context);
             this.marketFilters = new MarketFilters(appSettings);
+            this.botStrategiesFactory = new BotStrategiesFactory(marketFilters);
             this.guid = Guid.NewGuid();
 
             this.appSettings.Reloaded += AppSettings_Reloaded;

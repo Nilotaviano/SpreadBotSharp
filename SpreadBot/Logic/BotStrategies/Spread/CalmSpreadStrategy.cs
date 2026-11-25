@@ -20,16 +20,18 @@ namespace SpreadBot.Logic.BotStrategies.Spread
         public static readonly TimeSpan Window = TimeSpan.FromMinutes(5);
 
         private readonly IBotStrategy strategy;
+        private readonly MarketFilters marketFilters;
         private readonly Func<DateTime> utcNow;
 
         //This bot's own observations: a restart starts over, and the bot waits a window before bidding again
         private readonly Queue<(DateTime at, decimal mid)> mids = new Queue<(DateTime at, decimal mid)>();
 
-        public CalmSpreadStrategy(IBotStrategy strategy) : this(strategy, () => DateTime.UtcNow) { }
+        public CalmSpreadStrategy(IBotStrategy strategy, MarketFilters marketFilters) : this(strategy, marketFilters, () => DateTime.UtcNow) { }
 
-        public CalmSpreadStrategy(IBotStrategy strategy, Func<DateTime> utcNow)
+        public CalmSpreadStrategy(IBotStrategy strategy, MarketFilters marketFilters, Func<DateTime> utcNow)
         {
             this.strategy = strategy;
+            this.marketFilters = marketFilters;
             this.utcNow = utcNow;
         }
 
@@ -39,8 +41,8 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             var now = utcNow();
             Watch(market, now);
 
-            //Below the minimum spread the wrapped strategy finishes or cancels the bot's buy anyway
-            var wouldBid = market.SpreadPercentage >= botContext.spreadConfiguration.MinimumSpreadPercentage;
+            //On a market failing the filters the wrapped strategy finishes or cancels the bot's buy anyway
+            var wouldBid = marketFilters.Rejection(market, botContext.spreadConfiguration) == null;
 
             if (wouldBid && !IsCalm(botContext.spreadConfiguration, now))
             {

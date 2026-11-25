@@ -69,7 +69,7 @@ namespace SpreadBot.Tests
             dataRepository.StartConsumingData();
 
             var context = RestoredContextWithOpenSellOrder();
-            var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
+            var bot = new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository));
             bot.Start();
 
             exchange.Mock.Verify(e => e.GetOrder(SellOrderId, Symbol), Times.Once);
@@ -117,7 +117,7 @@ namespace SpreadBot.Tests
             dataRepository.StartConsumingData();
 
             var context = RestoredContextWithOpenSellOrder();
-            var bot = new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
+            var bot = new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository));
             bot.Start();
 
             WaitUntil(() => context.BotState == BotState.Buying && context.SemaphoreCurrentCount == 1, "the sell fill is processed");
@@ -141,7 +141,7 @@ namespace SpreadBot.Tests
                 Balance = 0.002m,
                 CurrentOrderData = new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN }
             };
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             exchange.OnOrder(new OrderData
             {
@@ -177,7 +177,7 @@ namespace SpreadBot.Tests
             };
             var observedFills = new System.Collections.Concurrent.ConcurrentQueue<decimal>();
             context.ContextChanged += (_, _) => observedFills.Enqueue(context.CurrentOrderData?.FillQuantity ?? -1);
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             OrderData PartialFill(decimal filled) => new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, FillQuantity = filled };
 
@@ -215,7 +215,7 @@ namespace SpreadBot.Tests
             };
             var observedFills = new System.Collections.Concurrent.ConcurrentQueue<decimal>();
             context.ContextChanged += (_, _) => observedFills.Enqueue(context.CurrentOrderData?.FillQuantity ?? -1);
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             exchange.OnOrder(new OrderData { Id = buyOrderId, ClientOrderId = buyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m, FillQuantity = 5 });
             WaitUntil(() => context.CurrentOrderData.FillQuantity == 5, "the stream's partial fill is applied");
@@ -238,7 +238,7 @@ namespace SpreadBot.Tests
             Assert.IsNull(context.BuyFilledAt);
 
             var before = DateTime.UtcNow;
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
             var after = DateTime.UtcNow;
 
             Assert.IsTrue(context.BuyFilledAt >= before && context.BuyFilledAt <= after);
@@ -251,7 +251,7 @@ namespace SpreadBot.Tests
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.001m };
             var market = new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick };
 
-            var bot = new Bot(dataRepository, configuration, market, 20, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository));
+            var bot = new Bot(dataRepository, configuration, market, 20, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository));
             bot.Start();
 
             Assert.AreEqual(BotState.Buying, bot.botContext.BotState);

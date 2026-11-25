@@ -7,11 +7,18 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadBuyOrderActiveStateStrategy : IBotStateStrategy
     {
+        private readonly MarketFilters marketFilters;
+
+        public SpreadBuyOrderActiveStateStrategy(MarketFilters marketFilters)
+        {
+            this.marketFilters = marketFilters;
+        }
+
         public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
-            if (botContext.LatestMarketData.SpreadPercentage < botContext.spreadConfiguration.MinimumSpreadPercentage)
+            if (marketFilters.Rejection(botContext.LatestMarketData, botContext.spreadConfiguration) != null)
             {
-                //Cancel order and exit
+                //Cancel order and exit: back in Buying, the bot leaves the market
                 await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id, botContext.LatestMarketData.Symbol));
             }
             else if (botContext.LatestMarketData.BidRate - botContext.CurrentOrderData.Limit >= botContext.spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)

@@ -131,7 +131,7 @@ namespace SpreadBot.Tests
                 CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow }
             };
             var unallocations = 0;
-            var bot = new Bot(repository, context, _ => unallocations++, new BotStrategiesFactory(), TestLedger.Empty(repository));
+            var bot = new Bot(repository, context, _ => unallocations++, TestStrategies.Factory(), TestLedger.Empty(repository));
 
             bot.RequestFinish().Wait();
 
@@ -150,7 +150,7 @@ namespace SpreadBot.Tests
                 CurrentOrderData = new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m, Quantity = 30 }
             };
             var unallocations = 0;
-            var bot = new Bot(repository, context, _ => unallocations++, new BotStrategiesFactory(), TestLedger.Empty(repository))
+            var bot = new Bot(repository, context, _ => unallocations++, TestStrategies.Factory(), TestLedger.Empty(repository))
             {
                 CancelRetryDelay = TimeSpan.FromMilliseconds(10),
                 FinishCancelBudget = cancelBudget ?? TimeSpan.FromSeconds(15)
@@ -187,7 +187,7 @@ namespace SpreadBot.Tests
             {
                 CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow }
             };
-            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+            var bot = new Bot(repository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(repository));
 
             bot.RequestFinish().Wait();
 

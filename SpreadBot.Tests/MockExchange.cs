@@ -2,6 +2,7 @@
 using SpreadBot.Infrastructure;
 using SpreadBot.Infrastructure.Exchanges;
 using SpreadBot.Logic;
+using SpreadBot.Logic.BotStrategies;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
@@ -72,5 +73,15 @@ namespace SpreadBot.Tests
         /// </summary>
         public static BalanceLedger Empty(DataRepository dataRepository) =>
             new BalanceLedger(dataRepository, new Mock<ICoordinatorContext>().Object);
+    }
+
+    internal static class TestStrategies
+    {
+        /// <summary>
+        /// Market filters over default settings: nothing blacklisted.
+        /// </summary>
+        public static MarketFilters Filters() => new MarketFilters(new AppSettings());
+
+        public static BotStrategiesFactory Factory() => new BotStrategiesFactory(Filters());
     }
 }

@@ -6,8 +6,8 @@ using System.Linq;
 namespace SpreadBot.Logic
 {
     /// <summary>
-    /// The filters a market must pass for a configuration's bot: the Coordinator allocates only on markets that pass. Reads the
-    /// settings live, so a reload applies on the next market update.
+    /// The filters a market must pass for a configuration's bot: the Coordinator allocates only on markets that pass, and a bot
+    /// still buying leaves a market that stops passing. Reads the settings live, so a reload applies on the next market update.
     /// </summary>
     public class MarketFilters
     {

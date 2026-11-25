@@ -24,7 +24,7 @@ namespace SpreadBot.Tests
         }
 
         private static MarketData Market(decimal ask) =>
-            new MarketData { Symbol = Symbol, BidRate = Bid, AskRate = ask, PriceTick = MockExchange.Tick };
+            new MarketData { Symbol = Symbol, BidRate = Bid, AskRate = ask, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
 
         private static Task PlaceOrder(Func<Task<OrderData>> placeOrder) => placeOrder();
 
@@ -35,7 +35,7 @@ namespace SpreadBot.Tests
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
             var context = new BotContext(configuration, Market(ask: Bid + 3 * MockExchange.Tick), BotState.Buying, 0) { Balance = 0.001m };
 
-            await new SpreadBuyStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+            await new SpreadBuyStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), Bid + MockExchange.Tick), Times.Once);
         }
@@ -48,9 +48,60 @@ namespace SpreadBot.Tests
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 0.99m };
             var context = new BotContext(configuration, Market(ask: Bid + MockExchange.Tick), BotState.Buying, 0) { Balance = 0.001m };
 
-            await new SpreadBuyStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+            await new SpreadBuyStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             exchange.Mock.Verify(e => e.BuyLimit(Symbol, It.IsAny<decimal>(), Bid), Times.Once);
+        }
+
+        [TestMethod]
+        public async Task Buy_LeavesAMarketThatStartedPumping()
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MaxPercentChangeFromPreviousDay = 40 };
+            var market = Market(ask: Bid + 3 * MockExchange.Tick);
+            market.PercentChange = 80;
+            var context = new BotContext(configuration, market, BotState.Buying, 0) { Balance = 0.001m };
+            var finished = false;
+
+            await new SpreadBuyStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => { finished = true; return Task.CompletedTask; });
+
+            Assert.IsTrue(finished);
+            exchange.Mock.Verify(e => e.BuyLimit(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Never);
+        }
+
+        [TestMethod]
+        public async Task Buy_LeavesAMarketBlacklistedAfterItsAllocation()
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
+            var settings = new AppSettings { SpreadConfigurations = new[] { configuration } };
+            var strategy = new SpreadBuyStateStrategy(new MarketFilters(settings));
+            var context = new BotContext(configuration, Market(ask: Bid + 3 * MockExchange.Tick), BotState.Buying, 0) { Balance = 0.001m };
+            var finished = false;
+
+            settings.Reload(new AppSettings { BlacklistedMarkets = new[] { "NMR" }, SpreadConfigurations = settings.SpreadConfigurations });
+            await strategy.ProcessMarketData(repository, context, PlaceOrder, () => { finished = true; return Task.CompletedTask; });
+
+            Assert.IsTrue(finished);
+            exchange.Mock.Verify(e => e.BuyLimit(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Never);
+        }
+
+        [TestMethod]
+        public async Task BuyOrderActive_CancelsItsBuy_WhenTheMarketStopsPassingTheFilters()
+        {
+            // Spread and price are fine and the buy is still the best bid, but the volume dropped below the minimum
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MinimumQuoteVolume = 150 };
+            var market = Market(ask: Bid + 3 * MockExchange.Tick);
+            market.QuoteVolume = 10;
+            var context = new BotContext(configuration, market, BotState.BuyOrderActive, 0)
+            {
+                CurrentOrderData = new OrderData { Id = "buy-1", Status = OrderStatus.OPEN, Limit = Bid }
+            };
+
+            await new SpreadBuyOrderActiveStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+
+            exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.Once);
         }
 
         [TestMethod]

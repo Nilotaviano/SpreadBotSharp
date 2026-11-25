@@ -28,13 +28,13 @@ namespace SpreadBot.Tests
         [DataRow(BotStrategyType.CalmSpread, typeof(CalmSpreadStrategy))]
         public void Factory_BuildsTheConfiguredStrategy(BotStrategyType strategyType, Type expected)
         {
-            Assert.IsInstanceOfType(new BotStrategiesFactory().GetStrategy(strategyType), expected);
+            Assert.IsInstanceOfType(TestStrategies.Factory().GetStrategy(strategyType), expected);
         }
 
         [TestMethod]
         public void Factory_RejectsAnUnknownStrategy()
         {
-            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new BotStrategiesFactory().GetStrategy((BotStrategyType)99));
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => TestStrategies.Factory().GetStrategy((BotStrategyType)99));
         }
 
         [TestMethod]
@@ -130,9 +130,9 @@ namespace SpreadBot.Tests
             public readonly BotContext Context;
             public bool Finished;
 
-            public CalmFixture(BotState state)
+            public CalmFixture(BotState state, params string[] blacklist)
             {
-                Strategy = new CalmSpreadStrategy(Wrapped.Object, () => Now);
+                Strategy = new CalmSpreadStrategy(Wrapped.Object, new MarketFilters(new AppSettings { BlacklistedMarkets = blacklist }), () => Now);
                 Repository = new DataRepository(Exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
                 var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
                 Context = new BotContext(configuration, Market(mid: 100), state, 0);
@@ -142,7 +142,7 @@ namespace SpreadBot.Tests
 
             //A 2% spread around the mid, in ticks
             public static MarketData Market(decimal mid) =>
-                new MarketData { Symbol = Symbol, BidRate = (mid - 1) * MockExchange.Tick * 100, AskRate = (mid + 1) * MockExchange.Tick * 100, PriceTick = MockExchange.Tick };
+                new MarketData { Symbol = Symbol, BidRate = (mid - 1) * MockExchange.Tick * 100, AskRate = (mid + 1) * MockExchange.Tick * 100, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
 
             public Task See(decimal mid, TimeSpan after)
             {
@@ -256,6 +256,17 @@ namespace SpreadBot.Tests
             // The wrapped Spread strategy finishes a Buying bot whose market's spread fell below the minimum
             var fixture = new CalmFixture(BotState.Buying);
             fixture.Context.spreadConfiguration.MinimumSpreadPercentage = 5;
+
+            await fixture.See(mid: 100, after: TimeSpan.Zero);
+
+            fixture.VerifyDelegated(Times.Once());
+        }
+
+        [TestMethod]
+        public async Task Calm_LeavesAMarketFailingAnyFilterToTheWrappedStrategy()
+        {
+            // Not calm yet (no window watched), but a blacklisted market is left, not waited out
+            var fixture = new CalmFixture(BotState.Buying, "NMR");
 
             await fixture.See(mid: 100, after: TimeSpan.Zero);
 

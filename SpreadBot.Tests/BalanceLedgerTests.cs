@@ -36,7 +36,7 @@ namespace SpreadBot.Tests
             var state = openOrder == null ? BotState.Buying : openOrder.Direction == OrderDirection.BUY ? BotState.BuyOrderActive : BotState.SellOrderActive;
             var context = new BotContext(configuration, market, state, held) { Balance = balance, CurrentOrderData = openOrder };
 
-            return new Bot(repository, context, _ => { }, new BotStrategiesFactory(), ledger);
+            return new Bot(repository, context, _ => { }, TestStrategies.Factory(), ledger);
         }
 
         private static OrderData OpenOrder(OrderDirection direction, decimal fillQuantity = 0, decimal proceeds = 0, decimal commission = 0) =>
@@ -175,7 +175,7 @@ namespace SpreadBot.Tests
                 Balance = 0.3m,
                 CurrentOrderData = new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.00009000m }
             };
-            var bot = new Bot(repository, botContext, _ => { }, new BotStrategiesFactory(), ledger);
+            var bot = new Bot(repository, botContext, _ => { }, TestStrategies.Factory(), ledger);
             bots.Add(bot);
             bot.Start();
 
