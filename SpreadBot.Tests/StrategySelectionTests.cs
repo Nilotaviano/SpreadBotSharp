@@ -263,6 +263,25 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task Calm_OverASpreadStrategy_LeavesAPumpingMarket()
+        {
+            var exchange = new MockExchange();
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            var filters = TestStrategies.Filters();
+            var strategy = new CalmSpreadStrategy(new SpreadStrategy(new BreakEvenSellFloor(), filters), filters);
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MaxPercentChangeFromPreviousDay = 40 };
+            var market = CalmFixture.Market(mid: 100);
+            market.PercentChange = 80;
+            var context = new BotContext(configuration, market, BotState.Buying, 0) { Balance = 0.001m };
+            var finished = false;
+
+            await strategy.ProcessMarketData(repository, context, placeOrder => placeOrder(), () => { finished = true; return Task.CompletedTask; });
+
+            Assert.IsTrue(finished, "not calm yet, but a pumping market is left, not waited out");
+            exchange.Mock.Verify(e => e.BuyLimit(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Never);
+        }
+
+        [TestMethod]
         public async Task Calm_LeavesAMarketFailingAnyFilterToTheWrappedStrategy()
         {
             // Not calm yet (no window watched), but a blacklisted market is left, not waited out

@@ -87,6 +87,20 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task Buy_LeavesAFailingMarket_EvenWithoutABidToQuote()
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC" };
+            var market = new MarketData { Symbol = Symbol, AskRate = Bid, PriceTick = MockExchange.Tick, Status = EMarketStatus.Offline };
+            var context = new BotContext(configuration, market, BotState.Buying, 0) { Balance = 0.001m };
+            var finished = false;
+
+            await new SpreadBuyStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => { finished = true; return Task.CompletedTask; });
+
+            Assert.IsTrue(finished);
+        }
+
+        [TestMethod]
         public async Task BuyOrderActive_CancelsItsBuy_WhenTheMarketStopsPassingTheFilters()
         {
             // Spread and price are fine and the buy is still the best bid, but the volume dropped below the minimum
