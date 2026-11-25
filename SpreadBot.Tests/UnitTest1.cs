@@ -29,7 +29,6 @@ namespace SpreadBot.Tests
                 MinimumQuoteVolume = 10,
                 MinimumSpreadPercentage = 1,
                 MinutesForLoss = 0,
-                MinimumProfitPercentage = 0,
                 MinimumNegotiatedAmount = 50000 * MockExchange.Tick,
                 MinimumPrice = 1000 * MockExchange.Tick
             };

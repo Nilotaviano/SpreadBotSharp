@@ -20,8 +20,7 @@ namespace SpreadBot.Tests
                 BaseMarket = "BTC",
                 AllocatedAmountOfBaseCurrency = 0.001m,
                 MinimumNegotiatedAmount = 0.0005m,
-                MinutesForLoss = 30,
-                MinimumProfitPercentage = 0.5m
+                MinutesForLoss = 30
             };
             var market = new MarketData { Symbol = "NMR/BTC", BidRate = 0.00009999m, AskRate = 0.00010101m, PriceTick = MockExchange.Tick };
             var context = new BotContext(configuration, market, BotState.Buying, 0.25m)

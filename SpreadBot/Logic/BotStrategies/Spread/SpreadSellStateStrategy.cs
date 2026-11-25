@@ -20,7 +20,7 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
             bool canSellAtLoss = botContext.CanSellAtLoss(DateTime.UtcNow);
             if (!canSellAtLoss)
-                askPrice = Math.Max(botContext.BoughtPrice * (1m + botContext.spreadConfiguration.MinimumProfitPercentage / 100), askPrice).CeilToTick(tick);
+                askPrice = Math.Max(botContext.BreakEvenPrice(dataRepository.Exchange.FeeRate), askPrice).CeilToTick(tick);
 
             await executeOrderFunctionCallback(async () => await dataRepository.Exchange.SellLimit(botContext.LatestMarketData.Symbol, botContext.HeldAmount, askPrice));
         }

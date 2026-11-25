@@ -3,6 +3,7 @@ using Moq;
 using SpreadBot.Infrastructure;
 using SpreadBot.Logic;
 using SpreadBot.Logic.BotStrategies.Spread;
+using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Threading.Tasks;
@@ -15,9 +16,10 @@ namespace SpreadBot.Tests
         private const string Symbol = "NMR/BTC";
         private const decimal Bid = 0.00000100m;
 
-        private static (DataRepository repository, MockExchange exchange) Repository()
+        private static (DataRepository repository, MockExchange exchange) Repository(decimal feeRate = 0)
         {
             var exchange = new MockExchange();
+            exchange.Mock.Setup(e => e.FeeRate).Returns(feeRate);
             return (new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 }), exchange);
         }
 
@@ -65,16 +67,40 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public async Task Sell_KeepsTheProfitFloor_WhenItIsAboveAJoinedAsk()
+        public async Task Sell_KeepsTheBreakEvenFloor_WhenItIsAboveAJoinedAsk()
         {
-            var (repository, exchange) = Repository();
-            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinutesForLoss = 30, MinimumProfitPercentage = 10 };
+            var (repository, exchange) = Repository(feeRate: 0.01m);
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinutesForLoss = 30 };
             var ask = Bid + MockExchange.Tick;
             var context = new BotContext(configuration, Market(ask), BotState.Bought, 10) { BoughtPrice = Bid, BuyFilledAt = DateTime.UtcNow };
 
             await new SpreadSellStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
-            exchange.Mock.Verify(e => e.SellLimit(Symbol, 10, Bid * 1.10m), Times.Once);
+            // 100 ticks / 0.99² = 102.03 ticks, rounded up to the tick
+            exchange.Mock.Verify(e => e.SellLimit(Symbol, 10, 103 * MockExchange.Tick), Times.Once);
+        }
+
+        /// <summary>
+        /// The ask fell below the bot's sell order, still above what the coins were bought at.
+        /// </summary>
+        [TestMethod]
+        [DataRow(0.01, false)] // 101 ticks is below the 102.03-tick break-even: re-quoting would sell at a loss
+        [DataRow(0.0, true)]
+        public async Task SellOrderActive_RequotesBelowItsOrder_OnlyAboveBreakEven(double feeRate, bool expectCancel)
+        {
+            var (repository, exchange) = Repository((decimal)feeRate);
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinutesForLoss = 30 };
+            var ask = Bid + MockExchange.Tick;
+            var context = new BotContext(configuration, Market(ask), BotState.SellOrderActive, 10)
+            {
+                BoughtPrice = Bid,
+                BuyFilledAt = DateTime.UtcNow,
+                CurrentOrderData = new OrderData { Id = "sell-1", Status = OrderStatus.OPEN, Limit = Bid + 5 * MockExchange.Tick }
+            };
+
+            await new SpreadSellOrderActiveStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+
+            exchange.Mock.Verify(e => e.CancelOrder("sell-1", Symbol), expectCancel ? Times.Once() : Times.Never());
         }
     }
 }

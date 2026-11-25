@@ -51,7 +51,17 @@ namespace SpreadBot.Infrastructure
             else
             {
                 List<SpreadConfigurationNetProfit> list = JsonConvert.DeserializeObject<List<SpreadConfigurationNetProfit>>(File.ReadAllText(PROFIT_PER_CONFIGURATION_FILE_PATH));
-                netProfitPerSpreadConfiguration = new HashSet<SpreadConfigurationNetProfit>(list);
+
+                //A file written when configurations compared other fields can hold several records of what is now one configuration
+                netProfitPerSpreadConfiguration = list
+                    .GroupBy(record => record)
+                    .Select(records =>
+                    {
+                        var merged = records.First();
+                        merged.Profit = records.Sum(record => record.Profit);
+                        return merged;
+                    })
+                    .ToHashSet();
             }
         }
 
@@ -62,11 +72,11 @@ namespace SpreadBot.Infrastructure
                 try
                 {
                     //Calculate SpreadConfigurationNetProfit for current SpreadConfiguration
-                    var obj = netProfitPerSpreadConfiguration.SingleOrDefault(x => x.GetHashCode() == log.SpreadConfiguration.GetHashCode());
+                    var obj = netProfitPerSpreadConfiguration.SingleOrDefault(x => x.Equals(log.SpreadConfiguration));
 
                     if (obj == null)
                     {
-                        obj = new SpreadConfigurationNetProfit(log.SpreadConfiguration);
+                        obj = SpreadConfigurationNetProfit.For(log.SpreadConfiguration);
                         netProfitPerSpreadConfiguration.Add(obj);
                     }
 
@@ -74,10 +84,10 @@ namespace SpreadBot.Infrastructure
 
                     //Update active/inactive configurations
                     //TODO improve complexity
-                    foreach (var active in netProfitPerSpreadConfiguration.Where(x => AppSettings.SpreadConfigurations.Any(y => y.GetHashCode() == x.GetHashCode())))
+                    foreach (var active in netProfitPerSpreadConfiguration.Where(x => AppSettings.SpreadConfigurations.Any(y => y.Equals(x))))
                         active.IsActive = true;
 
-                    foreach(var inactive in netProfitPerSpreadConfiguration.Where(x => !AppSettings.SpreadConfigurations.Any(y => y.GetHashCode() == x.GetHashCode())))
+                    foreach(var inactive in netProfitPerSpreadConfiguration.Where(x => !AppSettings.SpreadConfigurations.Any(y => y.Equals(x))))
                         inactive.IsActive = false;
 
                     //Calculate netProfitPerMarket 
@@ -105,79 +115,15 @@ namespace SpreadBot.Infrastructure
             public string Market { get; set; }
         }
 
-        private class SpreadConfigurationNetProfit
+        //Inherits the configuration's fields and equality, so a record matches its configuration and the file keeps one flat object per record
+        private class SpreadConfigurationNetProfit : SpreadConfiguration
         {
-            public SpreadConfigurationNetProfit() { }
-            public SpreadConfigurationNetProfit(SpreadConfiguration spreadConfiguration)
-            {
-                this.AllocatedAmountOfBaseCurrency = spreadConfiguration.AllocatedAmountOfBaseCurrency;
-                this.AvoidTokenizedSecurities = spreadConfiguration.AvoidTokenizedSecurities;
-                this.BaseMarket = spreadConfiguration.BaseMarket;
-                this.MaxPercentChangeFromPreviousDay = spreadConfiguration.MaxPercentChangeFromPreviousDay;
-                this.MinimumNegotiatedAmount = spreadConfiguration.MinimumNegotiatedAmount;
-                this.MinimumPrice = spreadConfiguration.MinimumPrice;
-                this.MinimumProfitPercentage = spreadConfiguration.MinimumProfitPercentage;
-                this.MinimumQuoteVolume = spreadConfiguration.MinimumQuoteVolume;
-                this.MinimumSpreadPercentage = spreadConfiguration.MinimumSpreadPercentage;
-                this.MinutesForLoss = spreadConfiguration.MinutesForLoss;
-                this.SpreadThresholdBeforeCancelingCurrentOrder = spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder;
-            }
+            public static SpreadConfigurationNetProfit For(SpreadConfiguration spreadConfiguration) =>
+                JsonConvert.DeserializeObject<SpreadConfigurationNetProfit>(JsonConvert.SerializeObject(spreadConfiguration));
 
-            public string BaseMarket { get; set; }
-            public decimal MaxPercentChangeFromPreviousDay { get; set; }
-            public decimal MinimumSpreadPercentage { get; set; }
-            public decimal MinimumQuoteVolume { get; set; }
-            public decimal MinimumPrice { get; set; }
-            public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
-            public decimal AllocatedAmountOfBaseCurrency { get; set; }
-            public decimal SpreadThresholdBeforeCancelingCurrentOrder { get; set; } = 0.00000001m; //Any price move of at least one tick, but should be set higher, I think
-            public int MinutesForLoss { get; set; }
-            public decimal MinimumProfitPercentage { get; set; } //Bot will try to sell with at least this amount of profit, until past the MinutesForLoss threshold
-            public bool AvoidTokenizedSecurities { get; set; }
-
-            //Shouldn't be used on GetHashCode
+            //Not part of the configuration's equality
             public bool IsActive { get; set; }
             public decimal Profit { get; set; }
-
-            public override int GetHashCode()
-            {
-                return (
-                    BaseMarket,
-                    MaxPercentChangeFromPreviousDay,
-                    MinimumSpreadPercentage,
-                    MinimumQuoteVolume,
-                    AllocatedAmountOfBaseCurrency,
-                    SpreadThresholdBeforeCancelingCurrentOrder,
-                    MinutesForLoss,
-                    MinimumProfitPercentage,
-                    MinimumPrice,
-                    MinimumNegotiatedAmount
-                ).GetHashCode();
-            }
-            public override bool Equals(object obj)
-            {
-                return Equals(obj as SpreadConfigurationNetProfit);
-            }
-
-            public bool Equals(SpreadConfigurationNetProfit obj)
-            {
-                return obj != null
-                    && obj.BaseMarket == this.BaseMarket
-                    && obj.MaxPercentChangeFromPreviousDay == this.MaxPercentChangeFromPreviousDay
-                    && obj.MinimumSpreadPercentage == this.MinimumSpreadPercentage
-                    && obj.MinimumQuoteVolume == this.MinimumQuoteVolume
-                    && obj.AllocatedAmountOfBaseCurrency == this.AllocatedAmountOfBaseCurrency
-                    && obj.SpreadThresholdBeforeCancelingCurrentOrder == this.SpreadThresholdBeforeCancelingCurrentOrder
-                    && obj.MinutesForLoss == this.MinutesForLoss
-                    && obj.MinimumProfitPercentage == this.MinimumProfitPercentage
-                    && obj.MinimumPrice == this.MinimumPrice
-                    && obj.MinimumNegotiatedAmount == this.MinimumNegotiatedAmount;
-            }
-
-            public override string ToString()
-            {
-                return JsonConvert.SerializeObject(this);
-            }
         }
     }
 }

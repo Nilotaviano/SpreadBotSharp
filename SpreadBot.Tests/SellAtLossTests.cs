@@ -19,7 +19,7 @@ namespace SpreadBot.Tests
 
         private static BotContext BoughtContext(DateTime? buyFilledAt)
         {
-            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinutesForLoss = 30, MinimumProfitPercentage = 1 };
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinutesForLoss = 30 };
             var market = new MarketData { Symbol = Symbol, BidRate = 0.00009999m, AskRate = AskRate, PriceTick = MockExchange.Tick };
 
             return new BotContext(configuration, market, BotState.Bought, 10) { BoughtPrice = BoughtPrice, BuyFilledAt = buyFilledAt };
@@ -30,6 +30,7 @@ namespace SpreadBot.Tests
             var restored = JsonConvert.DeserializeObject<BotContext>(JsonConvert.SerializeObject(context));
 
             var exchange = new MockExchange();
+            exchange.Mock.Setup(e => e.FeeRate).Returns(0.001m);
             decimal? sellPrice = null;
             exchange.Mock
                 .Setup(e => e.SellLimit(Symbol, It.IsAny<decimal>(), It.IsAny<decimal>()))
@@ -52,11 +53,12 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public async Task RestoredBot_WithinMinutesForLoss_KeepsMinimumProfitFloor()
+        public async Task RestoredBot_WithinMinutesForLoss_KeepsTheBreakEvenFloor()
         {
             var price = await SellPriceAfterRestore(BoughtContext(DateTime.UtcNow.AddMinutes(-5)));
 
-            Assert.AreEqual(BoughtPrice * 1.01m, price);
+            // 0.0002 / 0.999² = 0.00020040..., rounded up to the tick
+            Assert.AreEqual(0.00020041m, price);
         }
 
         [TestMethod]

@@ -113,6 +113,15 @@ namespace SpreadBot.Infrastructure
             return BuyFilledAt.HasValue && (utcNow - BuyFilledAt.Value).TotalMinutes > spreadConfiguration.MinutesForLoss;
         }
 
+        /// <summary>
+        /// The lowest sell price that recovers what the held coins cost, with both the buy and the sell charged <paramref name="feeRate"/>.
+        /// A buy fee taken from the coins (B / (1 - fee) per coin held) costs more than one charged on top (B × (1 + fee)), so it assumes the former.
+        /// </summary>
+        public decimal BreakEvenPrice(decimal feeRate)
+        {
+            return BoughtPrice / ((1 - feeRate) * (1 - feeRate));
+        }
+
         private void NotifyPropertyChanged()
         {
             ContextChanged?.Invoke(this, EventArgs.Empty);

@@ -41,8 +41,7 @@ namespace SpreadBot.Infrastructure
         public decimal MinimumNegotiatedAmount { get; set; } //Dust limit
         public decimal AllocatedAmountOfBaseCurrency { get; set; }
         public decimal SpreadThresholdBeforeCancelingCurrentOrder { get; set; } = 0.00000001m; //Any price move of at least one tick, but should be set higher, I think
-        public int MinutesForLoss { get; set; }
-        public decimal MinimumProfitPercentage { get; set; } //Bot will try to sell with at least this amount of profit, until past the MinutesForLoss threshold
+        public int MinutesForLoss { get; set; } //Until then the bot won't sell below the price that recovers its buy and both fees
         public bool AvoidTokenizedSecurities { get; set; }
 
         public override int GetHashCode()
@@ -55,7 +54,6 @@ namespace SpreadBot.Infrastructure
                 AllocatedAmountOfBaseCurrency,
                 SpreadThresholdBeforeCancelingCurrentOrder,
                 MinutesForLoss,
-                MinimumProfitPercentage,
                 MinimumPrice,
                 MinimumNegotiatedAmount
             ).GetHashCode();
@@ -75,7 +73,6 @@ namespace SpreadBot.Infrastructure
                 && obj.AllocatedAmountOfBaseCurrency == this.AllocatedAmountOfBaseCurrency
                 && obj.SpreadThresholdBeforeCancelingCurrentOrder == this.SpreadThresholdBeforeCancelingCurrentOrder
                 && obj.MinutesForLoss == this.MinutesForLoss
-                && obj.MinimumProfitPercentage == this.MinimumProfitPercentage
                 && obj.MinimumPrice == this.MinimumPrice
                 && obj.MinimumNegotiatedAmount == this.MinimumNegotiatedAmount;
         }

@@ -31,7 +31,6 @@ namespace SpreadBot.Tests
       ""AllocatedAmountOfBaseCurrency"": 0.3,
       ""SpreadThresholdBeforeCancelingCurrentOrder"": 0.00000002,
       ""MinutesForLoss"": 90,
-      ""MinimumProfitPercentage"": 0.6,
       ""AvoidTokenizedSecurities"": true
     },
     {
@@ -75,7 +74,6 @@ namespace SpreadBot.Tests
             Assert.AreEqual(0.3m, eth.AllocatedAmountOfBaseCurrency);
             Assert.AreEqual(0.00000002m, eth.SpreadThresholdBeforeCancelingCurrentOrder);
             Assert.AreEqual(90, eth.MinutesForLoss);
-            Assert.AreEqual(0.6m, eth.MinimumProfitPercentage);
             Assert.IsTrue(eth.AvoidTokenizedSecurities);
         }
 
@@ -102,7 +100,7 @@ namespace SpreadBot.Tests
                 var eth = Bind(SettingsJson).SpreadConfigurations.First();
 
                 Assert.AreEqual(0.000008m, eth.MinimumPrice);
-                Assert.AreEqual(0.6m, eth.MinimumProfitPercentage);
+                Assert.AreEqual(0.001m, eth.MinimumNegotiatedAmount);
             }
             finally
             {

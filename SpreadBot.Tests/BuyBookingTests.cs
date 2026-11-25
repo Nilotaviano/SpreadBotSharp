@@ -36,8 +36,7 @@ namespace SpreadBot.Tests
                 AllocatedAmountOfBaseCurrency = 0.002m,
                 MinimumNegotiatedAmount = 0.0001m,
                 MinimumSpreadPercentage = 1,
-                MinutesForLoss = 30,
-                MinimumProfitPercentage = 1
+                MinutesForLoss = 30
             };
             var context = new BotContext(configuration, new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 5)
             {
