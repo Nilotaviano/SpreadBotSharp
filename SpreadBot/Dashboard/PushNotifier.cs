@@ -40,6 +40,8 @@ namespace SpreadBot.Dashboard
         private readonly Task sender;
         //Sends outside the queue (the halt), under their own lock: Dispose waits for them before cancelling anything
         private readonly List<Task> urgent = new List<Task>();
+        //Under the urgent lock: once Dispose has taken its snapshot, no send outside the queue starts
+        private bool closing;
         private readonly object subscribing = new object();
         //Endpoint -> refusals in a row (401/403): one may be the bot's own key or clock, several mean the subscription is dead
         private readonly Dictionary<string, int> refusals = new Dictionary<string, int>();
@@ -148,13 +150,18 @@ namespace SpreadBot.Dashboard
             if (!Available)
                 return Task.CompletedTask;
 
-            var send = SendNow(Message(category, title, body, tag, "/"));
+            var message = Message(category, title, body, tag, "/");
+            //Started and tracked as one step: Dispose either waits for it or it never starts
             lock (urgent)
             {
+                if (closing)
+                    return Task.CompletedTask;
+
                 urgent.RemoveAll(task => task.IsCompleted);
+                var send = Task.Run(() => SendNow(message));
                 urgent.Add(send);
+                return send;
             }
-            return send;
         }
 
         private PushMessage Message(string category, string title, string body, string tag, string path) =>
@@ -255,7 +262,10 @@ namespace SpreadBot.Dashboard
             //The halt gets its chance first; then what's queued isn't sent once the bot exits, and a send under way is cancelled
             Task urgentSends;
             lock (urgent)
+            {
+                closing = true;
                 urgentSends = Task.WhenAll(urgent);
+            }
             urgentSends.Wait(TimeSpan.FromSeconds(10));
             queue.Writer.TryComplete();
             stopping.Cancel();
