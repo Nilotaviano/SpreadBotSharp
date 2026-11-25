@@ -9,7 +9,8 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     /// <summary>
     /// Trades like the strategy it wraps, but bids only while the market is calm: its mid price has moved less than
-    /// <see cref="SpreadConfiguration.MinimumSpreadPercentage"/> over the last <see cref="Window"/>, watched for at least that long.
+    /// <see cref="SpreadConfiguration.MinimumSpreadPercentage"/> over the last <see cref="Window"/>, from a mid it saw at or before the
+    /// window's start.
     /// A market moving faster than the spread is wide fills bids on the way down and leaves the bot holding below its sell floor.
     /// Not calm, it holds off on buying (cancelling a resting buy, a restored bot's too until it has watched a window) instead of
     /// finishing, so it can bid once the market settles. Selling is never held back.
@@ -23,7 +24,6 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
         //This bot's own observations: a restart starts over, and the bot waits a window before bidding again
         private readonly Queue<(DateTime at, decimal mid)> mids = new Queue<(DateTime at, decimal mid)>();
-        private DateTime? watchingSince;
 
         public CalmSpreadStrategy(IBotStrategy strategy) : this(strategy, () => DateTime.UtcNow) { }
 
@@ -59,18 +59,19 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 
         private void Watch(MarketData market, DateTime now)
         {
-            watchingSince ??= now;
-
             if (market.BidRate > 0 && market.AskRate > 0)
                 mids.Enqueue((now, (market.BidRate.Value + market.AskRate.Value) / 2));
 
-            while (mids.Count > 0 && mids.Peek().at < now - Window)
+            //Keeps the last mid at or before the window's start: the price the window started at, however long ago it last changed
+            var windowStart = now - Window;
+            while (mids.Count > 1 && mids.ElementAt(1).at <= windowStart)
                 mids.Dequeue();
         }
 
         private bool IsCalm(SpreadConfiguration configuration, DateTime now)
         {
-            if (now - watchingSince.Value < Window || mids.Count == 0)
+            //Samples that start inside the window don't show where the price came from
+            if (mids.Count == 0 || mids.Peek().at > now - Window)
                 return false;
 
             var highest = mids.Max(sample => sample.mid);

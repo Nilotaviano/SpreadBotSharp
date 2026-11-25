@@ -82,6 +82,7 @@ namespace SpreadBot.Tests
         [DataRow(0, 1.1)] // just filled: the whole target above break-even
         [DataRow(30, 1.05)] // halfway through MinutesForLoss: half of it
         [DataRow(59, 1.0 + 0.1 / 60)]
+        [DataRow(-10, 1.1)] // a fill time ahead of the clock keeps the whole target
         public void DecayingFloor_FallsFromTheTargetToBreakEvenOverMinutesForLoss(int heldMinutes, double expectedFactor)
         {
             var now = new DateTime(2026, 11, 24, 12, 0, 0, DateTimeKind.Utc);
@@ -193,6 +194,18 @@ namespace SpreadBot.Tests
             await fixture.See(mid: 98, after: TimeSpan.FromMinutes(4));
 
             fixture.VerifyDelegated(Times.Once());
+        }
+
+        [TestMethod]
+        public async Task Calm_HoldsOff_AfterAGapInWhatItSaw()
+        {
+            // The only mid in the window would read as no movement; the one before it shows the 10% jump
+            var fixture = new CalmFixture(BotState.Buying);
+
+            await fixture.See(mid: 100, after: TimeSpan.Zero);
+            await fixture.See(mid: 110, after: TimeSpan.FromMinutes(10));
+
+            fixture.VerifyDelegated(Times.Never());
         }
 
         [TestMethod]
