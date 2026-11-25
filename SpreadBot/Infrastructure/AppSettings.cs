@@ -4,6 +4,7 @@ using Newtonsoft.Json.Converters;
 using SpreadBot.Logic.BotStrategies;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace SpreadBot.Infrastructure
@@ -46,6 +47,11 @@ namespace SpreadBot.Infrastructure
         public void Reload(AppSettings newSettings)
         {
             //No reason to reload ApiKey and ApiSecret atm
+
+            //Checked before anything is applied: the Coordinator regroups the configurations by base market on Reloaded, and a reload that
+            //fails there would leave the new caps and blacklist applied while the log says the old settings stayed
+            if (newSettings.SpreadConfigurations == null || newSettings.SpreadConfigurations.Any(c => string.IsNullOrEmpty(c?.BaseMarket)))
+                throw new InvalidOperationException($"{nameof(SpreadConfigurations)} must list the configurations, each with its {nameof(SpreadConfiguration.BaseMarket)}");
 
             MaxNumberOfBots = newSettings.MaxNumberOfBots;
             MaxNumberOfBotsPerMarket = newSettings.MaxNumberOfBotsPerMarket;

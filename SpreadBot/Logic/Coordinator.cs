@@ -1,5 +1,6 @@
 ﻿using SpreadBot.Infrastructure;
 using SpreadBot.Logic.BotStrategies;
+using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
@@ -201,13 +202,15 @@ namespace SpreadBot.Logic
 
                     allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
 
+                    var restoredOrder = botContext.CurrentOrderData;
+
                     AllocateBot(bot);
                     bot.Start();
 
                     Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
 
                     if (!dataRepository.MarketsData.ContainsKey(bot.MarketSymbol))
-                        LeaveUnlistedMarket(bot);
+                        LeaveUnlistedMarket(bot, restoredOrder);
                 }
             }
         }
@@ -215,17 +218,27 @@ namespace SpreadBot.Logic
         /// <summary>
         /// A restored bot whose market isn't in the market data gets no market update, so it would hold its balance and its slot for good.
         /// </summary>
-        private void LeaveUnlistedMarket(Bot bot)
+        /// <param name="restoredOrder">The bot's current order as restored, before its start could change it</param>
+        private void LeaveUnlistedMarket(Bot bot, OrderData restoredOrder)
         {
-            //Only the configured base markets' markets are loaded (and only at startup), so there the exchange no longer lists it, e.g. it
-            //was delisted while the bot was stopped. Finishing cancels its order if the exchange still takes that, and records its coins as dust
-            if (configurationsByBaseMarket.ContainsKey(bot.BaseMarket))
+            //Only the configured base markets' markets are loaded (and only at startup)
+            if (!configurationsByBaseMarket.ContainsKey(bot.BaseMarket))
             {
-                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange; finishing it");
-                _ = Task.Run(bot.RequestFinish);
-            }
-            else
                 Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid} trades {bot.MarketSymbol}, but its base market {bot.BaseMarket} isn't configured, so its markets aren't watched and it won't trade; configure {bot.BaseMarket} and restart, or finish it from the dashboard");
+                return;
+            }
+
+            //So the exchange no longer lists it, e.g. it was delisted while the bot was stopped. ccxt refuses every request on a market it
+            //doesn't list, so an order there can't be cancelled or looked up, and finishing the bot would fail
+            if (restoredOrder?.Status is OrderStatus.OPEN or OrderStatus.UNKNOWN)
+            {
+                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange, so its order {restoredOrder.Id ?? restoredOrder.ClientOrderId} can't be cancelled or looked up there; check it on the exchange (a delisting usually cancels a market's open orders). The bot keeps its allocation and its bot slot, and finishing it fails the same way");
+                return;
+            }
+
+            //Finishing records its coins as dust
+            Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange; finishing it");
+            _ = Task.Run(bot.RequestFinish);
         }
 
         /// <summary>

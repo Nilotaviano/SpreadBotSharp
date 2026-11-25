@@ -183,6 +183,47 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        [DataRow(OrderStatus.OPEN, "buy-1")]
+        [DataRow(OrderStatus.UNKNOWN, "client-1")]
+        public void RestoredBot_OnADelistedMarket_WithAnOrder_StaysAndSaysWhy(OrderStatus status, string named)
+        {
+            // ccxt refuses every request on a market it doesn't list: the order can't be cancelled or looked up, so finishing would fail
+            var (exchange, repository) = StartedRepository(0, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var restored = new BotContext(Configuration(0.3m), new MarketData { Symbol = "GONE/BTC", PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 0)
+            {
+                Balance = 0.3m,
+                CurrentOrderData = new OrderData { Id = status == OrderStatus.OPEN ? "buy-1" : null, ClientOrderId = "client-1", MarketSymbol = "GONE/BTC", Direction = OrderDirection.BUY, Status = status, Limit = 0.0001m }
+            };
+            var context = InMemoryContext(bots, previousSession: new PreviousSessionContext { BotContexts = new List<BotContext> { restored } });
+            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => { lock (bots) return bots.RemoveAll(b => b.Guid == id) > 0; });
+            var said = new List<string>();
+            void listen(Logger.LogEntry entry)
+            {
+                if (entry.Level == "UnexpectedError" && entry.Content.Contains(restored.Guid.ToString()))
+                    lock (said) said.Add(entry.Content);
+            }
+
+            Logger.Instance.Logged += listen;
+            try
+            {
+                new Coordinator(Settings(Configuration(0.3m), restore: true), repository, context.Object).Start();
+
+                WaitUntil(() => { lock (said) return said.Count > 0; }, "the operator is told");
+                Thread.Sleep(200);
+                lock (said)
+                    StringAssert.Contains(said[0], $"its order {named} can't be cancelled");
+                lock (bots)
+                    Assert.AreEqual(1, bots.Count, "kept: finishing would fail");
+                exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            }
+            finally
+            {
+                Logger.Instance.Logged -= listen;
+            }
+        }
+
+        [TestMethod]
         public void RestoredSession_KeepsMoreBotsOnAMarketThanTheCap_AndAddsNone()
         {
             var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");

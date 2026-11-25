@@ -282,7 +282,37 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public async Task Calm_LeavesAMarketFailingAnyFilterToTheWrappedStrategy()
+        public async Task Calm_HoldsOff_OnAMarketBelowAnEntryMinimum()
+        {
+            // The wrapped strategy's buy states skip the entry filters, so it would bid on this market, which isn't calm yet
+            var fixture = new CalmFixture(BotState.Buying);
+            fixture.Context.spreadConfiguration.MinimumQuoteVolume = 150;
+            var market = CalmFixture.Market(mid: 100);
+            market.QuoteVolume = 10;
+            fixture.Context.LatestMarketData = market;
+
+            await fixture.Strategy.ProcessMarketData(fixture.Repository, fixture.Context, placeOrder => placeOrder(), () => Task.CompletedTask);
+
+            fixture.VerifyDelegated(Times.Never());
+        }
+
+        [TestMethod]
+        public async Task Calm_JudgesARestingBuysSpread_AsTheWrappedStrategyDoes()
+        {
+            // The buy is the best bid: the ticker's spread (1.98%) is below the minimum, the spread from the bid it improved on (1.99%)
+            // isn't, so the wrapped strategy keeps the buy. The market isn't calm yet, so the buy is cancelled
+            var fixture = new CalmFixture(BotState.BuyOrderActive);
+            fixture.Context.spreadConfiguration.MinimumSpreadPercentage = 1.985m;
+            fixture.Context.CurrentOrderData.Limit = CalmFixture.Market(mid: 100).BidRate.Value;
+
+            await fixture.See(mid: 100, after: TimeSpan.Zero);
+
+            fixture.Exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.Once);
+            fixture.VerifyDelegated(Times.Never());
+        }
+
+        [TestMethod]
+        public async Task Calm_LeavesABlacklistedMarketToTheWrappedStrategy()
         {
             // Not calm yet (no window watched), but a blacklisted market is left, not waited out
             var fixture = new CalmFixture(BotState.Buying, "NMR");

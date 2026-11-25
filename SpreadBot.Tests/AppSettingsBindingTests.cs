@@ -144,5 +144,23 @@ namespace SpreadBot.Tests
             Assert.AreEqual(25.5m, usdt.AllocatedAmountOfBaseCurrency);
             Assert.AreEqual("key", settings.ApiKey);
         }
+
+        [TestMethod]
+        [DataRow(@"{ ""MaxNumberOfBots"": 7, ""MaxNumberOfBotsPerMarket"": 3, ""BlacklistedMarkets"": [] }")]
+        [DataRow(@"{ ""MaxNumberOfBots"": 7, ""MaxNumberOfBotsPerMarket"": 3, ""BlacklistedMarkets"": [], ""SpreadConfigurations"": [ { ""AllocatedAmountOfBaseCurrency"": 25.5 } ] }")]
+        [DataRow(@"{ ""MaxNumberOfBots"": 7, ""MaxNumberOfBotsPerMarket"": 3, ""BlacklistedMarkets"": [], ""SpreadConfigurations"": [ null ] }")]
+        public void Reload_WithoutConfigurationsToGroup_IsRefused_AndAppliesNothing(string updatedJson)
+        {
+            // Regrouping them on Reloaded would fail after the caps and blacklist were applied
+            var settings = Bind(SettingsJson);
+            var before = (settings.MaxNumberOfBots, settings.MaxNumberOfBotsPerMarket, settings.BlacklistedMarkets, settings.SpreadConfigurations);
+            var reloadedRaised = false;
+            settings.Reloaded += (sender, e) => reloadedRaised = true;
+
+            Assert.ThrowsExactly<InvalidOperationException>(() => settings.Reload(JsonConvert.DeserializeObject<AppSettings>(updatedJson)));
+
+            Assert.IsFalse(reloadedRaised);
+            Assert.AreEqual(before, (settings.MaxNumberOfBots, settings.MaxNumberOfBotsPerMarket, settings.BlacklistedMarkets, settings.SpreadConfigurations));
+        }
     }
 }

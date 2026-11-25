@@ -6,6 +6,10 @@ using SpreadBot.Logic.BotStrategies.Spread;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Tests
@@ -179,6 +183,55 @@ namespace SpreadBot.Tests
             await new SpreadBuyOrderActiveStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [TestMethod]
+        public async Task BuyOrderActive_LogsEachBuyItHoldsOnAnOfflineMarket_Once()
+        {
+            // buy-1 filled and the market came back online while the bot was in another state, so this state never saw it online
+            var (repository, _) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
+            var market = Market(ask: Bid + 6 * MockExchange.Tick);
+            market.Status = EMarketStatus.Offline;
+            var context = new BotContext(configuration, market, BotState.BuyOrderActive, 0);
+            var strategy = new SpreadBuyOrderActiveStateStrategy(TestStrategies.Filters());
+            var marker = $"held-buys-test {context.Guid}";
+            var seen = new List<string>();
+            void listen(Logger.LogEntry entry)
+            {
+                if (entry.Content.Contains(context.Guid.ToString()))
+                    lock (seen) seen.Add(entry.Content);
+            }
+
+            Logger.Instance.Logged += listen;
+            try
+            {
+                foreach (var orderId in new[] { "buy-1", "buy-1", "buy-2", "buy-2" })
+                {
+                    context.CurrentOrderData = new OrderData { Id = orderId, Status = OrderStatus.OPEN, Limit = Bid };
+                    await strategy.ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+                }
+                Logger.Instance.LogMessage(marker);
+
+                WaitUntil(() => { lock (seen) return seen.Contains(marker); }, "the logs before the marker are reported");
+                lock (seen)
+                    CollectionAssert.AreEqual(new[] { "buy-1", "buy-2" }, seen.Where(log => log != marker).Select(log => log.Contains("buy-1") ? "buy-1" : "buy-2").ToArray());
+            }
+            finally
+            {
+                Logger.Instance.Logged -= listen;
+            }
+        }
+
+        private static void WaitUntil(Func<bool> condition, string description)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            while (!condition())
+            {
+                if (stopwatch.ElapsedMilliseconds > 2000)
+                    Assert.Fail($"Timed out waiting until {description}");
+                Thread.Sleep(10);
+            }
         }
 
         /// <summary>

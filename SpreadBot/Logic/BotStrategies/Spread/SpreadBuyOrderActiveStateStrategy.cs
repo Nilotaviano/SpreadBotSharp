@@ -9,8 +9,9 @@ namespace SpreadBot.Logic.BotStrategies.Spread
     {
         private readonly MarketFilters marketFilters;
 
+        //The resting buy whose hold on an offline market was logged; null while the market is online.
         //Each bot has its own instance, and its market updates are processed one at a time
-        private bool holdingWhileOffline;
+        private string heldOfflineOrderId;
 
         public SpreadBuyOrderActiveStateStrategy(MarketFilters marketFilters)
         {
@@ -23,13 +24,13 @@ namespace SpreadBot.Logic.BotStrategies.Spread
             //every update. The buy rests; the order stream or a resync books it if it fills or the exchange cancels it
             if (botContext.LatestMarketData.Status != EMarketStatus.Online)
             {
-                if (!holdingWhileOffline)
+                if (heldOfflineOrderId != botContext.CurrentOrderData.Id)
                     Logger.Instance.LogError($"Bot {botContext.Guid}: {botContext.LatestMarketData.Symbol} is offline, so its buy {botContext.CurrentOrderData.Id} rests untouched until the market is back online, the buy fills or the exchange cancels it");
-                holdingWhileOffline = true;
+                heldOfflineOrderId = botContext.CurrentOrderData.Id;
                 return;
             }
 
-            holdingWhileOffline = false;
+            heldOfflineOrderId = null;
 
             if (marketFilters.BuyingRejection(botContext.LatestMarketData, botContext.spreadConfiguration, botContext.CurrentOrderData.Limit) != null)
             {
