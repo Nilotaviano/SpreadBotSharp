@@ -122,6 +122,37 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void ABotLeavingAMarket_FreesItsSlotUnderTheCap()
+        {
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            exchange.Mock
+                .Setup(e => e.BuyLimit("NMR/BTC", It.IsAny<decimal>(), It.IsAny<decimal>()))
+                .ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m });
+            exchange.Mock
+                .Setup(e => e.CancelOrder("buy-1", "NMR/BTC"))
+                .ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m });
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots);
+            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => bots.RemoveAll(b => b.Guid == id) > 0);
+            var patient = Configuration(0.2m);
+            patient.MinutesForLoss = 60;
+            var settings = Settings(Configuration(0.2m));
+            settings.SpreadConfigurations = new[] { Configuration(0.2m), patient };
+            settings.MaxNumberOfBots = 4;
+            var coordinator = new Coordinator(settings, repository, context.Object);
+            coordinator.Start();
+            Assert.AreEqual(1, bots.Count, "the cap of 1 keeps the second configuration off the market");
+            var first = bots[0];
+            WaitUntil(() => first.botContext.BotState == BotState.BuyOrderActive && first.botContext.SemaphoreCurrentCount == 1, "the first bot's buy rests");
+
+            coordinator.FinishBot(first.Guid);
+            WaitUntil(() => !bots.Contains(first), "the first bot leaves");
+            exchange.PushTicker(MockExchange.Ticker("NMR/BTC", ask: 0.00010102m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+
+            WaitUntil(() => bots.Count == 1 && bots[0] != first, "the market takes a new bot");
+        }
+
+        [TestMethod]
         public void RestoredSession_KeepsMoreBotsOnAMarketThanTheCap_AndAddsNone()
         {
             var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
@@ -187,10 +218,13 @@ namespace SpreadBot.Tests
                 bots.Add(bot);
             });
 
-            Assert.ThrowsExactly<InvalidOperationException>(() => new Coordinator(Settings(Configuration(0.3m)), repository, context.Object).Start());
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
 
             Assert.AreEqual(1, bots.Count);
             var symbol = bots[0].MarketSymbol;
+            CollectionAssert.AreEqual(new[] { symbol }, coordinator.AllocatedMarketsPerSpreadConfiguration.Values.SelectMany(markets => markets.Keys).ToArray(),
+                "the failed market isn't left reserved, where it would count against the per-market cap");
             WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.BuyLimit) && (string)i.Arguments[0] == symbol),
                 "the allocated bot starts and places its buy");
         }

@@ -18,10 +18,11 @@ namespace SpreadBot.Logic.BotStrategies.Spread
         {
             var market = botContext.LatestMarketData;
 
-            //The market no longer passes the filters it was allocated on (e.g. its spread narrowed, or it started pumping). Before its
-            //first quote (a restored bot's market) only its own state can rule it out: a missing quote would read as a zero spread
-            var hasQuote = market.BidRate > 0 && market.AskRate > 0;
-            var rejection = hasQuote ? marketFilters.Rejection(market, botContext.spreadConfiguration) : marketFilters.ViabilityRejection(market);
+            //The market no longer passes the filters it was allocated on (e.g. its spread narrowed, or it started pumping). Before it
+            //shows a bid or an ask (a restored bot's market) only its own state can rule it out: no quote at all would read as a zero
+            //spread. A one-sided quote is judged in full, and its zero spread leaves
+            var quoted = market.BidRate > 0 || market.AskRate > 0;
+            var rejection = quoted ? marketFilters.Rejection(market, botContext.spreadConfiguration) : marketFilters.ViabilityRejection(market);
             if (rejection != null)
             {
                 Logger.Instance.LogMessage($"Bot {botContext.Guid}: leaving {market.Symbol}: {rejection}");
@@ -29,8 +30,8 @@ namespace SpreadBot.Logic.BotStrategies.Spread
                 return;
             }
 
-            //Without the market's tick there's no valid price to improve the bid by
-            if (!hasQuote || !(market.PriceTick is decimal tick))
+            //Without both sides and the market's tick there's no valid price to improve the bid by
+            if (!(market.BidRate > 0) || !(market.AskRate > 0) || !(market.PriceTick is decimal tick))
                 return;
 
             decimal bidPrice = (market.BidRate.Value + tick).CeilToTick(tick);

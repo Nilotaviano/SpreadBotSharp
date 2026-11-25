@@ -101,6 +101,24 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        [DataRow(true, false, true)] // a bid but no ask: a zero spread
+        [DataRow(false, true, true)]
+        [DataRow(false, false, false)] // no quote yet: waits for one
+        public async Task Buy_OnAMarketWithoutABidOrAnAsk(bool hasBid, bool hasAsk, bool expectLeaves)
+        {
+            var (repository, exchange) = Repository();
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
+            var market = new MarketData { Symbol = Symbol, BidRate = hasBid ? Bid : null, AskRate = hasAsk ? Bid + 3 * MockExchange.Tick : null, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
+            var context = new BotContext(configuration, market, BotState.Buying, 0) { Balance = 0.001m };
+            var finished = false;
+
+            await new SpreadBuyStateStrategy(TestStrategies.Filters()).ProcessMarketData(repository, context, PlaceOrder, () => { finished = true; return Task.CompletedTask; });
+
+            Assert.AreEqual(expectLeaves, finished);
+            exchange.Mock.Verify(e => e.BuyLimit(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Never);
+        }
+
+        [TestMethod]
         public async Task BuyOrderActive_CancelsItsBuy_WhenTheMarketStopsPassingTheFilters()
         {
             // Spread and price are fine and the buy is still the best bid, but the volume dropped below the minimum
