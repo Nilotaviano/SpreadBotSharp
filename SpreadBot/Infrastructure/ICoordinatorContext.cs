@@ -38,6 +38,11 @@ namespace SpreadBot.Infrastructure
         decimal RemoveDustForMarket(string marketSymbol);
 
         /// <summary>
+        /// The recorded dust of every market
+        /// </summary>
+        IEnumerable<KeyValuePair<string, decimal>> GetDustPerMarket();
+
+        /// <summary>
         /// Gets the number of bots stored
         /// </summary>
         int GetBotCount();
@@ -60,5 +65,10 @@ namespace SpreadBot.Infrastructure
         /// <param name="botId">The id of the bot to remove</param>
         /// <returns>True if a bot with the equivalent id has been removed, false otherwise</returns>
         bool RemoveBot(Guid botId);
+
+        /// <summary>
+        /// Saves now whatever a debounced save would, e.g. before the process exits
+        /// </summary>
+        void Save();
     }
 }

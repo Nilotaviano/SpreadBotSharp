@@ -7,9 +7,15 @@ namespace SpreadBot.Logic.BotStrategies
 {
     public class BotStrategiesFactory
     {
-        public IBotStrategy GetStrategy(/*For future reference: this should receive a strategy id to generate the correct strategy*/)
+        public IBotStrategy GetStrategy(BotStrategyType strategyType)
         {
-            return new SpreadStrategy();
+            return strategyType switch
+            {
+                BotStrategyType.Spread => new SpreadStrategy(new BreakEvenSellFloor()),
+                BotStrategyType.PatientSpread => new SpreadStrategy(new DecayingSellFloor()),
+                BotStrategyType.CalmSpread => new CalmSpreadStrategy(new SpreadStrategy(new BreakEvenSellFloor())),
+                _ => throw new ArgumentOutOfRangeException(nameof(strategyType), strategyType, "Unknown bot strategy")
+            };
         }
     }
 }

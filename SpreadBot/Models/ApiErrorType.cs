@@ -13,6 +13,7 @@
         OrderNotOpen,
         CannotEstimateCommission,
         PrecisionNotAllowed,
-        ClientOrderIdAlreadyExists
+        ClientOrderIdAlreadyExists,
+        OrderStateUnknown
     }
 }

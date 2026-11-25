@@ -1,8 +1,7 @@
 ﻿using SpreadBot.Logic;
 using SpreadBot.Models.Repository;
 using System;
-using System.Diagnostics;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace SpreadBot.Infrastructure
 {
@@ -10,14 +9,15 @@ namespace SpreadBot.Infrastructure
     {
         public event EventHandler ContextChanged;
 
-        public Guid Guid { get; private set; }
+        //Set when a bot is restored, so its stored row and orders stay its own
+        public Guid Guid { get; init; } = Guid.NewGuid();
 
         public readonly SpreadConfiguration spreadConfiguration;
-        public readonly Stopwatch buyStopwatch = new Stopwatch();
 
         private MarketData latestMarketData;
         private OrderData currentOrderData;
         private decimal boughtPrice;
+        private DateTime? buyFilledAt;
         private BotState botState;
         private decimal heldAmount;
         private decimal balance;
@@ -25,12 +25,11 @@ namespace SpreadBot.Infrastructure
         [JsonIgnore]
         public readonly SemaphoreQueue Semaphore = new SemaphoreQueue(1, 1);
 
-        //Just so that this exists o coordinatorContext.json
+        //Shown when the context is logged
         public int SemaphoreCurrentCount => Semaphore.CurrentCount;
 
         public BotContext(SpreadConfiguration spreadConfiguration, MarketData marketData, BotState buy, decimal existingDust)
         {
-            Guid = Guid.NewGuid();
             this.spreadConfiguration = spreadConfiguration;
             this.LatestMarketData = marketData;
             this.BotState = buy;
@@ -97,6 +96,31 @@ namespace SpreadBot.Infrastructure
                 boughtPrice = value;
                 NotifyPropertyChanged();
             }
+        }
+
+        public DateTime? BuyFilledAt
+        {
+            get => buyFilledAt;
+            set
+            {
+                buyFilledAt = value;
+                NotifyPropertyChanged();
+            }
+        }
+
+        public bool CanSellAtLoss(DateTime utcNow)
+        {
+            return BuyFilledAt.HasValue && (utcNow - BuyFilledAt.Value).TotalMinutes > spreadConfiguration.MinutesForLoss;
+        }
+
+        /// <summary>
+        /// The lowest sell price that recovers what coins bought at <see cref="BoughtPrice"/> cost, with both the buy and the sell charged
+        /// <paramref name="feeRate"/>. A buy fee taken from the coins (B / (1 - fee) per coin held) costs more than one charged on top
+        /// (B × (1 + fee)), so it assumes the former. Inherited dust is priced at the bot's last buy too: its real cost isn't known.
+        /// </summary>
+        public decimal BreakEvenPrice(decimal feeRate)
+        {
+            return BoughtPrice / ((1 - feeRate) * (1 - feeRate));
         }
 
         private void NotifyPropertyChanged()

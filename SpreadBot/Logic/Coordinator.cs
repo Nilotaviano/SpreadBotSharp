@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SpreadBot.Logic
 {
@@ -16,11 +17,24 @@ namespace SpreadBot.Logic
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
         private readonly ICoordinatorContext context;
+        private readonly BalanceLedger balanceLedger;
         private readonly Guid guid;
-        private ConcurrentDictionary<string, decimal> availableBalanceForBaseMarket;
         private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
-        private readonly SemaphoreQueue balanceSemaphore = new SemaphoreQueue(1, 1);
+        //Allocation decisions read the bots and balances, so allocating and unallocating must not interleave
+        private readonly object allocationLock = new object();
+
+        //How long a halt waits for the bots to cancel their orders
+        internal static readonly TimeSpan HaltTimeout = TimeSpan.FromSeconds(60);
+        //Under allocationLock
+        private bool halted;
+        private string haltReason;
+        private bool allocationPaused;
+        private DateTime haltRetryUntil;
+        private readonly List<Task> haltingBots = new List<Task>();
+        //Set once Start's restore is over, so a halt knows every bot it must wait for
+        private readonly TaskCompletionSource restoreDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource haltCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>> AllocatedMarketsPerSpreadConfiguration { get; } = new ConcurrentDictionary<SpreadConfiguration, ConcurrentDictionary<string, bool>>();
 
@@ -29,9 +43,8 @@ namespace SpreadBot.Logic
             this.appSettings = appSettings;
             this.dataRepository = dataRepository;
             this.context = context;
-            this.guid = new Guid();
-
-            availableBalanceForBaseMarket = new ConcurrentDictionary<string, decimal>();
+            this.balanceLedger = new BalanceLedger(dataRepository, context);
+            this.guid = Guid.NewGuid();
 
             this.appSettings.Reloaded += AppSettings_Reloaded;
 
@@ -45,21 +58,83 @@ namespace SpreadBot.Logic
 
         private void UpdateAppSettings()
         {
-            configurationsByBaseMarket?.Clear();
+            //A reload runs on the file watcher's thread while evaluation and balance reporting read the grouping: swap in a new one, never mutate it
+            var regrouped = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
 
-            configurationsByBaseMarket = appSettings.SpreadConfigurations.GroupBy(c => c.BaseMarket).ToDictionary(group => group.Key);
-
-            // TODO This may break when restoring bots for different base markets
-            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-            {
-                availableBalanceForBaseMarket.TryAdd(baseMarket, this.dataRepository.BalancesData[baseMarket].Amount);
-            }
+            lock (allocationLock)
+                configurationsByBaseMarket = regrouped;
         }
+
+        /// <summary>
+        /// Completes once a halt has stopped the bots (or <see cref="HaltTimeout"/> passed).
+        /// </summary>
+        public Task Halted => haltCompleted.Task;
+
+        public bool IsHalted
+        {
+            get { lock (allocationLock) return halted; }
+        }
+
+        public string HaltReason
+        {
+            get { lock (allocationLock) return haltReason; }
+        }
+
+        public bool IsAllocationPaused
+        {
+            get { lock (allocationLock) return allocationPaused; }
+        }
+
+        public IEnumerable<SpreadConfiguration> Configurations
+        {
+            get { lock (allocationLock) return configurationsByBaseMarket.Values.SelectMany(group => group).ToList(); }
+        }
+
+        /// <summary>
+        /// While paused no new bot is allocated; running bots carry on.
+        /// </summary>
+        public void SetAllocationPaused(bool paused)
+        {
+            lock (allocationLock)
+                allocationPaused = paused;
+
+            Logger.Instance.LogMessage(paused ? "Allocation paused" : "Allocation resumed");
+        }
+
+        /// <summary>
+        /// Asks one bot to stop: see <see cref="Bot.RequestFinish"/>. False if no such bot is allocated.
+        /// </summary>
+        public bool FinishBot(Guid botId)
+        {
+            var bot = context.GetBots().FirstOrDefault(b => b.Guid == botId);
+            if (bot == null)
+                return false;
+
+            Logger.Instance.LogMessage($"Finishing bot {botId} on {bot.MarketSymbol} on request");
+            _ = Task.Run(bot.RequestFinish);
+            return true;
+        }
+
+        /// <summary>
+        /// Why <paramref name="market"/> can't get a bot of <paramref name="configuration"/>, or null if it can (balance and bot slots aside).
+        /// </summary>
+        public static string WhyNotAllocatable(MarketData market, SpreadConfiguration configuration) =>
+            ViabilityRejection(market) ?? ConfigurationRejection(market, configuration);
 
         public void Start()
         {
-            if (appSettings.TryToRestoreSession)
-                RestorePreviousSession();
+            //First, so restoring bots can already halt
+            dataRepository.Exchange.OnFatalError(error => Halt($"{error.ApiErrorType}: {error.Message}"));
+
+            try
+            {
+                if (appSettings.TryToRestoreSession)
+                    RestorePreviousSession();
+            }
+            finally
+            {
+                restoreDone.TrySetResult();
+            }
 
             this.dataRepository.SubscribeToMarketsData(guid, EvaluateMarkets);
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
@@ -82,13 +157,25 @@ namespace SpreadBot.Logic
             {
                 foreach (var botContext in previousSession.BotContexts)
                 {
-                    var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory);
+                    //Saved while finishing: a restored bot would ignore every message and never unallocate, so do its unallocation here
+                    if (botContext.BotState == BotState.FinishedWork)
+                    {
+                        if (botContext.HeldAmount > 0)
+                            context.AddDustForMarket(botContext.LatestMarketData.Symbol, botContext.HeldAmount);
+
+                        context.RemoveBot(botContext.Guid);
+                        Logger.Instance.LogError($"A bot on {botContext.LatestMarketData.Symbol} was saved while finishing; not restoring it. Its {botContext.HeldAmount}{botContext.LatestMarketData.Target} are recorded as dust and its profit as of that save");
+                        continue;
+                    }
+
+                    var bot = new Bot(dataRepository, botContext, UnallocateBot, botStrategiesFactory, balanceLedger);
 
                     var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(bot.botContext.spreadConfiguration, key => new ConcurrentDictionary<string, bool>());
 
                     allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
 
                     AllocateBot(bot);
+                    bot.Start();
 
                     Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
                 }
@@ -101,7 +188,26 @@ namespace SpreadBot.Logic
         /// <param name="marketDeltas">Markets that were updated</param>
         private void EvaluateMarkets(IEnumerable<MarketData> marketDeltas)
         {
-            if (context.GetBotCount() >= appSettings.MaxNumberOfBots)
+            var allocatedBots = new List<Bot>();
+
+            try
+            {
+                //Summaries and tickers are consumed on separate threads; evaluating concurrently could grant the same balance twice
+                lock (allocationLock)
+                    EvaluateMarketsSerialized(marketDeltas, allocatedBots);
+            }
+            finally
+            {
+                //Started outside the lock so nothing a bot does on start can block allocation, and even if a later
+                //market failed: an allocated bot that never starts would hold its balance and market forever
+                foreach (var bot in allocatedBots)
+                    bot.Start();
+            }
+        }
+
+        private void EvaluateMarketsSerialized(IEnumerable<MarketData> marketDeltas, List<Bot> allocatedBots)
+        {
+            if (halted || allocationPaused || context.GetBotCount() >= appSettings.MaxNumberOfBots)
                 return;
 
             var marketDeltasByBaseMarket = marketDeltas.GroupBy(m => m.BaseMarket);
@@ -119,7 +225,7 @@ namespace SpreadBot.Logic
 
                 foreach (var market in orderedMarkets)
                 {
-                    if (!IsViableMarket(market))
+                    if (ViabilityRejection(market) != null)
                         continue;
 
                     // Optimization for stop looking for markets if is not possible to allocate any configuration
@@ -148,10 +254,11 @@ namespace SpreadBot.Logic
 
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
-                        var existingDust = context.RemoveDustForMarket(market.Symbol);
-                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory);
+                        var existingDust = GetInheritableDust(market);
+                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory, balanceLedger);
 
                         AllocateBot(bot);
+                        allocatedBots.Add(bot);
                     }
 
                     if (!anyConfigurationAvailable)
@@ -162,78 +269,175 @@ namespace SpreadBot.Logic
 
         private void AllocateBot(Bot bot)
         {
-            ExecuteBalanceRelatedAction($"allocating bot {bot.Guid}", () =>
+            lock (allocationLock)
             {
                 context.AddBot(bot);
-                availableBalanceForBaseMarket.AddOrUpdate(
-                    bot.BaseMarket,
-                    bot.Balance * -1,
-                    (b, oldValue) => oldValue - bot.Balance
-                );
+                Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Unallocated balance: {balanceLedger.UnallocatedBaseBalance(bot.BaseMarket)}{bot.BaseMarket}");
 
-                Logger.Instance.LogMessage($"Granted {bot.Balance}{bot.BaseMarket} to bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
-                bot.Start();
-            });
+                //Only a restore allocates after a halt: the bot is kept, so it's saved for the next session, but it doesn't trade
+                if (halted)
+                    haltingBots.Add(Task.Run(() => bot.Halt(haltRetryUntil)));
+            }
         }
 
-        private bool IsViableMarket(MarketData market)
+        /// <summary>
+        /// Stops trading for good: no bot is allocated from now on, and every bot stops and cancels its open order. The bots keep their
+        /// state and allocation, so the saved session resumes them. <see cref="Halted"/> completes once they're done.
+        /// </summary>
+        public void Halt(string reason)
         {
-            return string.IsNullOrWhiteSpace(market.Notice) && market.Status == EMarketStatus.Online;
+            lock (allocationLock)
+            {
+                if (halted)
+                    return;
+
+                halted = true;
+                haltReason = reason;
+                //A cancel is up to three requests (cancel, fetch, the fill's trades) of up to 10 s each; one started by then answers within HaltTimeout
+                haltRetryUntil = DateTime.UtcNow + HaltTimeout - TimeSpan.FromSeconds(30);
+                //Off the caller's thread: it may be a bot's failing request, holding the semaphore that bot's halt waits for
+                haltingBots.AddRange(context.GetBots().ToList().Select(bot => Task.Run(() => bot.Halt(haltRetryUntil))));
+            }
+
+            Logger.Instance.LogUnexpectedError($"Halting all trading: {reason}");
+
+            _ = HaltBots();
+        }
+
+        private async Task HaltBots()
+        {
+            var deadline = DateTime.UtcNow + HaltTimeout;
+            try
+            {
+                //A restore in progress can still allocate (and halt) bots; after it, nothing allocates
+                if (!await WaitUntil(restoreDone.Task, deadline))
+                {
+                    Logger.Instance.LogUnexpectedError($"The session restore was still running {HaltTimeout.TotalSeconds}s after the halt; stopping without the bots it allocates");
+                    return;
+                }
+
+                while (true)
+                {
+                    Task[] halting;
+                    lock (allocationLock)
+                        halting = haltingBots.ToArray();
+
+                    if (!await WaitUntil(Task.WhenAll(halting), deadline))
+                    {
+                        Logger.Instance.LogUnexpectedError($"Bots still halting after {HaltTimeout.TotalSeconds}s; stopping without them");
+                        return;
+                    }
+
+                    lock (allocationLock)
+                        if (haltingBots.Count == halting.Length)
+                            return;
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Instance.LogUnexpectedError($"Error while halting the bots: {e}");
+            }
+            finally
+            {
+                haltCompleted.TrySetResult();
+            }
+        }
+
+        private static async Task<bool> WaitUntil(Task task, DateTime deadline)
+        {
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining > TimeSpan.Zero && await Task.WhenAny(task, Task.Delay(remaining)) == task)
+            {
+                await task;
+                return true;
+            }
+
+            return task.IsCompleted;
+        }
+
+        private static string ViabilityRejection(MarketData market)
+        {
+            if (!string.IsNullOrWhiteSpace(market.Notice))
+                return $"notice: {market.Notice}";
+            if (market.Status != EMarketStatus.Online)
+                return "offline";
+            //The strategies can't quote a market without a tick, so its bot would hold a slot and its balance forever
+            if (!(market.PriceTick > 0))
+                return "no price tick";
+            return null;
         }
 
         private void ReportBalance()
         {
-            ExecuteBalanceRelatedAction("reporting balance", () =>
-            {
-                foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
-                {
-                    decimal balanceForBaseMarket = context.GetBots().Where(b => b.BaseMarket == baseMarket).Aggregate(availableBalanceForBaseMarket[baseMarket], (value, bot) => value + bot.Balance + (bot.HeldAmount * bot.LastTradeRate));
-                    BalanceReporter.Instance.ReportBalance(balanceForBaseMarket, baseMarket);
-                }
-            });
+            foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
+                BalanceReporter.Instance.ReportBalance(balanceLedger.TotalValue(baseMarket), baseMarket);
         }
 
-        private (decimal, decimal) GetMarketOrderKey(MarketData marketData)
+        internal static (decimal, decimal) GetMarketOrderKey(MarketData marketData)
         {
             return (marketData.QuoteVolume.GetValueOrDefault(0), marketData.SpreadPercentage);
         }
 
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
-            if (marketData.LastTradeRate < spreadConfiguration.MinimumPrice)
-                return false;
+            var rejection = ConfigurationRejection(marketData, spreadConfiguration);
+            if (rejection == null)
+                return true;
 
-            if (marketData.SpreadPercentage < spreadConfiguration.MinimumSpreadPercentage || marketData.QuoteVolume < spreadConfiguration.MinimumQuoteVolume)
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has not enough volume ({marketData.QuoteVolume}) or spread ({marketData.SpreadPercentage})");
-                return false;
-            }
+            //Most markets are below the minimum price; logging each would drown the rest
+            if (!(marketData.LastTradeRate < spreadConfiguration.MinimumPrice))
+                Logger.Instance.LogMessage($"Market {marketData.Symbol}: {rejection}");
 
-            if (marketData.PercentChange > spreadConfiguration.MaxPercentChangeFromPreviousDay)
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is pumping {marketData.PercentChange}%");
-                return false;
-            }
+            return false;
+        }
 
-            if(spreadConfiguration.AvoidTokenizedSecurities && marketData.IsTokenizedSecurity.GetValueOrDefault())
-            {
-                Logger.Instance.LogMessage($"Market {marketData.Symbol} has enough spread ({marketData.SpreadPercentage}) and volume ({marketData.QuoteVolume}), but is a tokenized security");
-                return false;
-            }
-
-            return true;
+        private static string ConfigurationRejection(MarketData market, SpreadConfiguration configuration)
+        {
+            if (market.LastTradeRate < configuration.MinimumPrice)
+                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
+            if (market.SpreadPercentage < configuration.MinimumSpreadPercentage)
+                return $"spread {market.SpreadPercentage:0.###}% below the minimum {configuration.MinimumSpreadPercentage}%";
+            if (market.QuoteVolume < configuration.MinimumQuoteVolume)
+                return $"volume {market.QuoteVolume:0.####} below the minimum {configuration.MinimumQuoteVolume}";
+            if (market.PercentChange > configuration.MaxPercentChangeFromPreviousDay)
+                return $"up {market.PercentChange:0.##}% in 24 h, above the maximum {configuration.MaxPercentChangeFromPreviousDay}%";
+            if (configuration.AvoidTokenizedSecurities && market.IsTokenizedSecurity.GetValueOrDefault())
+                return "a tokenized security";
+            return null;
         }
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
             return context.GetBotCount() < appSettings.MaxNumberOfBots
-                && availableBalanceForBaseMarket.TryGetValue(spreadConfiguration.BaseMarket, out var balance) 
-                && balance > spreadConfiguration.AllocatedAmountOfBaseCurrency;
+                && balanceLedger.UnallocatedBaseBalance(spreadConfiguration.BaseMarket) > spreadConfiguration.AllocatedAmountOfBaseCurrency;
+        }
+
+        /// <summary>
+        /// Recorded dust for the market, capped at the coins actually available on the exchange. A bot that finished
+        /// after a failed sell records holdings the exchange may not have, and inheriting them would make every
+        /// later sell on that market fail with insufficient funds.
+        /// </summary>
+        private decimal GetInheritableDust(MarketData market)
+        {
+            var recordedDust = context.RemoveDustForMarket(market.Symbol);
+
+            //Coins recorded as dust on the coin's other markets are theirs to inherit
+            var dustOfOtherMarkets = context.GetDustPerMarket()
+                .Where(dust => dust.Key != market.Symbol && MarketData.TargetOf(dust.Key) == market.Target)
+                .Sum(dust => dust.Value);
+            var inheritable = Math.Max(balanceLedger.UnclaimedCoins(market.Target) - dustOfOtherMarkets, 0);
+
+            if (recordedDust <= inheritable)
+                return recordedDust;
+
+            //Kept recorded, coins that aren't on the exchange would be inherited again and again and take other markets' real dust
+            Logger.Instance.LogUnexpectedError($"Recorded dust {recordedDust}{market.Target} for {market.Symbol} exceeds the {inheritable}{market.Target} unclaimed on the exchange; inheriting only that and dropping the rest");
+            return inheritable;
         }
 
         private void UnallocateBot(Bot bot)
         {
-            ExecuteBalanceRelatedAction($"unallocating bot {bot.Guid}", () =>
+            lock (allocationLock)
             {
                 bool removeAllocatedBot = context.RemoveBot(bot.Guid);
                 bool removedAllocatedMarket = AllocatedMarketsPerSpreadConfiguration[bot.botContext.spreadConfiguration].TryRemove(bot.MarketSymbol, out _);
@@ -247,46 +451,24 @@ namespace SpreadBot.Logic
                 Debug.Assert(removeAllocatedBot, "Bot should have been removed successfully");
                 Debug.Assert(removedAllocatedMarket, $"Market {bot.MarketSymbol} had already been deallocated from configuration {bot.botContext.spreadConfiguration.GetHashCode()}");
 
-                availableBalanceForBaseMarket.AddOrUpdate(bot.BaseMarket, bot.Balance, (key, oldBalance) => oldBalance + bot.Balance);
-                Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}. Total available balance: {availableBalanceForBaseMarket[bot.BaseMarket]}{bot.BaseMarket}");
+                Logger.Instance.LogMessage($"Recovered {bot.Balance}{bot.BaseMarket} from bot {bot.Guid}");
 
                 if (bot.HeldAmount > 0)
                     context.AddDustForMarket(bot.MarketSymbol, bot.HeldAmount);
-            });
+            }
         }
 
-        private static IComparer<(decimal, decimal)> GetMarketComparer()
+        internal static IComparer<(decimal, decimal)> GetMarketComparer()
         {
             return Comparer<(decimal, decimal)>.Create((key1, key2) =>
             {
-                return (key2.Item1 * key2.Item2).CompareTo(key1.Item1 * key2.Item2);
+                return (key2.Item1 * key2.Item2).CompareTo(key1.Item1 * key1.Item2);
                 //// Descending order
                 //var result = key2.Item1.CompareTo(key1.Item1);
                 //if (result == 0)
                 //    return key2.Item2.CompareTo(key1.Item2);
                 //return result;
             });
-        }
-
-        private void ExecuteBalanceRelatedAction(string description, Action action)
-        {
-            balanceSemaphore.Wait();
-
-            try
-            {
-                Logger.Instance.LogMessage($"Lock acquired for {description}");
-
-                action();
-            } catch (Exception e)
-            {
-                Logger.Instance.LogError($"Error while {description}. Exception: {e}");
-                throw e;
-            }
-            finally
-            {
-                balanceSemaphore.Release();
-                Logger.Instance.LogMessage($"Lock released after {description}");
-            }
         }
 
         public void Dispose()

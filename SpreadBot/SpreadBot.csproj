@@ -2,19 +2,36 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
-    <RuntimeIdentifiers>win10-x64;ubuntu.16.10-x64</RuntimeIdentifiers>
-    <PublishTrimmed>true</PublishTrimmed>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNet.SignalR.Client" Version="2.4.1" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="5.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="5.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="5.0.0" />
-    <PackageReference Include="RestSharp" Version="106.11.4" />
+    <PackageReference Include="ccxt" Version="4.5.94" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.12" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Telegram.Bot" Version="15.7.1" />
+    <PackageReference Include="WebPush" Version="1.0.13" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpreadBot.Tests" />
+  </ItemGroup>
+
+  <!-- The dashboard: Kestrel and minimal APIs, with the PWA embedded so the single-file publish carries it -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <EmbeddedResource Include="Dashboard\wwwroot\**" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+  </PropertyGroup>
 
   <ItemGroup>
     <None Update="appsettings.json">
