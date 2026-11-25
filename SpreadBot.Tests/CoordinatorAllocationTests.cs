@@ -258,6 +258,21 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void InheritingDustFailing_LeavesTheDustRecorded()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("NMR", 2, 2) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots, dust: 1);
+            context.Setup(c => c.GetDustPerMarket()).Throws(new InvalidOperationException("the dust can't be read"));
+
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
+
+            Assert.AreEqual(0, bots.Count);
+            context.Verify(c => c.RemoveDustForMarket(It.IsAny<string>()), Times.Never);
+        }
+
+        [TestMethod]
         public void AllocationFailingAfterTheBotIsStored_KeepsItReservedAndStartsIt()
         {
             var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA/BTC", "BBB/BTC");

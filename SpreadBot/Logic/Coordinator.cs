@@ -443,13 +443,14 @@ namespace SpreadBot.Logic
         /// </summary>
         private decimal GetInheritableDust(MarketData market)
         {
-            var recordedDust = context.RemoveDustForMarket(market.Symbol);
-
             //Coins recorded as dust on the coin's other markets are theirs to inherit
             var dustOfOtherMarkets = context.GetDustPerMarket()
                 .Where(dust => dust.Key != market.Symbol && MarketData.TargetOf(dust.Key) == market.Target)
                 .Sum(dust => dust.Value);
             var inheritable = Math.Max(balanceLedger.UnclaimedCoins(market.Target) - dustOfOtherMarkets, 0);
+
+            //Last, so a failure above leaves the dust recorded
+            var recordedDust = context.RemoveDustForMarket(market.Symbol);
 
             if (recordedDust <= inheritable)
                 return recordedDust;
