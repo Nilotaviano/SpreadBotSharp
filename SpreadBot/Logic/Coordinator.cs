@@ -67,9 +67,10 @@ namespace SpreadBot.Logic
             lock (allocationLock)
                 configurationsByBaseMarket = regrouped;
 
-            //A misspelled entry blacklists nothing, and the bot would trade the coin the operator meant to keep it off
+            //A misspelled entry blacklists nothing, and the bot would trade the coin the operator meant to keep it off. Only the configured base
+            //markets' markets are loaded, so an entry for a coin traded only against others is reported too
             if (!dataRepository.MarketsData.IsEmpty && marketFilters.UnmatchedBlacklistEntries(dataRepository.MarketsData.Values) is { Count: > 0 } unmatched)
-                Logger.Instance.LogError($"{nameof(AppSettings.BlacklistedMarkets)} entries {string.Join(", ", unmatched)} name no watched market or coin (e.g. NMR or NMR/BTC), so they blacklist nothing");
+                Logger.Instance.LogError($"{nameof(AppSettings.BlacklistedMarkets)} entries {string.Join(", ", unmatched)} name no coin or market traded against a configured base market; if that isn't why, check their spelling (a coin like NMR, or a market like NMR/BTC)");
         }
 
         /// <summary>
