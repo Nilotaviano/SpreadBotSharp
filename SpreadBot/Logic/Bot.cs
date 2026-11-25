@@ -42,7 +42,7 @@ namespace SpreadBot.Logic
             this.balanceLedger = balanceLedger;
             this.botContext = context;
             this.unallocateBotCallback = unallocateBotCallback;
-            botStrategy = botStrategiesFactory.GetStrategy();
+            botStrategy = botStrategiesFactory.GetStrategy(context.spreadConfiguration.Strategy);
 
             processingMessageTimeExceededTimer = new Timer(TimeSpan.FromMinutes(1).TotalMilliseconds);
             processingMessageTimeExceededTimer.Elapsed += ProcessingMessageTimeExceededTimer_Elapsed;

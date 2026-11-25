@@ -61,7 +61,7 @@ namespace SpreadBot.Tests
             var ask = Bid + MockExchange.Tick;
             var context = new BotContext(configuration, Market(ask), BotState.Bought, 10) { BoughtPrice = Bid, BuyFilledAt = DateTime.UtcNow.AddMinutes(-1) };
 
-            await new SpreadSellStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+            await new SpreadSellStateStrategy(new BreakEvenSellFloor()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             exchange.Mock.Verify(e => e.SellLimit(Symbol, 10, ask), Times.Once);
         }
@@ -74,7 +74,7 @@ namespace SpreadBot.Tests
             var ask = Bid + MockExchange.Tick;
             var context = new BotContext(configuration, Market(ask), BotState.Bought, 10) { BoughtPrice = Bid, BuyFilledAt = DateTime.UtcNow };
 
-            await new SpreadSellStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+            await new SpreadSellStateStrategy(new BreakEvenSellFloor()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             // 100 ticks / 0.99² = 102.03 ticks, rounded up to the tick
             exchange.Mock.Verify(e => e.SellLimit(Symbol, 10, 103 * MockExchange.Tick), Times.Once);
@@ -98,7 +98,7 @@ namespace SpreadBot.Tests
                 CurrentOrderData = new OrderData { Id = "sell-1", Status = OrderStatus.OPEN, Limit = Bid + 5 * MockExchange.Tick }
             };
 
-            await new SpreadSellOrderActiveStateStrategy().ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
+            await new SpreadSellOrderActiveStateStrategy(new BreakEvenSellFloor()).ProcessMarketData(repository, context, PlaceOrder, () => Task.CompletedTask);
 
             exchange.Mock.Verify(e => e.CancelOrder("sell-1", Symbol), expectCancel ? Times.Once() : Times.Never());
         }

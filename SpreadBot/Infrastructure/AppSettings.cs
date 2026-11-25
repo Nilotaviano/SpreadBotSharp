@@ -1,4 +1,6 @@
 ﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
+using SpreadBot.Logic.BotStrategies;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -33,6 +35,8 @@ namespace SpreadBot.Infrastructure
 
     public class SpreadConfiguration
     {
+        [JsonConverter(typeof(StringEnumConverter))]
+        public BotStrategyType Strategy { get; set; }
         public string BaseMarket { get; set; }
         public decimal MaxPercentChangeFromPreviousDay { get; set; }
         public decimal MinimumSpreadPercentage { get; set; }
@@ -47,6 +51,7 @@ namespace SpreadBot.Infrastructure
         public override int GetHashCode()
         {
             return (
+                Strategy,
                 BaseMarket,
                 MaxPercentChangeFromPreviousDay,
                 MinimumSpreadPercentage,
@@ -66,6 +71,7 @@ namespace SpreadBot.Infrastructure
         public bool Equals(SpreadConfiguration obj)
         {
             return obj != null
+                && obj.Strategy == this.Strategy
                 && obj.BaseMarket == this.BaseMarket
                 && obj.MaxPercentChangeFromPreviousDay == this.MaxPercentChangeFromPreviousDay
                 && obj.MinimumSpreadPercentage == this.MinimumSpreadPercentage

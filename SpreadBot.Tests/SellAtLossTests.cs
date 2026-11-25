@@ -39,7 +39,7 @@ namespace SpreadBot.Tests
 
             var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 60000 });
 
-            await new SpreadSellStateStrategy().ProcessMarketData(dataRepository, restored, async placeOrder => await placeOrder(), () => Task.CompletedTask);
+            await new SpreadSellStateStrategy(new BreakEvenSellFloor()).ProcessMarketData(dataRepository, restored, async placeOrder => await placeOrder(), () => Task.CompletedTask);
 
             return sellPrice.Value;
         }
