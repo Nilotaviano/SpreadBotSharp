@@ -76,6 +76,14 @@ namespace SpreadBot.Tests
             return (exchange, repository, bots, new Coordinator(settings, repository, context.Object));
         }
 
+        //Updates are consumed in order, so once the second is in the cache the first one's handlers have run
+        private static void PushAndWait(MockExchange exchange, DataRepository repository, decimal ask)
+        {
+            exchange.PushTicker(MockExchange.Ticker(Symbol, ask: ask, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+            exchange.PushTicker(MockExchange.Ticker(Symbol, ask: ask + MockExchange.Tick, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+            WaitUntil(() => repository.MarketsData[Symbol].AskRate == ask + MockExchange.Tick, "both updates are consumed");
+        }
+
         [TestMethod]
         public void PausedAllocation_AllocatesNothingUntilResumed()
         {
@@ -83,7 +91,8 @@ namespace SpreadBot.Tests
             coordinator.SetAllocationPaused(true);
 
             coordinator.Start();
-            Assert.AreEqual(0, bots.Count);
+            PushAndWait(exchange, repository, 0.00010110m);
+            Assert.AreEqual(0, bots.Count, "a viable market updated while paused");
             Assert.IsTrue(coordinator.IsAllocationPaused);
 
             coordinator.SetAllocationPaused(false);
@@ -123,12 +132,79 @@ namespace SpreadBot.Tests
             {
                 CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow }
             };
-            var bot = new Bot(repository, context, _ => Assert.Fail("must not unallocate"), new BotStrategiesFactory(), TestLedger.Empty(repository));
+            var unallocations = 0;
+            var bot = new Bot(repository, context, _ => unallocations++, new BotStrategiesFactory(), TestLedger.Empty(repository));
 
             bot.RequestFinish().Wait();
 
             Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
+            Assert.AreEqual(0, unallocations);
             exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
+
+        private static (MockExchange exchange, BotContext context, Bot bot, Func<int> unallocations) BotWithOpenBuy(Action<Mock<IExchange>> setup, TimeSpan? cancelBudget = null)
+        {
+            var exchange = new MockExchange();
+            setup(exchange.Mock);
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            var context = new BotContext(Configuration(), Market(), BotState.BuyOrderActive, 0)
+            {
+                CurrentOrderData = new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m, Quantity = 30 }
+            };
+            var unallocations = 0;
+            var bot = new Bot(repository, context, _ => unallocations++, new BotStrategiesFactory(), TestLedger.Empty(repository))
+            {
+                CancelRetryDelay = TimeSpan.FromMilliseconds(10),
+                FinishCancelBudget = cancelBudget ?? TimeSpan.FromSeconds(15)
+            };
+            return (exchange, context, bot, () => unallocations);
+        }
+
+        [TestMethod]
+        public void FinishWhoseCancelKeepsFailing_LeavesTheBotTrading()
+        {
+            var (exchange, context, bot, unallocations) = BotWithOpenBuy(
+                mock => mock.Setup(e => e.CancelOrder("buy-1", Symbol)).ThrowsAsync(new ApiException(ApiErrorType.RetryLater, "server busy")),
+                cancelBudget: TimeSpan.FromMilliseconds(100));
+
+            bot.RequestFinish().Wait();
+
+            Assert.AreEqual(BotState.BuyOrderActive, context.BotState);
+            Assert.AreEqual(OrderStatus.OPEN, context.CurrentOrderData.Status);
+            Assert.AreEqual(0, unallocations());
+            exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.AtLeast(2));
+        }
+
+        [TestMethod]
+        public void FillBookedDuringTheFinish_PlacesNoSellAndIsSoldAtMarket()
+        {
+            // The cancel answers with 20 coins bought: booking them would normally place a sell at once
+            var (exchange, context, bot, unallocations) = BotWithOpenBuy(mock =>
+            {
+                mock.Setup(e => e.CancelOrder("buy-1", Symbol)).ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m, Quantity = 30, FillQuantity = 20, Proceeds = 0.002m });
+                mock.Setup(e => e.SellMarket(Symbol, 20)).ReturnsAsync(new OrderData { Id = "dust", ClientOrderId = "dust", MarketSymbol = Symbol, Direction = OrderDirection.SELL, Status = OrderStatus.CLOSED, FillQuantity = 20, Proceeds = 0.002m });
+            });
+
+            bot.RequestFinish().Wait();
+
+            exchange.Mock.Verify(e => e.SellLimit(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Never);
+            exchange.Mock.Verify(e => e.SellMarket(Symbol, 20), Times.Once);
+            Assert.AreEqual(BotState.FinishedWork, context.BotState);
+            Assert.AreEqual(1, unallocations());
+        }
+
+        [TestMethod]
+        public void HaltedBot_IsntFinishedOnRequest()
+        {
+            var (exchange, context, bot, unallocations) = BotWithOpenBuy(mock =>
+                mock.Setup(e => e.CancelOrder("buy-1", Symbol)).ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m }));
+            bot.Halt(DateTime.UtcNow).Wait();
+
+            bot.RequestFinish().Wait();
+
+            Assert.AreNotEqual(BotState.FinishedWork, context.BotState);
+            Assert.AreEqual(0, unallocations());
+            exchange.Mock.Verify(e => e.SellMarket(It.IsAny<string>(), It.IsAny<decimal>()), Times.Never);
         }
 
         [TestMethod]
@@ -145,6 +221,19 @@ namespace SpreadBot.Tests
 
             WaitUntil(() => repository.LastMarketUpdate >= before && repository.LastBalanceUpdate >= before, "both updates are consumed");
             Assert.IsNull(repository.LastOrderUpdate);
+        }
+
+        [TestMethod]
+        public void Resyncs_AreCountedAndStampedWhenTheyComplete()
+        {
+            var exchange = new MockExchange();
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            repository.StartConsumingData();
+            var before = DateTime.UtcNow;
+
+            repository.RequestResync();
+
+            WaitUntil(() => repository.ResyncCount == 1 && repository.LastResync >= before, "the resync completes");
         }
 
         [TestMethod]

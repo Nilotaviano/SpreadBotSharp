@@ -37,7 +37,7 @@ namespace SpreadBot.Infrastructure
 
         public IExchange Exchange { get; }
 
-        //When each stream last delivered (or a resync refreshed it), and the resyncs: for the dashboard's health view
+        //When each stream last delivered (or a resync refreshed it), the resyncs started and when one last completed: for the dashboard's health view
         private long lastBalanceUpdateTicks, lastMarketUpdateTicks, lastOrderUpdateTicks, lastResyncTicks;
         private int resyncCount;
 
@@ -387,7 +387,6 @@ namespace SpreadBot.Infrastructure
             {
                 Logger.Instance.LogMessage("Resyncing data");
                 System.Threading.Interlocked.Increment(ref resyncCount);
-                Stamp(ref lastResyncTicks);
 
                 var markets = Exchange.GetMarkets().Result;
 
@@ -396,6 +395,7 @@ namespace SpreadBot.Infrastructure
 
                 FetchAllData(markets).Wait();
 
+                Stamp(ref lastResyncTicks);
                 Logger.Instance.LogMessage("Resync completed");
             }
             catch (Exception ex)

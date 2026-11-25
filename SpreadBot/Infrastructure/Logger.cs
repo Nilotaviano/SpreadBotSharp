@@ -21,7 +21,8 @@ namespace SpreadBot.Infrastructure
         }
 
         /// <summary>
-        /// Raised on the logger's thread after each log is written (e.g. for the dashboard's live log).
+        /// Raised on the logger's thread after each log is written (e.g. for the dashboard's live log). A listener must only hand the
+        /// entry off (e.g. queue it): anything slow stalls every log, and logging from it would feed itself.
         /// </summary>
         public event Action<LogEntry> Logged;
 

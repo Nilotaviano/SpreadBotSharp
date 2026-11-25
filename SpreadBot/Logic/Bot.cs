@@ -32,7 +32,11 @@ namespace SpreadBot.Logic
 
         //Set by Halt: the bot places nothing more
         private volatile bool halted;
+        //Set while RequestFinish cancels: a fill booked meanwhile must not place a sell the finish would have to cancel too
+        private volatile bool finishing;
         internal TimeSpan CancelRetryDelay { get; init; } = TimeSpan.FromSeconds(3);
+        //How long a finish on request tries to cancel the open order before giving up
+        internal TimeSpan FinishCancelBudget { get; init; } = TimeSpan.FromSeconds(15);
 
         //Only read and written under BotContext.Semaphore
         private MarketData lastProcessedMarketData;
@@ -360,7 +364,7 @@ namespace SpreadBot.Logic
         {
             botContext.LatestMarketData = marketData;
 
-            if (halted)
+            if (halted || finishing)
                 return;
 
             //The strategy would place another order while this one may be live
@@ -486,11 +490,21 @@ namespace SpreadBot.Logic
         /// </summary>
         public async Task RequestFinish()
         {
+            //Before waiting: messages queued behind the one being processed must not place orders either
+            finishing = true;
+
             await botContext.Semaphore.WaitAsync();
             try
             {
                 if (botContext.BotState == BotState.FinishedWork)
                     return;
+
+                //Halted, it trades no more, selling included
+                if (halted)
+                {
+                    LogError("Not finishing on request: trading is halted");
+                    return;
+                }
 
                 if (botContext.CurrentOrderData?.Status == OrderStatus.UNKNOWN)
                 {
@@ -498,7 +512,7 @@ namespace SpreadBot.Logic
                     return;
                 }
 
-                if (!await CancelCurrentOrder("finish", DateTime.UtcNow + TimeSpan.FromSeconds(15)))
+                if (!await CancelCurrentOrder("finish", DateTime.UtcNow + FinishCancelBudget))
                     return;
 
                 //The cancel's booking may have finished it already
@@ -510,6 +524,8 @@ namespace SpreadBot.Logic
             }
             finally
             {
+                //Refused or given up: it carries on trading
+                finishing = false;
                 botContext.Semaphore.Release();
             }
         }
