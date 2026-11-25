@@ -212,7 +212,9 @@ namespace SpreadBot.Infrastructure.Persistence
             written.Wait();
         }
 
-        private void Enqueue(Action<SpreadBotDbContext> write)
+        internal int PendingWrites => writes.Count;
+
+        internal void Enqueue(Action<SpreadBotDbContext> write)
         {
             //Bots can still change while the process exits; nothing is written after the context is disposed
             lock (lifecycle)
@@ -349,12 +351,7 @@ namespace SpreadBot.Infrastructure.Persistence
                 row.ConfigurationId = ConfigurationId(db, snapshot.Configuration);
                 row.AllocatedAt = allocatedAt;
                 db.Bots.Add(row);
-                if (snapshot.CurrentOrder != null)
-                {
-                    //The order references the bot and the bot its order: the bot goes in first, within the batch's transaction
-                    db.SaveChanges();
-                    StoreCurrentOrder(db, row, snapshot, allocatedAt);
-                }
+                StoreCurrentOrder(db, row, snapshot, allocatedAt);
                 return;
             }
 
@@ -393,6 +390,11 @@ namespace SpreadBot.Infrastructure.Persistence
                 stored.CurrentOrder = null;
                 return;
             }
+
+            //The order references the bot and the bot its order, and EF can't insert two new rows that reference each other:
+            //a bot added in this batch (here or by an earlier write) goes in first, within the batch's transaction
+            if (db.Entry(stored).State == EntityState.Added)
+                db.SaveChanges();
 
             var state = StateKey(order);
             //Any equal state will do: their content is the same. Recording usually stored it already
@@ -482,6 +484,8 @@ namespace SpreadBot.Infrastructure.Persistence
         {
             //A snapshot under way gets queued first; one stuck on a bot's semaphore doesn't hold up the exit
             var snapshotDone = Monitor.TryEnter(snapshotLock, TimeSpan.FromSeconds(5));
+            if (!snapshotDone)
+                Logger.Instance.LogError("A snapshot was still waiting for a bot when the database closed; the bots' last changes since the previous one aren't stored");
             try
             {
                 lock (lifecycle)

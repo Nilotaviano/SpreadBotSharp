@@ -9,6 +9,7 @@ using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SpreadBot.Tests
@@ -178,6 +179,58 @@ namespace SpreadBot.Tests
             using var db = Db();
             Assert.AreEqual(1, db.Orders.Count());
             Assert.AreEqual("sell-1", db.Bots.Include(b => b.CurrentOrder).Single().CurrentOrder.ClientOrderId);
+        }
+
+        [TestMethod]
+        public void FailedBatch_LeavesNothingBehind_AndTheNextOneStoresItAgain()
+        {
+            var context = Context();
+            // Hold the writer so the next writes form one batch
+            var gate = new ManualResetEventSlim();
+            context.Enqueue(_ => gate.Wait());
+
+            SpinWait.SpinUntil(() => context.PendingWrites == 0); // the writer holds the gate
+            var first = Holding(Configuration(BotStrategyType.PatientSpread));
+            context.AddBot(Bot(first)); // saves its new configuration midway
+            context.Enqueue(_ => throw new InvalidOperationException("the disk is full"));
+            gate.Set();
+            context.Flush();
+
+            using (var db = Db())
+            {
+                Assert.AreEqual(0, db.Configurations.Count(), "the configuration saved midway went with the batch");
+                Assert.AreEqual(0, db.Bots.Count());
+            }
+
+            var second = Holding(Configuration(BotStrategyType.PatientSpread));
+            context.AddBot(Bot(second));
+            context.Save();
+
+            using var after = Db();
+            Assert.AreEqual(1, after.Configurations.Count(), "stored again, not taken from a cache of the rolled-back batch");
+            Assert.AreEqual(2, after.Bots.Count(), "the snapshot stores the first bot too");
+        }
+
+        [TestMethod]
+        public void BotAddedAndGivenAnOrderInOneBatch_IsStoredWithIt()
+        {
+            var saved = Holding();
+            saved.BotState = BotState.SellOrderActive;
+            var bot = Bot(saved);
+            var context = Context();
+            var gate = new ManualResetEventSlim();
+            context.Enqueue(_ => gate.Wait());
+
+            SpinWait.SpinUntil(() => context.PendingWrites == 0); // the writer holds the gate
+            context.AddBot(bot);
+            saved.CurrentOrderData = Sell("sell-1");
+            context.RecordOrder(bot, saved.CurrentOrderData);
+            var saving = Task.Run(context.Save); // its snapshot and flush marker join the queue
+            Assert.IsTrue(SpinWait.SpinUntil(() => context.PendingWrites == 4, TimeSpan.FromSeconds(2)));
+            gate.Set();
+            Assert.IsTrue(saving.Wait(TimeSpan.FromSeconds(5)));
+
+            Assert.AreEqual("sell-1", Context().GetPreviousSessionContext().BotContexts.Single().CurrentOrderData.ClientOrderId);
         }
 
         [TestMethod]
