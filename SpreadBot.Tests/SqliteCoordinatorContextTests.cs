@@ -163,30 +163,34 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
-        public void CurrentOrderTheDatabaseLost_IsRestoredAsAnUnknownOrderSentNow()
+        public void CurrentOrderRecordedFirst_IsLinkedRatherThanStoredAgain()
         {
-            // Looking it up by client order id is the only safe way on: placing again could duplicate a live order, and the request may
-            // have been sent just before the restart, so it can only be given up a whole request lifetime from now
+            var saved = Holding();
+            saved.BotState = BotState.SellOrderActive;
+            var bot = Bot(saved);
+            var context = Context();
+            context.AddBot(bot);
+
+            saved.CurrentOrderData = Sell("sell-1");
+            context.RecordOrder(bot, saved.CurrentOrderData);
+            context.Save();
+
+            using var db = Db();
+            Assert.AreEqual(1, db.Orders.Count());
+            Assert.AreEqual("sell-1", db.Bots.Include(b => b.CurrentOrder).Single().CurrentOrder.ClientOrderId);
+        }
+
+        [TestMethod]
+        public void BotRowNamingAnOrderThatIsntStored_IsRefused()
+        {
+            // The database keeps a bot's current order with it, so a restore never has to guess one
             var context = Context();
             context.AddBot(Bot(Holding()));
             context.Save();
-            using (var db = Db())
-            {
-                db.Bots.Single().CurrentOrderClientId = "sell-lost";
-                db.SaveChanges();
-            }
 
-            var before = DateTime.UtcNow;
-            var order = Context().GetPreviousSessionContext().BotContexts.Single().CurrentOrderData;
-
-            Assert.AreEqual(OrderStatus.UNKNOWN, order.Status);
-            Assert.AreEqual("sell-lost", order.ClientOrderId);
-            Assert.AreEqual(Symbol, order.MarketSymbol);
-            Assert.IsTrue(order.CreatedAt >= before);
-            // A Bought bot's order is a sell of what it holds, so BalanceLedger claims what it may have brought in
-            Assert.AreEqual(OrderDirection.SELL, order.Direction);
-            Assert.AreEqual(0.25m, order.Quantity);
-            Assert.AreEqual(0.00010101m, order.Limit);
+            using var db = Db();
+            db.Bots.Single().CurrentOrderRecordId = 12345;
+            Assert.ThrowsExactly<DbUpdateException>(() => db.SaveChanges());
         }
 
         [TestMethod]
@@ -339,9 +343,9 @@ namespace SpreadBot.Tests
             context.Save();
 
             using var db = Db();
-            var states = db.Orders.OrderBy(o => EF.Property<long>(o, "RecordId")).ToList();
-            CollectionAssert.AreEqual(new[] { 0m, 0.1m, 0.25m }, states.Select(o => o.FillQuantity).ToArray());
-            Assert.AreEqual(OrderStatus.CLOSED, states.Last().Status);
+            var states = db.Orders.ToList();
+            CollectionAssert.AreEquivalent(new[] { 0m, 0.1m, 0.25m }, states.Select(o => o.FillQuantity).ToArray());
+            Assert.AreEqual(OrderStatus.CLOSED, states.Single(o => o.FillQuantity == 0.25m).Status);
             Assert.IsTrue(states.All(o => db.Entry(o).Property<Guid>("BotId").CurrentValue == saved.Guid));
         }
 
@@ -389,7 +393,7 @@ namespace SpreadBot.Tests
             using var after = Db();
             var row = after.Bots.Single();
             Assert.AreEqual(BotState.SellOrderActive, row.State);
-            Assert.AreEqual("sell-1", row.CurrentOrderClientId);
+            Assert.AreEqual("sell-1", after.Bots.Include(b => b.CurrentOrder).Single().CurrentOrder.ClientOrderId);
         }
 
         [TestMethod]

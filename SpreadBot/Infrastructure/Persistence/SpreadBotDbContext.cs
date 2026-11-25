@@ -64,6 +64,8 @@ namespace SpreadBot.Infrastructure.Persistence
                 bot.ToTable("Bots");
                 bot.HasKey(b => b.Id);
                 bot.HasOne(b => b.Configuration).WithMany().HasForeignKey(b => b.ConfigurationId).OnDelete(DeleteBehavior.Restrict);
+                //The exact stored state the bot holds: the database can't let a bot name an order it doesn't have
+                bot.HasOne(b => b.CurrentOrder).WithMany().HasForeignKey(b => b.CurrentOrderRecordId).OnDelete(DeleteBehavior.Restrict);
                 bot.HasIndex(b => b.FinishedAt);
                 bot.HasIndex(b => b.MarketSymbol);
             });
@@ -109,8 +111,8 @@ namespace SpreadBot.Infrastructure.Persistence
         public decimal HeldAmount { get; set; }
         public decimal BoughtPrice { get; set; }
         public DateTime? BuyFilledAt { get; set; }
-        //Its latest state is the newest Orders row with this client order id
-        public string CurrentOrderClientId { get; set; }
+        public long? CurrentOrderRecordId { get; set; }
+        public OrderData CurrentOrder { get; set; }
 
         //The market as the bot last saw it, until the restored bot's first update
         public decimal? BidRate { get; set; }

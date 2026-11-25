@@ -84,60 +84,25 @@ namespace SpreadBot.Infrastructure.Persistence
         {
             using var db = createDb();
 
-            var rows = db.Bots.AsNoTracking().Include(b => b.Configuration).Where(b => b.FinishedAt == null).ToList();
+            var rows = db.Bots.AsNoTracking()
+                .Include(b => b.Configuration)
+                .Include(b => b.CurrentOrder)
+                .Where(b => b.FinishedAt == null)
+                .ToList();
             var dust = db.Dust.AsNoTracking().ToDictionary(d => d.MarketSymbol, d => d.Amount);
 
             if (rows.Count == 0 && dust.Count == 0)
                 return null;
 
-            var botContexts = new List<BotContext>();
-            foreach (var row in rows)
-            {
-                var currentOrder = LatestOrderState(db, row);
-                if (currentOrder != null)
-                    recordedOrderStates[currentOrder.ClientOrderId] = (row.Id, StateKey(currentOrder));
+            foreach (var row in rows.Where(r => r.CurrentOrder != null))
+                recordedOrderStates[row.CurrentOrder.ClientOrderId] = (row.Id, StateKey(row.CurrentOrder));
 
-                botContexts.Add(ToBotContext(row, currentOrder));
-            }
-
-            return new PreviousSessionContext { BotContexts = botContexts, DustPerMarket = dust };
+            return new PreviousSessionContext { BotContexts = rows.Select(ToBotContext).ToList(), DustPerMarket = dust };
         }
 
-        private static OrderData LatestOrderState(SpreadBotDbContext db, BotRow row)
-        {
-            if (row.CurrentOrderClientId == null)
-                return null;
-
-            return db.Orders.AsNoTracking()
-                .Where(o => o.ClientOrderId == row.CurrentOrderClientId)
-                .OrderByDescending(o => EF.Property<long>(o, "RecordId"))
-                .FirstOrDefault();
-        }
-
-        private static BotContext ToBotContext(BotRow row, OrderData currentOrder)
+        private static BotContext ToBotContext(BotRow row)
         {
             var market = new MarketData { Symbol = row.MarketSymbol, BidRate = row.BidRate, AskRate = row.AskRate, LastTradeRate = row.LastTradeRate, PriceTick = row.PriceTick };
-
-            //A row that names an order is written with that order's state, so this means the database lost it. The bot can't know whether
-            //the order is live, which is what an unknown placement is: it's looked up by client order id, and dropped only once the exchange
-            //confirms it absent a whole request lifetime from now, as the request may have been sent just before the restart
-            if (row.CurrentOrderClientId != null && currentOrder == null)
-            {
-                Logger.Instance.LogUnexpectedError($"Bot {row.Id}'s current order {row.CurrentOrderClientId} wasn't stored; restoring it as an order whose placement is unknown");
-                //Side and size as the bot's state implies, at the largest it could be, so BalanceLedger claims what the order may have brought in
-                var selling = row.State == BotState.Bought || row.State == BotState.SellOrderActive;
-                currentOrder = new OrderData
-                {
-                    ClientOrderId = row.CurrentOrderClientId,
-                    MarketSymbol = row.MarketSymbol,
-                    Status = OrderStatus.UNKNOWN,
-                    CreatedAt = DateTime.UtcNow,
-                    Direction = selling ? OrderDirection.SELL : OrderDirection.BUY,
-                    Type = OrderType.LIMIT,
-                    Quantity = selling ? row.HeldAmount : row.BidRate > 0 ? row.Balance / row.BidRate.Value : 0,
-                    Limit = (selling ? row.AskRate : row.BidRate) ?? 0
-                };
-            }
 
             return new BotContext(row.Configuration, market, row.State, row.HeldAmount)
             {
@@ -145,7 +110,7 @@ namespace SpreadBot.Infrastructure.Persistence
                 Balance = row.Balance,
                 BoughtPrice = row.BoughtPrice,
                 BuyFilledAt = row.BuyFilledAt,
-                CurrentOrderData = currentOrder
+                CurrentOrderData = row.CurrentOrder
             };
         }
 
@@ -368,7 +333,6 @@ namespace SpreadBot.Infrastructure.Persistence
             HeldAmount = context.HeldAmount,
             BoughtPrice = context.BoughtPrice,
             BuyFilledAt = context.BuyFilledAt,
-            CurrentOrderClientId = context.CurrentOrderData?.ClientOrderId,
             BidRate = context.LatestMarketData.BidRate,
             AskRate = context.LatestMarketData.AskRate,
             LastTradeRate = context.LatestMarketData.LastTradeRate,
@@ -385,7 +349,12 @@ namespace SpreadBot.Infrastructure.Persistence
                 row.ConfigurationId = ConfigurationId(db, snapshot.Configuration);
                 row.AllocatedAt = allocatedAt;
                 db.Bots.Add(row);
-                StoreCurrentOrder(db, snapshot, allocatedAt);
+                if (snapshot.CurrentOrder != null)
+                {
+                    //The order references the bot and the bot its order: the bot goes in first, within the batch's transaction
+                    db.SaveChanges();
+                    StoreCurrentOrder(db, row, snapshot, allocatedAt);
+                }
                 return;
             }
 
@@ -399,36 +368,44 @@ namespace SpreadBot.Infrastructure.Persistence
             if (stored.FinishedAt != null)
                 return;
 
-            StoreCurrentOrder(db, snapshot, allocatedAt);
+            StoreCurrentOrder(db, stored, snapshot, allocatedAt);
 
             stored.State = row.State;
             stored.Balance = row.Balance;
             stored.HeldAmount = row.HeldAmount;
             stored.BoughtPrice = row.BoughtPrice;
             stored.BuyFilledAt = row.BuyFilledAt;
-            stored.CurrentOrderClientId = row.CurrentOrderClientId;
             stored.BidRate = row.BidRate;
             stored.AskRate = row.AskRate;
             stored.LastTradeRate = row.LastTradeRate;
             stored.PriceTick = row.PriceTick;
         }
 
-        //A row that names an order goes with that order's latest state, so a restore never has to guess it, even if recording a state failed
-        private static void StoreCurrentOrder(SpreadBotDbContext db, BotSnapshot snapshot, DateTime recordedAt)
+        /// <summary>
+        /// Points the bot's row at a stored state equal to the order it holds, appending one if none is: a restore gets exactly that state.
+        /// </summary>
+        private static void StoreCurrentOrder(SpreadBotDbContext db, BotRow stored, BotSnapshot snapshot, DateTime recordedAt)
         {
-            if (!(snapshot.CurrentOrder is OrderData order))
+            var order = snapshot.CurrentOrder;
+            if (order == null)
+            {
+                stored.CurrentOrderRecordId = null;
+                stored.CurrentOrder = null;
                 return;
+            }
 
-            var latest = db.Orders.Local
-                .Where(o => o.ClientOrderId == order.ClientOrderId && db.Entry(o).State == EntityState.Added)
-                .LastOrDefault()
-                ?? db.Orders.AsNoTracking()
-                    .Where(o => o.ClientOrderId == order.ClientOrderId)
-                    .OrderByDescending(o => EF.Property<long>(o, "RecordId"))
-                    .FirstOrDefault();
+            var state = StateKey(order);
+            //Any equal state will do: their content is the same. Recording usually stored it already
+            var equal = db.Orders.Local.FirstOrDefault(o => o.ClientOrderId == order.ClientOrderId && StateKey(o) == state)
+                ?? db.Orders.Where(o => o.ClientOrderId == order.ClientOrderId).AsEnumerable().FirstOrDefault(o => StateKey(o) == state);
 
-            if (StateKey(latest) != StateKey(order))
+            if (equal == null)
+            {
+                equal = order;
                 AddOrder(db, order, snapshot.Row.Id, recordedAt);
+            }
+
+            stored.CurrentOrder = equal;
         }
 
         private static void AddOrder(SpreadBotDbContext db, OrderData order, Guid botId, DateTime recordedAt)
@@ -459,7 +436,7 @@ namespace SpreadBot.Infrastructure.Persistence
             if (configurationIds.TryGetValue(configuration, out var id))
                 return id;
 
-            //A copy: the configuration is shared with the running bots and settings
+            //A copy: the configuration is shared with the running bots and settings. Saved now for its id; the batch's transaction still holds it
             var stored = JsonConvert.DeserializeObject<SpreadConfiguration>(JsonConvert.SerializeObject(configuration));
             db.Configurations.Add(stored);
             db.SaveChanges();
@@ -480,9 +457,12 @@ namespace SpreadBot.Infrastructure.Persistence
                 try
                 {
                     using var db = createDb();
+                    //One transaction, though some writes save midway (a new configuration, a new bot before its order): a batch lands whole or not at all
+                    using var transaction = db.Database.BeginTransaction();
                     foreach (var (write, _) in batch)
                         write?.Invoke(db);
                     db.SaveChanges();
+                    transaction.Commit();
                 }
                 catch (Exception e)
                 {
@@ -500,13 +480,23 @@ namespace SpreadBot.Infrastructure.Persistence
 
         public void Dispose()
         {
-            lock (lifecycle)
+            //A snapshot under way gets queued first; one stuck on a bot's semaphore doesn't hold up the exit
+            var snapshotDone = Monitor.TryEnter(snapshotLock, TimeSpan.FromSeconds(5));
+            try
             {
-                if (disposed)
-                    return;
-                disposed = true;
-                saveTimer.Dispose();
-                writes.CompleteAdding();
+                lock (lifecycle)
+                {
+                    if (disposed)
+                        return;
+                    disposed = true;
+                    saveTimer.Dispose();
+                    writes.CompleteAdding();
+                }
+            }
+            finally
+            {
+                if (snapshotDone)
+                    Monitor.Exit(snapshotLock);
             }
 
             if (!writer.Wait(TimeSpan.FromSeconds(30)))

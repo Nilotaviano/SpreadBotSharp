@@ -58,7 +58,7 @@ namespace SpreadBot.Infrastructure.Persistence.Migrations
                     HeldAmount = table.Column<decimal>(type: "TEXT", nullable: false),
                     BoughtPrice = table.Column<decimal>(type: "TEXT", nullable: false),
                     BuyFilledAt = table.Column<DateTime>(type: "TEXT", nullable: true),
-                    CurrentOrderClientId = table.Column<string>(type: "TEXT", nullable: true),
+                    CurrentOrderRecordId = table.Column<long>(type: "INTEGER", nullable: true),
                     BidRate = table.Column<decimal>(type: "TEXT", nullable: true),
                     AskRate = table.Column<decimal>(type: "TEXT", nullable: true),
                     LastTradeRate = table.Column<decimal>(type: "TEXT", nullable: true),
@@ -119,6 +119,11 @@ namespace SpreadBot.Infrastructure.Persistence.Migrations
                 column: "ConfigurationId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_Bots_CurrentOrderRecordId",
+                table: "Bots",
+                column: "CurrentOrderRecordId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Bots_FinishedAt",
                 table: "Bots",
                 column: "FinishedAt");
@@ -143,22 +148,38 @@ namespace SpreadBot.Infrastructure.Persistence.Migrations
                 name: "IX_Orders_ClientOrderId",
                 table: "Orders",
                 column: "ClientOrderId");
+
+            migrationBuilder.AddForeignKey(
+                name: "FK_Bots_Orders_CurrentOrderRecordId",
+                table: "Bots",
+                column: "CurrentOrderRecordId",
+                principalTable: "Orders",
+                principalColumn: "RecordId",
+                onDelete: ReferentialAction.Restrict);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropForeignKey(
+                name: "FK_Bots_Configurations_ConfigurationId",
+                table: "Bots");
+
+            migrationBuilder.DropForeignKey(
+                name: "FK_Bots_Orders_CurrentOrderRecordId",
+                table: "Bots");
+
             migrationBuilder.DropTable(
                 name: "Dust");
+
+            migrationBuilder.DropTable(
+                name: "Configurations");
 
             migrationBuilder.DropTable(
                 name: "Orders");
 
             migrationBuilder.DropTable(
                 name: "Bots");
-
-            migrationBuilder.DropTable(
-                name: "Configurations");
         }
     }
 }

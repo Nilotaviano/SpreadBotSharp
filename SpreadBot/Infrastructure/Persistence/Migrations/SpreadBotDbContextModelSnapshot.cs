@@ -44,8 +44,8 @@ namespace SpreadBot.Infrastructure.Persistence.Migrations
                     b.Property<int>("ConfigurationId")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("CurrentOrderClientId")
-                        .HasColumnType("TEXT");
+                    b.Property<long?>("CurrentOrderRecordId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("FinishedAt")
                         .HasColumnType("TEXT");
@@ -72,6 +72,8 @@ namespace SpreadBot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ConfigurationId");
+
+                    b.HasIndex("CurrentOrderRecordId");
 
                     b.HasIndex("FinishedAt");
 
@@ -219,7 +221,14 @@ namespace SpreadBot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("SpreadBot.Models.Repository.OrderData", "CurrentOrder")
+                        .WithMany()
+                        .HasForeignKey("CurrentOrderRecordId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Configuration");
+
+                    b.Navigation("CurrentOrder");
                 });
 
             modelBuilder.Entity("SpreadBot.Models.Repository.OrderData", b =>
