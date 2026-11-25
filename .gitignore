@@ -35,4 +35,4 @@ msbuild.wrn
 *.db.before-*.bak
 
 # The dashboard's access token and push keys
-dashboard-secrets.json
+dashboard-secrets.json*

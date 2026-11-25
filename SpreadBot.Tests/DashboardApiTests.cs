@@ -139,6 +139,44 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public async Task EveryApiRoute_NeedsTheToken_AndDoesNothingWithout()
+        {
+            await Start(publicUrl: "https://box.example.ts.net");
+            var routes = new (HttpMethod method, string path, object body)[]
+            {
+                (HttpMethod.Get, "/api/state", null), (HttpMethod.Get, "/api/markets", null), (HttpMethod.Get, "/api/history", null),
+                (HttpMethod.Get, "/api/orders", null), (HttpMethod.Get, "/api/activity", null), (HttpMethod.Get, "/api/logs", null),
+                (HttpMethod.Get, "/api/stream", null), (HttpMethod.Get, "/api/push", null), (HttpMethod.Get, "/API/state", null),
+                (HttpMethod.Post, "/api/controls/allocation", new { paused = true }),
+                (HttpMethod.Post, "/api/controls/resync", null),
+                (HttpMethod.Post, "/api/controls/halt", new { confirm = "HALT" }),
+                (HttpMethod.Post, $"/api/bots/{Guid.NewGuid()}/finish", new { confirm = Symbol }),
+                (HttpMethod.Post, "/api/push/subscriptions", new { endpoint = "https://fcm.googleapis.com/fcm/send/abc", keys = new { p256dh = "key", auth = "auth" } }),
+                (HttpMethod.Post, "/api/push/subscriptions/lookup", new { endpoint = "https://fcm.googleapis.com/fcm/send/abc" }),
+                (HttpMethod.Post, "/api/push/subscriptions/remove", new { endpoint = "https://fcm.googleapis.com/fcm/send/abc" }),
+                (HttpMethod.Post, "/api/push/test", null),
+            };
+
+            foreach (var (method, path, body) in routes)
+                Assert.AreEqual(HttpStatusCode.Unauthorized, (await client.SendAsync(Request(method, path, body, token: null))).StatusCode, $"{method} {path}");
+
+            Assert.IsFalse(coordinator.IsAllocationPaused);
+            Assert.IsFalse(coordinator.IsHalted);
+            using var db = context.Database();
+            Assert.AreEqual(0, db.PushSubscriptions.Count());
+        }
+
+        [TestMethod]
+        public void NonLoopbackAddress_IsRefused()
+        {
+            var keys = WebPush.VapidHelper.GenerateVapidKeys();
+            var secrets = new DashboardSecrets { AccessToken = Token, VapidPublicKey = keys.PublicKey, VapidPrivateKey = keys.PrivateKey };
+
+            Assert.ThrowsExactly<InvalidOperationException>(() => DashboardHost.Create(new DashboardSettings { Enabled = true, Url = "http://0.0.0.0:5080" }, secrets, new AppSettings(), null, null, null, null));
+            Assert.ThrowsExactly<InvalidOperationException>(() => DashboardHost.Create(new DashboardSettings { Enabled = true, Url = "http://192.168.1.10:5080" }, secrets, new AppSettings(), null, null, null, null));
+        }
+
+        [TestMethod]
         public async Task State_ShowsTheBotsMoneyAndHealth()
         {
             await Start();
@@ -195,7 +233,7 @@ namespace SpreadBot.Tests
             await Start();
 
             Assert.IsFalse((await Get("/api/push")).GetProperty("available").GetBoolean());
-            var subscribe = await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", new { endpoint = "https://push.example/abc", keys = new { p256dh = "key", auth = "auth" } }));
+            var subscribe = await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", new { endpoint = "https://fcm.googleapis.com/fcm/send/abc", keys = new { p256dh = "key", auth = "auth" } }));
             Assert.AreEqual(HttpStatusCode.BadRequest, subscribe.StatusCode);
         }
 
@@ -207,13 +245,18 @@ namespace SpreadBot.Tests
             Assert.IsTrue(push.GetProperty("available").GetBoolean());
             Assert.IsFalse(string.IsNullOrEmpty(push.GetProperty("publicKey").GetString()));
 
-            var subscription = new { endpoint = "https://push.example/abc", keys = new { p256dh = "key", auth = "auth" }, categories = new[] { "halt", "fills", "nonsense" } };
+            const string endpoint = "https://fcm.googleapis.com/fcm/send/abc";
+            var subscription = new { endpoint, keys = new { p256dh = "key", auth = "auth" }, categories = new[] { "halt", "fills", "nonsense" } };
             Assert.AreEqual(HttpStatusCode.OK, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", subscription))).StatusCode);
 
-            var lookup = await (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions/lookup", new { endpoint = "https://push.example/abc" }))).Content.ReadFromJsonAsync<JsonElement>();
+            var lookup = await (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions/lookup", new { endpoint }))).Content.ReadFromJsonAsync<JsonElement>();
             CollectionAssert.AreEqual(new[] { "halt", "fills" }, lookup.GetProperty("categories").EnumerateArray().Select(c => c.GetString()).ToArray());
 
-            Assert.AreEqual(HttpStatusCode.OK, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions/remove", new { endpoint = "https://push.example/abc" }))).StatusCode);
+            // The bot POSTs to the endpoint: anything but a browser's push service is refused
+            foreach (var other in new[] { "https://evil.example/hook", "http://fcm.googleapis.com/fcm/send/abc", "https://fcm.googleapis.com.evil.example/x", "https://127.0.0.1/x" })
+                Assert.AreEqual(HttpStatusCode.BadRequest, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions", new { endpoint = other, keys = new { p256dh = "key", auth = "auth" } }))).StatusCode, other);
+
+            Assert.AreEqual(HttpStatusCode.OK, (await client.SendAsync(Request(HttpMethod.Post, "/api/push/subscriptions/remove", new { endpoint }))).StatusCode);
             using var db = context.Database();
             Assert.AreEqual(0, db.PushSubscriptions.Count());
         }
@@ -250,9 +293,17 @@ namespace SpreadBot.Tests
             context.Flush();
 
             host.Monitor.Poll();
+            host.Monitor.Poll();
 
-            var activity = (await Get("/api/activity")).EnumerateArray().ToList();
-            Assert.IsTrue(activity.Any(a => a.GetProperty("kind").GetString() == "fill" && a.GetProperty("title").GetString() == "Bought 29 NMR"));
+            var fills = (await Get("/api/activity")).EnumerateArray().Where(a => a.GetProperty("kind").GetString() == "fill").ToList();
+            Assert.AreEqual(1, fills.Count, "reported once, however often it polls");
+            Assert.AreEqual("Bought 29 NMR", fills[0].GetProperty("title").GetString());
+
+            context.RecordOrder(bot, new OrderData { Id = "sell-1", ClientOrderId = "sell-1", MarketSymbol = Symbol, Direction = OrderDirection.SELL, Status = OrderStatus.CLOSED, Limit = 0.00011m, Quantity = 29, FillQuantity = 29, Proceeds = 0.00319m });
+            context.Flush();
+            host.Monitor.Poll();
+
+            Assert.AreEqual(1, (await Get("/api/activity")).EnumerateArray().Count(a => a.GetProperty("title").GetString() == "Sold 29 NMR"));
             using var db = context.Database();
             Assert.IsTrue(db.EquitySnapshots.Any(e => e.BaseMarket == "BTC"));
         }
@@ -298,6 +349,9 @@ namespace SpreadBot.Tests
                 Assert.AreEqual(created.AccessToken, loaded.AccessToken);
                 Assert.AreEqual(created.VapidPublicKey, loaded.VapidPublicKey);
                 Assert.IsFalse(string.IsNullOrEmpty(loaded.VapidPrivateKey));
+                Assert.IsFalse(File.Exists(Path.Combine(directory, DashboardSecrets.FileName + ".tmp")));
+                if (!OperatingSystem.IsWindows())
+                    Assert.AreEqual(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(Path.Combine(directory, DashboardSecrets.FileName)));
             }
             finally
             {

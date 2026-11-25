@@ -54,13 +54,27 @@ namespace SpreadBot.Dashboard
 
             if (changed)
             {
-                Extensions.WriteAllTextAtomic(path, JsonConvert.SerializeObject(secrets, Formatting.Indented));
-                if (!OperatingSystem.IsWindows())
-                    File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                Write(path, JsonConvert.SerializeObject(secrets, Formatting.Indented));
                 Logger.Instance.LogMessage($"Created the dashboard's access token and push keys in {path}");
             }
 
             return secrets;
+        }
+
+        //Atomic, and owner-only from the moment the file exists (on Unix): the token is never readable by others, even briefly
+        private static void Write(string path, string content)
+        {
+            var temporary = path + ".tmp";
+            File.Delete(temporary);
+
+            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+            if (!OperatingSystem.IsWindows())
+                options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+            using (var writer = new StreamWriter(new FileStream(temporary, options)))
+                writer.Write(content);
+
+            File.Move(temporary, path, overwrite: true);
         }
 
         private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');

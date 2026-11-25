@@ -100,6 +100,7 @@ const store = {
   orders: [],
   push: null,
   connected: false,
+  connectionFailed: false,
   tab: 'overview',
   filters: { botsSearch: '', botsState: '', botsSort: 'market', marketsSearch: '', marketsEligible: false, marketsSort: 'score', marketsAsc: false, activityKind: '', logsLevel: '', logsSearch: '', historyDays: 30, ordersMarket: '' },
 };
@@ -156,6 +157,7 @@ async function connect() {
     } catch (error) {
       if (abort.signal.aborted) return;
     }
+    store.connectionFailed = true;
     setConnected(false);
     await new Promise(resolve => setTimeout(resolve, retryDelay));
     retryDelay = Math.min(retryDelay * 2, 30000);
@@ -182,7 +184,7 @@ function setConnected(connected) {
   const element = $('#connection');
   element.classList.toggle('live', connected);
   element.classList.toggle('down', !connected);
-  $('#connection-text').textContent = connected ? 'Live' : 'Reconnecting';
+  $('#connection-text').textContent = connected ? 'Live' : store.connectionFailed ? 'Reconnecting' : 'Connecting';
   renderBanner();
   renderStatus();
 }
@@ -260,7 +262,7 @@ function renderStatus() {
   let text = 'Offline', status = 'offline';
   if (state) {
     if (state.halted) { text = 'Halted'; status = 'halted'; }
-    else if (!store.connected && !store.stateIsCached) { text = 'Unreachable'; status = 'offline'; }
+    else if (!store.connected) { text = store.connectionFailed ? 'Unreachable' : 'Connecting'; status = store.connectionFailed ? 'offline' : ''; }
     else if (state.allocationPaused) { text = 'Paused'; status = 'paused'; }
     else { text = 'Trading'; status = 'live'; }
   }
@@ -274,7 +276,7 @@ function renderBanner() {
   const state = store.state;
   let text = null, danger = false;
   if (state?.halted) { text = `Trading halted: ${state.haltReason || 'no reason given'}. Restart the bot to trade again.`; danger = true; }
-  else if (!store.connected && state) text = `Can't reach the bot. Showing what it reported ${fmt.ago(state.now)}.`;
+  else if (!store.connected && store.connectionFailed && state) text = `Can't reach the bot. Showing what it reported ${fmt.ago(state.now)}.`;
   else if (state?.allocationPaused) text = 'New bots are paused. Running bots carry on.';
   banner.hidden = !text;
   banner.textContent = text || '';
@@ -771,7 +773,7 @@ function renderSettings() {
 $('#toggle-allocation').addEventListener('click', async () => {
   const pause = !store.state?.allocationPaused;
   if (pause && !await confirmAction({ title: 'Pause new bots?', text: 'Running bots carry on; no market gets a new bot until you resume.', action: () => api('POST', '/api/controls/allocation', { paused: true }) })) return;
-  if (!pause) await guarded(() => api('POST', '/api/controls/allocation', { paused: false }));
+  if (!pause && !await guarded(() => api('POST', '/api/controls/allocation', { paused: false }))) return;
   toast(pause ? 'Paused' : 'Resumed', pause ? 'No new bots' : 'New bots can be allocated again', 'ok');
 });
 
@@ -940,8 +942,10 @@ function toast(title, text, kind = '') {
 
 function downloadCsv(name, header, rows) {
   const cell = value => {
-    const text = value === null || value === undefined ? '' : String(value);
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    let text = value === null || value === undefined ? '' : String(value);
+    //A spreadsheet would run a cell starting like a formula; numbers (negative profits) stay numbers
+    if (/^[=+\-@\t\r]/.test(text) && Number.isNaN(Number(text))) text = `'${text}`;
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   const csv = [header, ...rows].map(row => row.map(cell).join(',')).join('\n');
   const link = h('a', { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: name });

@@ -5,6 +5,7 @@ using SpreadBot.Logic;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -23,6 +24,9 @@ namespace SpreadBot.Dashboard
         private readonly BalanceLedger ledger;
         private readonly Func<SpreadBotDbContext> database;
         private readonly bool pushAvailable;
+        //History reads every finished bot; it changes only when one finishes (or equity is sampled), and the app asks often
+        private static readonly TimeSpan HistoryLifetime = TimeSpan.FromSeconds(60);
+        private readonly ConcurrentDictionary<int, (DateTime at, HistoryView view)> historyCache = new ConcurrentDictionary<int, (DateTime, HistoryView)>();
 
         public DateTime StartedAt { get; } = DateTime.UtcNow;
 
@@ -88,8 +92,10 @@ namespace SpreadBot.Dashboard
 
         private static BotView ToView(Bot bot, decimal feeRate)
         {
+            //Each read once: the bot changes them on its own thread meanwhile
             var c = bot.botContext;
             var market = c.LatestMarketData;
+            var order = c.CurrentOrderData;
             var configuration = c.spreadConfiguration;
             //What the bot would have if it sold what it holds at the bid now, after the fee
             var value = c.Balance + c.HeldAmount * (market.BidRate ?? 0) * (1 - feeRate);
@@ -116,7 +122,7 @@ namespace SpreadBot.Dashboard
                 value,
                 value - configuration.AllocatedAmountOfBaseCurrency,
                 bot.OrderRequestInFlight,
-                c.CurrentOrderData == null ? null : ToView(c.CurrentOrderData, null, c.Guid));
+                order == null ? null : ToView(order, null, c.Guid));
         }
 
         private static OrderView ToView(OrderData o, DateTime? recordedAt, Guid? botId) => new OrderView(
@@ -161,6 +167,18 @@ namespace SpreadBot.Dashboard
         /// decimals, so finished bots are aggregated here.
         /// </summary>
         public HistoryView History(int days)
+        {
+            if (historyCache.TryGetValue(days, out var cached) && DateTime.UtcNow - cached.at < HistoryLifetime)
+                return cached.view;
+
+            var view = ReadHistory(days);
+            historyCache[days] = (DateTime.UtcNow, view);
+            return view;
+        }
+
+        public void HistoryChanged() => historyCache.Clear();
+
+        private HistoryView ReadHistory(int days)
         {
             var since = DateTime.UtcNow.AddDays(-days);
             using var db = database();

@@ -76,14 +76,19 @@ namespace SpreadBot
             var coordinator = new Coordinator(appSettings, dataRepository, coordinatorContext);
             coordinator.Start();
 
-            await using var dashboard = await StartDashboard(appSettings, Path.GetDirectoryName(appSettingsPath), dataRepository, coordinator, coordinatorContext);
+            var dashboard = await StartDashboard(appSettings, Path.GetDirectoryName(appSettingsPath), dataRepository, coordinator, coordinatorContext);
 
             //Enter stops the bot; so does a halt, once the bots have cancelled their orders
             var stopRequested = Task.Run(Console.ReadLine);
             var halted = await Task.WhenAny(stopRequested, coordinator.Halted) == coordinator.Halted;
 
-            if (halted && dashboard != null)
-                await dashboard.AnnounceHalt(coordinator.HaltReason);
+            //First, so its controls can't act on a coordinator and exchange being taken down
+            if (dashboard != null)
+            {
+                if (halted)
+                    await dashboard.AnnounceHalt(coordinator.HaltReason);
+                await dashboard.DisposeAsync();
+            }
 
             coordinator.Dispose();
             exchange.Dispose();

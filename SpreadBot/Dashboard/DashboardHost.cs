@@ -9,6 +9,7 @@ using SpreadBot.Infrastructure.Persistence;
 using SpreadBot.Logic;
 using System;
 using System.Linq;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -51,6 +52,10 @@ namespace SpreadBot.Dashboard
         public static DashboardHost Create(DashboardSettings settings, DashboardSecrets secrets, AppSettings appSettings, DataRepository dataRepository,
             Coordinator coordinator, ICoordinatorContext context, Func<SpreadBotDbContext> database, Action<IWebHostBuilder> configureHost = null)
         {
+            //The API's token travels in plain HTTP to this address: only this machine may reach it (`tailscale serve` adds HTTPS in front)
+            if (!IsLoopback(settings.Url))
+                throw new InvalidOperationException($"Dashboard.Url must be a loopback address such as http://127.0.0.1:5080, not {settings.Url}; reach it from elsewhere through `tailscale serve`");
+
             var publicUrl = settings.PublicUrl;
             if (!string.IsNullOrWhiteSpace(publicUrl) && !(Uri.TryCreate(publicUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps))
             {
@@ -83,7 +88,7 @@ namespace SpreadBot.Dashboard
                 headers["X-Content-Type-Options"] = "nosniff";
                 headers["Referrer-Policy"] = "no-referrer";
                 headers["X-Frame-Options"] = "DENY";
-                headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+                headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
                 if (http.Request.Path.StartsWithSegments("/api") && !Authorized(http.Request, token))
                 {
@@ -151,11 +156,13 @@ namespace SpreadBot.Dashboard
             {
                 if (!push.Available)
                     return Results.BadRequest(new { error = "Push notifications need Dashboard.PublicUrl" });
-                if (!Uri.TryCreate(request?.Endpoint, UriKind.Absolute, out var endpoint) || endpoint.Scheme != Uri.UriSchemeHttps
+                //The bot will POST to this address: only the browsers' push services
+                if (!Uri.TryCreate(request?.Endpoint, UriKind.Absolute, out var endpoint) || !PushNotifier.IsPushService(endpoint)
                     || string.IsNullOrWhiteSpace(request.Keys?.P256dh) || string.IsNullOrWhiteSpace(request.Keys?.Auth))
                     return Results.BadRequest(new { error = "Not a push subscription" });
 
-                push.Subscribe(request);
+                if (!push.Subscribe(request))
+                    return Results.BadRequest(new { error = $"At most {PushNotifier.MaxSubscriptions} devices; disable one first" });
                 return Results.Ok(new { categories = push.CategoriesOf(request.Endpoint) });
             });
             api.MapPost("/push/subscriptions/lookup", (PushSubscriptionRequest request) =>
@@ -170,6 +177,10 @@ namespace SpreadBot.Dashboard
 
             return new DashboardHost(app, monitor, push);
         }
+
+        private static bool IsLoopback(string url) =>
+            Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && (uri.IsLoopback || (IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address)));
 
         private static bool Authorized(HttpRequest request, byte[] token)
         {
@@ -227,7 +238,17 @@ namespace SpreadBot.Dashboard
         public async Task StartAsync()
         {
             await app.StartAsync();
-            monitor.Start();
+            try
+            {
+                monitor.Start();
+            }
+            //Not left serving the controls when it isn't whole: the caller gets no host to dispose
+            catch
+            {
+                await app.StopAsync();
+                await app.DisposeAsync();
+                throw;
+            }
         }
 
         public Task AnnounceHalt(string reason) => monitor.AnnounceHalt(reason);

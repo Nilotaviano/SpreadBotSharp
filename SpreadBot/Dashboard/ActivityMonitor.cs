@@ -3,6 +3,7 @@ using SpreadBot.Infrastructure;
 using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -21,6 +22,8 @@ namespace SpreadBot.Dashboard
         private static readonly TimeSpan EquityInterval = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan QuietStream = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan ErrorPushWindow = TimeSpan.FromMinutes(10);
+        //A bot's FinishedAt is stamped before its row is queued, and two bots can be queued out of stamp order: look back this far
+        private static readonly TimeSpan FinishedLookback = TimeSpan.FromMinutes(1);
 
         private readonly DashboardService service;
         private readonly LiveFeed feed;
@@ -30,6 +33,7 @@ namespace SpreadBot.Dashboard
 
         private long lastOrderRecordId;
         private DateTime lastFinishedAt;
+        private readonly Dictionary<Guid, DateTime> reportedFinished = new Dictionary<Guid, DateTime>();
         private DateTime nextEquitySample;
         private bool streamQuiet;
 
@@ -82,21 +86,41 @@ namespace SpreadBot.Dashboard
 
         internal void Poll()
         {
-            if (feed.Connections > 0)
-                feed.Publish("state", service.State());
-
-            PollOrders();
-            PollFinishedBots();
-            CheckStreams();
-            FlushErrorSummary();
-
-            if (DateTime.UtcNow >= nextEquitySample)
+            //Each on its own: one failing must not silence the others
+            Step("state", () =>
             {
-                nextEquitySample = DateTime.UtcNow + EquityInterval;
-                using var db = service.Database();
-                db.EquitySnapshots.AddRange(service.EquityNow());
-                db.SaveChanges();
+                if (feed.Connections > 0)
+                    feed.Publish("state", service.State());
+            });
+            Step("orders", PollOrders);
+            Step("finished bots", PollFinishedBots);
+            Step("streams", CheckStreams);
+            Step("errors", FlushErrorSummary);
+            Step("equity", SampleEquity);
+        }
+
+        private static void Step(string name, Action step)
+        {
+            try
+            {
+                step();
             }
+            catch (Exception e)
+            {
+                Logger.Instance.LogError($"The dashboard's {name} check failed: {e.Message}");
+            }
+        }
+
+        private void SampleEquity()
+        {
+            if (DateTime.UtcNow < nextEquitySample)
+                return;
+
+            nextEquitySample = DateTime.UtcNow + EquityInterval;
+            using var db = service.Database();
+            db.EquitySnapshots.AddRange(service.EquityNow());
+            db.SaveChanges();
+            service.HistoryChanged();
         }
 
         private void PollOrders()
@@ -138,16 +162,25 @@ namespace SpreadBot.Dashboard
         private void PollFinishedBots()
         {
             using var db = service.Database();
-            var since = lastFinishedAt;
+            var since = lastFinishedAt - FinishedLookback;
             var finished = db.Bots.AsNoTracking().Include(b => b.Configuration)
                 .Where(b => b.FinishedAt > since && b.Profit != null)
                 .ToList()
+                .Where(b => !reportedFinished.ContainsKey(b.Id))
                 .OrderBy(b => b.FinishedAt)
                 .ToList();
 
+            foreach (var stale in reportedFinished.Where(r => r.Value < since).Select(r => r.Key).ToList())
+                reportedFinished.Remove(stale);
+
+            if (finished.Count > 0)
+                service.HistoryChanged();
+
             foreach (var bot in finished)
             {
-                lastFinishedAt = bot.FinishedAt.Value;
+                reportedFinished[bot.Id] = bot.FinishedAt.Value;
+                if (bot.FinishedAt.Value > lastFinishedAt)
+                    lastFinishedAt = bot.FinishedAt.Value;
                 var profit = bot.Profit.Value;
                 var title = $"{bot.MarketSymbol} finished {(profit >= 0 ? "+" : "")}{Amount(profit)} {bot.Configuration.BaseMarket}";
                 var detail = $"{bot.Configuration.Strategy} · held {Minutes(bot.FinishedAt.Value - bot.AllocatedAt)}";
