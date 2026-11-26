@@ -10,12 +10,12 @@ namespace SpreadBot.Logic.BotStrategies.Spread
     {
         private readonly Dictionary<BotState, IBotStateStrategy> botStateStrategyDictionary;
 
-        public SpreadStrategy(ISellFloor sellFloor)
+        public SpreadStrategy(ISellFloor sellFloor, MarketFilters marketFilters)
         {
             this.botStateStrategyDictionary = new Dictionary<BotState, IBotStateStrategy>() {
-                { BotState.Buying, new SpreadBuyStateStrategy() },
+                { BotState.Buying, new SpreadBuyStateStrategy(marketFilters) },
                 { BotState.Bought, new SpreadSellStateStrategy(sellFloor) },
-                { BotState.BuyOrderActive, new SpreadBuyOrderActiveStateStrategy() },
+                { BotState.BuyOrderActive, new SpreadBuyOrderActiveStateStrategy(marketFilters) },
                 { BotState.SellOrderActive, new SpreadSellOrderActiveStateStrategy(sellFloor) },
             };
         }

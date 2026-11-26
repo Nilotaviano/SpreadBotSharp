@@ -77,7 +77,7 @@ namespace SpreadBot.Tests
                 CurrentOrderData = currentOrder
             };
 
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             return context;
         }

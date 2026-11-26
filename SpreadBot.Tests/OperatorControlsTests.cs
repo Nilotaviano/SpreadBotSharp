@@ -50,12 +50,24 @@ namespace SpreadBot.Tests
         [TestMethod]
         public void WhyNotAllocatable_NamesTheFirstFilterAMarketFails()
         {
-            Assert.IsNull(Coordinator.WhyNotAllocatable(Market(), Configuration()));
-            Assert.AreEqual("offline", Coordinator.WhyNotAllocatable(Market(status: EMarketStatus.Offline), Configuration()));
-            Assert.AreEqual("no price tick", Coordinator.WhyNotAllocatable(Market(tick: null), Configuration()));
-            StringAssert.StartsWith(Coordinator.WhyNotAllocatable(Market(ask: 0.0001001m), Configuration()), "spread ");
-            StringAssert.StartsWith(Coordinator.WhyNotAllocatable(Market(volume: 10), Configuration()), "volume ");
-            StringAssert.StartsWith(Coordinator.WhyNotAllocatable(Market(change: 80), Configuration()), "up 80");
+            var (_, _, _, coordinator) = Started(Symbol);
+
+            Assert.IsNull(coordinator.WhyNotAllocatable(Market(), Configuration()));
+            Assert.AreEqual("offline", coordinator.WhyNotAllocatable(Market(status: EMarketStatus.Offline), Configuration()));
+        }
+
+        [TestMethod]
+        public void WhyNotAllocatable_NamesThePerMarketCap_ToOtherConfigurations()
+        {
+            var (_, _, bots, coordinator) = Started(Symbol);
+            coordinator.Start();
+            lock (bots)
+                Assert.AreEqual(1, bots.Count);
+            var other = Configuration();
+            other.MinutesForLoss = 60;
+
+            Assert.IsNull(coordinator.WhyNotAllocatable(Market(), Configuration()), "its own bot's market is never refused to it");
+            StringAssert.StartsWith(coordinator.WhyNotAllocatable(Market(), other), "has 1 bot(s), the most per market");
         }
 
         private static (MockExchange exchange, DataRepository repository, List<Bot> bots, Coordinator coordinator) Started(params string[] symbols)
@@ -133,7 +145,7 @@ namespace SpreadBot.Tests
                 CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow }
             };
             var unallocations = 0;
-            var bot = new Bot(repository, context, _ => unallocations++, new BotStrategiesFactory(), TestLedger.Empty(repository));
+            var bot = new Bot(repository, context, _ => unallocations++, TestStrategies.Factory(), TestLedger.Empty(repository));
 
             bot.RequestFinish().Wait();
 
@@ -152,7 +164,7 @@ namespace SpreadBot.Tests
                 CurrentOrderData = new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m, Quantity = 30 }
             };
             var unallocations = 0;
-            var bot = new Bot(repository, context, _ => unallocations++, new BotStrategiesFactory(), TestLedger.Empty(repository))
+            var bot = new Bot(repository, context, _ => unallocations++, TestStrategies.Factory(), TestLedger.Empty(repository))
             {
                 CancelRetryDelay = TimeSpan.FromMilliseconds(10),
                 FinishCancelBudget = cancelBudget ?? TimeSpan.FromSeconds(15)
@@ -189,7 +201,7 @@ namespace SpreadBot.Tests
             {
                 CurrentOrderData = new OrderData { ClientOrderId = "sb-unknown", MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.UNKNOWN, CreatedAt = DateTime.UtcNow }
             };
-            var bot = new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+            var bot = new Bot(repository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(repository));
 
             bot.RequestFinish().Wait();
 

@@ -28,10 +28,9 @@ namespace SpreadBot
 
             string appSettingsPath = settingsFileName.ToLocalFilePath();
             Console.WriteLine(appSettingsPath);
-            var appSettings = new ConfigurationBuilder()
+            var appSettings = AppSettings.FromConfiguration(new ConfigurationBuilder()
                 .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: true)
-                .Build()
-                .Get<AppSettings>();
+                .Build());
 
             //Held until exit: a FileSystemWatcher references itself only weakly, so an unreferenced one is collected and stops raising events
             using var watcher = new FileSystemWatcher(Path.GetDirectoryName(appSettingsPath));
@@ -48,13 +47,13 @@ namespace SpreadBot
                 {
                     var updatedAppSettings = JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(appSettingsPath));
 
-                    var unwatched = (updatedAppSettings.SpreadConfigurations ?? Enumerable.Empty<SpreadConfiguration>())
-                        .Select(c => c.BaseMarket).Distinct().Except(watchedBaseMarkets).ToList();
-                    if (unwatched.Count > 0)
-                        Logger.Instance.LogError($"Base markets {string.Join(", ", unwatched)} weren't configured at startup, so their markets aren't watched; restart to trade them");
-
                     appSettings.Reload(updatedAppSettings);
                     Logger.Instance.LogMessage("App Settings reloaded");
+
+                    //Reload refuses configurations without a base market, so each one here has one
+                    var unwatched = updatedAppSettings.SpreadConfigurations.Select(c => c.BaseMarket).Distinct().Except(watchedBaseMarkets).ToList();
+                    if (unwatched.Count > 0)
+                        Logger.Instance.LogError($"Base markets {string.Join(", ", unwatched)} weren't configured at startup, so their markets aren't watched; restart to trade them");
                 }
                 catch (Exception ex)
                 {

@@ -122,7 +122,7 @@ namespace SpreadBot.Tests
 
             exchange.PushTicker(openingMarketData);
 
-            var bot = new Bot(datarepository, spreadConfiguration, openingMarketData, 0, (bot) => { }, new BotStrategiesFactory(), TestLedger.Empty(datarepository));
+            var bot = new Bot(datarepository, spreadConfiguration, openingMarketData, 0, (bot) => { }, TestStrategies.Factory(), TestLedger.Empty(datarepository));
             bot.Start();
 
             Assert.IsTrue(marketEvent.WaitOne(TimeSpan.FromSeconds(5)), "market data not delivered");

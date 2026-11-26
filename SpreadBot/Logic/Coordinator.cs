@@ -1,5 +1,6 @@
 ﻿using SpreadBot.Infrastructure;
 using SpreadBot.Logic.BotStrategies;
+using SpreadBot.Models;
 using SpreadBot.Models.Repository;
 using System;
 using System.Collections.Concurrent;
@@ -12,12 +13,13 @@ namespace SpreadBot.Logic
 {
     public class Coordinator : IDisposable
     {
-        private readonly BotStrategiesFactory botStrategiesFactory = new BotStrategiesFactory();
+        private readonly BotStrategiesFactory botStrategiesFactory;
         private readonly IComparer<(decimal, decimal)> marketComparer = GetMarketComparer();
         private readonly AppSettings appSettings;
         private readonly DataRepository dataRepository;
         private readonly ICoordinatorContext context;
         private readonly BalanceLedger balanceLedger;
+        private readonly MarketFilters marketFilters;
         private readonly Guid guid;
         private Dictionary<string, IGrouping<string, SpreadConfiguration>> configurationsByBaseMarket;
 
@@ -44,6 +46,8 @@ namespace SpreadBot.Logic
             this.dataRepository = dataRepository;
             this.context = context;
             this.balanceLedger = new BalanceLedger(dataRepository, context);
+            this.marketFilters = new MarketFilters(appSettings);
+            this.botStrategiesFactory = new BotStrategiesFactory(marketFilters);
             this.guid = Guid.NewGuid();
 
             this.appSettings.Reloaded += AppSettings_Reloaded;
@@ -63,6 +67,11 @@ namespace SpreadBot.Logic
 
             lock (allocationLock)
                 configurationsByBaseMarket = regrouped;
+
+            //A misspelled entry blacklists nothing, and the bot would trade the coin the operator meant to keep it off. Only the configured base
+            //markets' markets are loaded, so an entry for a coin traded only against others is reported too
+            if (!dataRepository.MarketsData.IsEmpty && marketFilters.UnmatchedBlacklistEntries(dataRepository.MarketsData.Values) is { Count: > 0 } unmatched)
+                Logger.Instance.LogError($"{nameof(AppSettings.BlacklistedMarkets)} entries {string.Join(", ", unmatched)} name no coin or market traded against a configured base market; if that isn't why, check their spelling (a coin like NMR, or a market like NMR/BTC)");
         }
 
         /// <summary>
@@ -116,10 +125,29 @@ namespace SpreadBot.Logic
         }
 
         /// <summary>
-        /// Why <paramref name="market"/> can't get a bot of <paramref name="configuration"/>, or null if it can (balance and bot slots aside).
+        /// Why <paramref name="market"/> can't get a bot of <paramref name="configuration"/>, or null if it can (balance and
+        /// <see cref="AppSettings.MaxNumberOfBots"/> aside).
         /// </summary>
-        public static string WhyNotAllocatable(MarketData market, SpreadConfiguration configuration) =>
-            ViabilityRejection(market) ?? ConfigurationRejection(market, configuration);
+        public string WhyNotAllocatable(MarketData market, SpreadConfiguration configuration) =>
+            marketFilters.Rejection(market, configuration) ?? CapRejection(market.Symbol, configuration);
+
+        /// <summary>
+        /// The per-market cap's verdict for <paramref name="configuration"/>, which never refuses it the market its own bot is on.
+        /// </summary>
+        private string CapRejection(string symbol, SpreadConfiguration configuration)
+        {
+            if (HasBotOn(configuration, symbol))
+                return null;
+
+            //Bots of two configurations on one market would outbid each other
+            var bots = BotCountOnMarket(symbol);
+            return bots >= appSettings.MaxNumberOfBotsPerMarket
+                ? $"has {bots} bot(s), the most per market ({appSettings.MaxNumberOfBotsPerMarket})"
+                : null;
+        }
+
+        private bool HasBotOn(SpreadConfiguration configuration, string symbol) =>
+            AllocatedMarketsPerSpreadConfiguration.TryGetValue(configuration, out var markets) && markets.ContainsKey(symbol);
 
         public void Start()
         {
@@ -174,12 +202,43 @@ namespace SpreadBot.Logic
 
                     allocatedMarketsForConfiguration.TryAdd(bot.MarketSymbol, true);
 
+                    var restoredOrder = botContext.CurrentOrderData;
+
                     AllocateBot(bot);
                     bot.Start();
 
                     Logger.Instance.LogMessage($"Allocated existing bot for market {bot.MarketSymbol}");
+
+                    if (!dataRepository.MarketsData.ContainsKey(bot.MarketSymbol))
+                        LeaveUnlistedMarket(bot, restoredOrder);
                 }
             }
+        }
+
+        /// <summary>
+        /// A restored bot whose market isn't in the market data gets no market update, so it would hold its balance and its slot for good.
+        /// </summary>
+        /// <param name="restoredOrder">The bot's current order as restored, before its start could change it</param>
+        private void LeaveUnlistedMarket(Bot bot, OrderData restoredOrder)
+        {
+            //Only the configured base markets' markets are loaded (and only at startup)
+            if (!configurationsByBaseMarket.ContainsKey(bot.BaseMarket))
+            {
+                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid} trades {bot.MarketSymbol}, but its base market {bot.BaseMarket} isn't configured, so its markets aren't watched and it won't trade; configure {bot.BaseMarket} and restart, or finish it from the dashboard");
+                return;
+            }
+
+            //So the exchange no longer lists it, e.g. it was delisted while the bot was stopped. ccxt refuses every request on a market it
+            //doesn't list, so an order there can't be cancelled or looked up, and finishing the bot would fail
+            if (restoredOrder?.Status is OrderStatus.OPEN or OrderStatus.UNKNOWN)
+            {
+                Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange, so its order {restoredOrder.Id ?? restoredOrder.ClientOrderId} can't be cancelled or looked up there; check it on the exchange (a delisting usually cancels a market's open orders). The bot keeps its allocation and its bot slot, finishing it fails the same way, and every resync logs failing to fetch the order");
+                return;
+            }
+
+            //Finishing records its coins as dust
+            Logger.Instance.LogUnexpectedError($"Restored bot {bot.Guid}'s market {bot.MarketSymbol} is no longer listed by the exchange; finishing it");
+            _ = Task.Run(bot.RequestFinish);
         }
 
         /// <summary>
@@ -225,7 +284,7 @@ namespace SpreadBot.Logic
 
                 foreach (var market in orderedMarkets)
                 {
-                    if (ViabilityRejection(market) != null)
+                    if (marketFilters.ViabilityRejection(market) != null)
                         continue;
 
                     // Optimization for stop looking for markets if is not possible to allocate any configuration
@@ -244,21 +303,56 @@ namespace SpreadBot.Logic
                         if (!EvaluateMarketBasedOnConfiguration(market, configuration))
                             continue;
 
-                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
-
-                        if (!allocatedMarketsForConfiguration.TryAdd(market.Symbol, true))
+                        if (HasBotOn(configuration, market.Symbol))
                         {
                             Logger.Instance.LogMessage($"Already allocated bot for market {market.Symbol}");
                             continue;
                         }
 
+                        if (CapRejection(market.Symbol, configuration) is string capRejection)
+                        {
+                            Logger.Instance.LogMessage($"Market {market.Symbol}: {capRejection}");
+                            continue;
+                        }
+
+                        //Free, as both checks ran under the allocation lock
+                        var allocatedMarketsForConfiguration = AllocatedMarketsPerSpreadConfiguration.GetOrAdd(configuration, key => new ConcurrentDictionary<string, bool>());
+                        allocatedMarketsForConfiguration[market.Symbol] = true;
+
                         Logger.Instance.LogMessage($"Found market: {market.Symbol}");
 
-                        var existingDust = GetInheritableDust(market);
-                        var bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory, balanceLedger);
+                        Bot bot = null;
+                        var existingDust = 0m;
+                        try
+                        {
+                            existingDust = GetInheritableDust(market);
+                            bot = new Bot(dataRepository, configuration, market, existingDust, UnallocateBot, botStrategiesFactory, balanceLedger);
 
-                        AllocateBot(bot);
-                        allocatedBots.Add(bot);
+                            AllocateBot(bot);
+                            allocatedBots.Add(bot);
+                        }
+                        catch
+                        {
+                            //Its own failures are logged, so the allocation's failure is the one that propagates
+                            try
+                            {
+                                //Stored before the failure, the bot holds its allocation, so it must run like the others (the caller starts it)
+                                if (bot != null && context.GetBots().Contains(bot))
+                                    allocatedBots.Add(bot);
+                                else
+                                {
+                                    //Left reserved without a bot, the market would count against the cap for every configuration until a restart
+                                    allocatedMarketsForConfiguration.TryRemove(market.Symbol, out _);
+                                    if (existingDust > 0)
+                                        context.AddDustForMarket(market.Symbol, existingDust);
+                                }
+                            }
+                            catch (Exception cleanupError)
+                            {
+                                Logger.Instance.LogUnexpectedError($"Error while undoing the failed allocation on {market.Symbol}: {cleanupError}");
+                            }
+                            throw;
+                        }
                     }
 
                     if (!anyConfigurationAvailable)
@@ -355,18 +449,6 @@ namespace SpreadBot.Logic
             return task.IsCompleted;
         }
 
-        private static string ViabilityRejection(MarketData market)
-        {
-            if (!string.IsNullOrWhiteSpace(market.Notice))
-                return $"notice: {market.Notice}";
-            if (market.Status != EMarketStatus.Online)
-                return "offline";
-            //The strategies can't quote a market without a tick, so its bot would hold a slot and its balance forever
-            if (!(market.PriceTick > 0))
-                return "no price tick";
-            return null;
-        }
-
         private void ReportBalance()
         {
             foreach (var baseMarket in configurationsByBaseMarket.Keys.ToList())
@@ -380,7 +462,7 @@ namespace SpreadBot.Logic
 
         private bool EvaluateMarketBasedOnConfiguration(MarketData marketData, SpreadConfiguration spreadConfiguration)
         {
-            var rejection = ConfigurationRejection(marketData, spreadConfiguration);
+            var rejection = marketFilters.Rejection(marketData, spreadConfiguration);
             if (rejection == null)
                 return true;
 
@@ -391,20 +473,8 @@ namespace SpreadBot.Logic
             return false;
         }
 
-        private static string ConfigurationRejection(MarketData market, SpreadConfiguration configuration)
-        {
-            if (market.LastTradeRate < configuration.MinimumPrice)
-                return $"price {market.LastTradeRate} below the minimum {configuration.MinimumPrice}";
-            if (market.SpreadPercentage < configuration.MinimumSpreadPercentage)
-                return $"spread {market.SpreadPercentage:0.###}% below the minimum {configuration.MinimumSpreadPercentage}%";
-            if (market.QuoteVolume < configuration.MinimumQuoteVolume)
-                return $"volume {market.QuoteVolume:0.####} below the minimum {configuration.MinimumQuoteVolume}";
-            if (market.PercentChange > configuration.MaxPercentChangeFromPreviousDay)
-                return $"up {market.PercentChange:0.##}% in 24 h, above the maximum {configuration.MaxPercentChangeFromPreviousDay}%";
-            if (configuration.AvoidTokenizedSecurities && market.IsTokenizedSecurity.GetValueOrDefault())
-                return "a tokenized security";
-            return null;
-        }
+        private int BotCountOnMarket(string symbol) =>
+            AllocatedMarketsPerSpreadConfiguration.Values.Count(markets => markets.ContainsKey(symbol));
 
         private bool CanAllocateBotForConfiguration(SpreadConfiguration spreadConfiguration)
         {
@@ -419,13 +489,14 @@ namespace SpreadBot.Logic
         /// </summary>
         private decimal GetInheritableDust(MarketData market)
         {
-            var recordedDust = context.RemoveDustForMarket(market.Symbol);
-
             //Coins recorded as dust on the coin's other markets are theirs to inherit
             var dustOfOtherMarkets = context.GetDustPerMarket()
                 .Where(dust => dust.Key != market.Symbol && MarketData.TargetOf(dust.Key) == market.Target)
                 .Sum(dust => dust.Value);
             var inheritable = Math.Max(balanceLedger.UnclaimedCoins(market.Target) - dustOfOtherMarkets, 0);
+
+            //Last, so a failure above leaves the dust recorded
+            var recordedDust = context.RemoveDustForMarket(market.Symbol);
 
             if (recordedDust <= inheritable)
                 return recordedDust;

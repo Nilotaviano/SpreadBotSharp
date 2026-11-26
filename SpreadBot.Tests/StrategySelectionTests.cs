@@ -28,13 +28,13 @@ namespace SpreadBot.Tests
         [DataRow(BotStrategyType.CalmSpread, typeof(CalmSpreadStrategy))]
         public void Factory_BuildsTheConfiguredStrategy(BotStrategyType strategyType, Type expected)
         {
-            Assert.IsInstanceOfType(new BotStrategiesFactory().GetStrategy(strategyType), expected);
+            Assert.IsInstanceOfType(TestStrategies.Factory().GetStrategy(strategyType), expected);
         }
 
         [TestMethod]
         public void Factory_RejectsAnUnknownStrategy()
         {
-            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new BotStrategiesFactory().GetStrategy((BotStrategyType)99));
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => TestStrategies.Factory().GetStrategy((BotStrategyType)99));
         }
 
         [TestMethod]
@@ -130,9 +130,9 @@ namespace SpreadBot.Tests
             public readonly BotContext Context;
             public bool Finished;
 
-            public CalmFixture(BotState state)
+            public CalmFixture(BotState state, params string[] blacklist)
             {
-                Strategy = new CalmSpreadStrategy(Wrapped.Object, () => Now);
+                Strategy = new CalmSpreadStrategy(Wrapped.Object, new MarketFilters(new AppSettings { BlacklistedMarkets = blacklist }), () => Now);
                 Repository = new DataRepository(Exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
                 var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1 };
                 Context = new BotContext(configuration, Market(mid: 100), state, 0);
@@ -142,7 +142,7 @@ namespace SpreadBot.Tests
 
             //A 2% spread around the mid, in ticks
             public static MarketData Market(decimal mid) =>
-                new MarketData { Symbol = Symbol, BidRate = (mid - 1) * MockExchange.Tick * 100, AskRate = (mid + 1) * MockExchange.Tick * 100, PriceTick = MockExchange.Tick };
+                new MarketData { Symbol = Symbol, BidRate = (mid - 1) * MockExchange.Tick * 100, AskRate = (mid + 1) * MockExchange.Tick * 100, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
 
             public Task See(decimal mid, TimeSpan after)
             {
@@ -260,6 +260,81 @@ namespace SpreadBot.Tests
             await fixture.See(mid: 100, after: TimeSpan.Zero);
 
             fixture.VerifyDelegated(Times.Once());
+        }
+
+        [TestMethod]
+        public async Task Calm_OverASpreadStrategy_LeavesAPumpingMarket()
+        {
+            var exchange = new MockExchange();
+            var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
+            var filters = TestStrategies.Filters();
+            var strategy = new CalmSpreadStrategy(new SpreadStrategy(new BreakEvenSellFloor(), filters), filters);
+            var configuration = new SpreadConfiguration { BaseMarket = "BTC", MinimumSpreadPercentage = 1, MaxPercentChangeFromPreviousDay = 40 };
+            var market = CalmFixture.Market(mid: 100);
+            market.PercentChange = 80;
+            var context = new BotContext(configuration, market, BotState.Buying, 0) { Balance = 0.001m };
+            var finished = false;
+
+            await strategy.ProcessMarketData(repository, context, placeOrder => placeOrder(), () => { finished = true; return Task.CompletedTask; });
+
+            Assert.IsTrue(finished, "not calm yet, but a pumping market is left, not waited out");
+            exchange.Mock.Verify(e => e.BuyLimit(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<decimal>()), Times.Never);
+        }
+
+        [TestMethod]
+        public async Task Calm_HoldsOff_OnAMarketBelowAnEntryMinimum()
+        {
+            // The wrapped strategy's buy states skip the entry filters, so it would bid on this market, which isn't calm yet
+            var fixture = new CalmFixture(BotState.Buying);
+            fixture.Context.spreadConfiguration.MinimumQuoteVolume = 150;
+            var market = CalmFixture.Market(mid: 100);
+            market.QuoteVolume = 10;
+            fixture.Context.LatestMarketData = market;
+
+            await fixture.Strategy.ProcessMarketData(fixture.Repository, fixture.Context, placeOrder => placeOrder(), () => Task.CompletedTask);
+
+            fixture.VerifyDelegated(Times.Never());
+        }
+
+        [TestMethod]
+        public async Task Calm_JudgesARestingBuysSpread_AsTheWrappedStrategyDoes()
+        {
+            // The buy is the best bid: the ticker's spread (1.98%) is below the minimum, the spread from the bid it improved on (1.99%)
+            // isn't, so the wrapped strategy keeps the buy. The market isn't calm yet, so the buy is cancelled
+            var fixture = new CalmFixture(BotState.BuyOrderActive);
+            fixture.Context.spreadConfiguration.MinimumSpreadPercentage = 1.985m;
+            fixture.Context.CurrentOrderData.Limit = CalmFixture.Market(mid: 100).BidRate.Value;
+
+            await fixture.See(mid: 100, after: TimeSpan.Zero);
+
+            fixture.Exchange.Mock.Verify(e => e.CancelOrder("buy-1", Symbol), Times.Once);
+            fixture.VerifyDelegated(Times.Never());
+        }
+
+        [TestMethod]
+        public async Task Calm_LeavesABlacklistedMarketToTheWrappedStrategy()
+        {
+            // Not calm yet (no window watched), but a blacklisted market is left, not waited out
+            var fixture = new CalmFixture(BotState.Buying, "NMR");
+
+            await fixture.See(mid: 100, after: TimeSpan.Zero);
+
+            fixture.VerifyDelegated(Times.Once());
+        }
+
+        [TestMethod]
+        [DataRow(BotState.Buying)]
+        [DataRow(BotState.BuyOrderActive)]
+        public async Task Calm_LeavesAMarketWithoutAQuoteYetToTheWrappedStrategy(BotState state)
+        {
+            // The wrapped Spread strategy waits for the quote; holding off as "not calm" would cancel a resting buy
+            var fixture = new CalmFixture(state);
+            fixture.Context.LatestMarketData = new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick, Status = EMarketStatus.Online };
+
+            await fixture.Strategy.ProcessMarketData(fixture.Repository, fixture.Context, placeOrder => placeOrder(), () => Task.CompletedTask);
+
+            fixture.VerifyDelegated(Times.Once());
+            fixture.Exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
     }
 }

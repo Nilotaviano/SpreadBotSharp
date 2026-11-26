@@ -44,7 +44,7 @@ namespace SpreadBot.Tests
             var held = state == BotState.Bought ? 20m : 0m;
             var context = new BotContext(configuration, new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, state, held) { BoughtPrice = 0.0001m };
             var finished = false;
-            new Bot(dataRepository, context, _ => finished = true, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => finished = true, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m, last: 0.0001m));
 
@@ -98,7 +98,7 @@ namespace SpreadBot.Tests
                 }
             };
 
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             // Bid moved well above our buy limit, so the strategy cancels; the exchange says the order is no longer open
             exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m));

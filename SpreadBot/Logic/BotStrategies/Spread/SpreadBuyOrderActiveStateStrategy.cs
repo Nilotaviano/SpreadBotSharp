@@ -7,11 +7,34 @@ namespace SpreadBot.Logic.BotStrategies.Spread
 {
     public class SpreadBuyOrderActiveStateStrategy : IBotStateStrategy
     {
+        private readonly MarketFilters marketFilters;
+
+        //The resting buy whose hold on an offline market was logged; null while the market is online.
+        //Each bot has its own instance, and its market updates are processed one at a time
+        private string heldOfflineOrderId;
+
+        public SpreadBuyOrderActiveStateStrategy(MarketFilters marketFilters)
+        {
+            this.marketFilters = marketFilters;
+        }
+
         public async Task ProcessMarketData(DataRepository dataRepository, BotContext botContext, Func<Func<Task<OrderData>>, Task> executeOrderFunctionCallback, Func<Task> finishWorkCallBack)
         {
-            if (botContext.LatestMarketData.SpreadPercentage < botContext.spreadConfiguration.MinimumSpreadPercentage)
+            //The exchange refuses requests on an offline market (e.g. a symbol restricted for the account), so a cancel would fail on
+            //every update. The buy rests; the order stream or a resync books it if it fills or the exchange cancels it
+            if (botContext.LatestMarketData.Status != EMarketStatus.Online)
             {
-                //Cancel order and exit
+                if (heldOfflineOrderId != botContext.CurrentOrderData.Id)
+                    Logger.Instance.LogError($"Bot {botContext.Guid}: {botContext.LatestMarketData.Symbol} is offline, so its buy {botContext.CurrentOrderData.Id} rests untouched until the market is back online, the buy fills or the exchange cancels it");
+                heldOfflineOrderId = botContext.CurrentOrderData.Id;
+                return;
+            }
+
+            heldOfflineOrderId = null;
+
+            if (marketFilters.BuyingRejection(botContext.LatestMarketData, botContext.spreadConfiguration, botContext.CurrentOrderData.Limit) != null)
+            {
+                //Cancel the buy: back in Buying the bot leaves the market, or, if the buy filled enough to sell, it sells first and leaves after
                 await executeOrderFunctionCallback(async () => await dataRepository.Exchange.CancelOrder(botContext.CurrentOrderData.Id, botContext.LatestMarketData.Symbol));
             }
             else if (botContext.LatestMarketData.BidRate - botContext.CurrentOrderData.Limit >= botContext.spreadConfiguration.SpreadThresholdBeforeCancelingCurrentOrder)

@@ -36,7 +36,7 @@ namespace SpreadBot.Tests
             };
 
             var unallocated = false;
-            new Bot(dataRepository, context, _ => unallocated = true, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => unallocated = true, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             SendTicker(exchange, 1);
 

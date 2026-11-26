@@ -49,9 +49,10 @@ namespace SpreadBot.Tests
         private static Mock<ICoordinatorContext> InMemoryContext(List<Bot> bots, decimal dust = 0, PreviousSessionContext previousSession = null)
         {
             var context = new Mock<ICoordinatorContext>();
-            context.Setup(c => c.GetBotCount()).Returns(() => bots.Count);
-            context.Setup(c => c.GetBots()).Returns(() => bots.ToList());
-            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bots.Add);
+            //Bots are added on the market consumer's thread and removed on theirs, while the test reads them
+            context.Setup(c => c.GetBotCount()).Returns(() => { lock (bots) return bots.Count; });
+            context.Setup(c => c.GetBots()).Returns(() => { lock (bots) return bots.ToList(); });
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bot => { lock (bots) bots.Add(bot); });
             context.Setup(c => c.RemoveDustForMarket(It.IsAny<string>())).Returns(dust);
             context.Setup(c => c.GetPreviousSessionContext()).Returns(previousSession);
             return context;
@@ -89,6 +90,166 @@ namespace SpreadBot.Tests
         }
 
         [TestMethod]
+        public void DoesNotAllocate_ABlacklistedMarket()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC", "XYZ/BTC");
+            var bots = new List<Bot>();
+            var settings = Settings(Configuration(0.3m));
+            settings.BlacklistedMarkets = new[] { "NMR" };
+
+            new Coordinator(settings, repository, InMemoryContext(bots).Object).Start();
+
+            Assert.AreEqual("XYZ/BTC", bots.Single().MarketSymbol);
+        }
+
+        [TestMethod]
+        [DataRow(1, 2)]
+        [DataRow(2, 4)]
+        public void TwoConfigurationsOnOneBaseMarket_ShareEachMarketUpToTheCap(int maxBotsPerMarket, int expectedBots)
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA/BTC", "BBB/BTC");
+            var bots = new List<Bot>();
+            var patient = Configuration(0.2m);
+            patient.MinutesForLoss = 60;
+            var settings = Settings(Configuration(0.2m));
+            settings.SpreadConfigurations = new[] { Configuration(0.2m), patient };
+            settings.MaxNumberOfBots = 4;
+            settings.MaxNumberOfBotsPerMarket = maxBotsPerMarket;
+
+            new Coordinator(settings, repository, InMemoryContext(bots).Object).Start();
+
+            Assert.AreEqual(expectedBots, bots.Count);
+            Assert.IsTrue(bots.GroupBy(b => b.MarketSymbol).All(market => market.Count() == maxBotsPerMarket));
+        }
+
+        [TestMethod]
+        public void ABotLeavingAMarket_FreesItsSlotUnderTheCap()
+        {
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            exchange.Mock
+                .Setup(e => e.BuyLimit("NMR/BTC", It.IsAny<decimal>(), It.IsAny<decimal>()))
+                .ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.0001m });
+            exchange.Mock
+                .Setup(e => e.CancelOrder("buy-1", "NMR/BTC"))
+                .ReturnsAsync(new OrderData { Id = "buy-1", ClientOrderId = "buy-1", MarketSymbol = "NMR/BTC", Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.0001m });
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots);
+            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => { lock (bots) return bots.RemoveAll(b => b.Guid == id) > 0; });
+            var patient = Configuration(0.2m);
+            patient.MinutesForLoss = 60;
+            var settings = Settings(Configuration(0.2m));
+            settings.SpreadConfigurations = new[] { Configuration(0.2m), patient };
+            settings.MaxNumberOfBots = 4;
+            var coordinator = new Coordinator(settings, repository, context.Object);
+            coordinator.Start();
+            Bot first;
+            lock (bots)
+            {
+                Assert.AreEqual(1, bots.Count, "the cap of 1 keeps the second configuration off the market");
+                first = bots[0];
+            }
+            WaitUntil(() => first.botContext.BotState == BotState.BuyOrderActive && first.botContext.SemaphoreCurrentCount == 1, "the first bot's buy rests");
+
+            coordinator.FinishBot(first.Guid);
+            WaitUntil(() => { lock (bots) return !bots.Contains(first); }, "the first bot leaves");
+            exchange.PushTicker(MockExchange.Ticker("NMR/BTC", ask: 0.00010102m, bid: 0.00009999m, last: 0.0001m, quoteVolume: 200, percentChange: 5));
+
+            WaitUntil(() => { lock (bots) return bots.Count == 1 && bots[0] != first; }, "the market takes a new bot");
+        }
+
+        [TestMethod]
+        [DataRow("GONE/BTC", true)] // BTC's markets are loaded, and this one isn't among them: delisted
+        [DataRow("NMR/ETH", false)] // ETH isn't configured, so its markets aren't loaded at all
+        public void RestoredBot_OnAMarketNotInTheMarketData(string symbol, bool expectFinished)
+        {
+            var (_, repository) = StartedRepository(0, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var configuration = Configuration(0.3m);
+            configuration.BaseMarket = symbol.Split('/')[1];
+            var restored = new BotContext(configuration, new MarketData { Symbol = symbol, PriceTick = MockExchange.Tick }, BotState.Buying, 0) { Balance = 0.3m };
+            var context = InMemoryContext(bots, previousSession: new PreviousSessionContext { BotContexts = new List<BotContext> { restored } });
+            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => { lock (bots) return bots.RemoveAll(b => b.Guid == id) > 0; });
+
+            new Coordinator(Settings(Configuration(0.3m), restore: true), repository, context.Object).Start();
+
+            if (expectFinished)
+                WaitUntil(() => { lock (bots) return bots.Count == 0; }, "the bot on the delisted market finishes");
+            else
+            {
+                Thread.Sleep(200);
+                lock (bots)
+                    Assert.AreEqual(1, bots.Count, "kept, since nothing shows its market is gone");
+            }
+        }
+
+        [TestMethod]
+        [DataRow(OrderStatus.OPEN, "buy-1")]
+        [DataRow(OrderStatus.UNKNOWN, "client-1")]
+        public void RestoredBot_OnADelistedMarket_WithAnOrder_StaysAndSaysWhy(OrderStatus status, string named)
+        {
+            // ccxt refuses every request on a market it doesn't list: the order can't be cancelled or looked up, so finishing would fail
+            var (exchange, repository) = StartedRepository(0, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var restored = new BotContext(Configuration(0.3m), new MarketData { Symbol = "GONE/BTC", PriceTick = MockExchange.Tick }, BotState.BuyOrderActive, 0)
+            {
+                Balance = 0.3m,
+                CurrentOrderData = new OrderData { Id = status == OrderStatus.OPEN ? "buy-1" : null, ClientOrderId = "client-1", MarketSymbol = "GONE/BTC", Direction = OrderDirection.BUY, Status = status, Limit = 0.0001m }
+            };
+            var context = InMemoryContext(bots, previousSession: new PreviousSessionContext { BotContexts = new List<BotContext> { restored } });
+            context.Setup(c => c.RemoveBot(It.IsAny<Guid>())).Returns<Guid>(id => { lock (bots) return bots.RemoveAll(b => b.Guid == id) > 0; });
+            var said = new List<string>();
+            void listen(Logger.LogEntry entry)
+            {
+                if (entry.Level == "UnexpectedError" && entry.Content.Contains(restored.Guid.ToString()))
+                    lock (said) said.Add(entry.Content);
+            }
+
+            Logger.Instance.Logged += listen;
+            try
+            {
+                new Coordinator(Settings(Configuration(0.3m), restore: true), repository, context.Object).Start();
+
+                WaitUntil(() => { lock (said) return said.Count > 0; }, "the operator is told");
+                Thread.Sleep(200);
+                lock (said)
+                    StringAssert.Contains(said[0], $"its order {named} can't be cancelled");
+                lock (bots)
+                    Assert.AreEqual(1, bots.Count, "kept: finishing would fail");
+                exchange.Mock.Verify(e => e.CancelOrder(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            }
+            finally
+            {
+                Logger.Instance.Logged -= listen;
+            }
+        }
+
+        [TestMethod]
+        public void RestoredSession_KeepsMoreBotsOnAMarketThanTheCap_AndAddsNone()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var patient = Configuration(0.2m);
+            patient.MinutesForLoss = 60;
+            var market = new MarketData { Symbol = "NMR/BTC", PriceTick = MockExchange.Tick };
+            var previousSession = new PreviousSessionContext
+            {
+                BotContexts = new List<BotContext>
+                {
+                    new BotContext(Configuration(0.2m), market, BotState.Buying, 0) { Balance = 0.2m },
+                    new BotContext(patient, market, BotState.Buying, 0) { Balance = 0.2m }
+                }
+            };
+            // A configuration with no restored bot, which the 0.6 BTC left could fund: only the cap keeps it off the market
+            var settings = Settings(Configuration(0.3m), restore: true);
+            settings.MaxNumberOfBotsPerMarket = 1;
+
+            new Coordinator(settings, repository, InMemoryContext(bots, previousSession: previousSession).Object).Start();
+
+            lock (bots)
+                Assert.AreEqual(2, bots.Count);
+        }
+
+        [TestMethod]
         public void DoesNotAllocate_AMarketWithoutAPriceTick()
         {
             var exchange = new MockExchange(Balance("BTC", 1, 1));
@@ -120,9 +281,10 @@ namespace SpreadBot.Tests
         [TestMethod]
         public void AllocationFailingPartway_StillStartsTheBotsAlreadyAllocated()
         {
-            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA/BTC", "BBB/BTC");
+            // Each market inherits 1 coin of recorded dust
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("AAA", 2, 2), Balance("BBB", 2, 2) }, "AAA/BTC", "BBB/BTC");
             var bots = new List<Bot>();
-            var context = InMemoryContext(bots);
+            var context = InMemoryContext(bots, dust: 1);
             context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bot =>
             {
                 if (bots.Count == 1)
@@ -130,12 +292,71 @@ namespace SpreadBot.Tests
                 bots.Add(bot);
             });
 
-            Assert.ThrowsExactly<InvalidOperationException>(() => new Coordinator(Settings(Configuration(0.3m)), repository, context.Object).Start());
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
 
             Assert.AreEqual(1, bots.Count);
             var symbol = bots[0].MarketSymbol;
+            var failedSymbol = symbol == "AAA/BTC" ? "BBB/BTC" : "AAA/BTC";
+            CollectionAssert.AreEqual(new[] { symbol }, coordinator.AllocatedMarketsPerSpreadConfiguration.Values.SelectMany(markets => markets.Keys).ToArray(),
+                "the failed market isn't left reserved, where it would count against the per-market cap");
+            context.Verify(c => c.AddDustForMarket(failedSymbol, 1m), Times.Once, "the dust the failed bot took is recorded again");
             WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.BuyLimit) && (string)i.Arguments[0] == symbol),
                 "the allocated bot starts and places its buy");
+        }
+
+        [TestMethod]
+        public void AllocationFailing_PropagatesItsOwnError_EvenWhenUndoingItFailsToo()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("NMR", 2, 2) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots, dust: 1);
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Throws(new InvalidOperationException("the allocation fails"));
+            context.Setup(c => c.AddDustForMarket(It.IsAny<string>(), It.IsAny<decimal>())).Throws(new ArgumentException("giving the dust back fails too"));
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
+
+            Assert.IsFalse(coordinator.AllocatedMarketsPerSpreadConfiguration.Values.Any(markets => markets.ContainsKey("NMR/BTC")), "released before giving the dust back");
+        }
+
+        [TestMethod]
+        public void InheritingDustFailing_LeavesTheDustRecorded()
+        {
+            var (_, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1), Balance("NMR", 2, 2) }, "NMR/BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots, dust: 1);
+            context.Setup(c => c.GetDustPerMarket()).Throws(new InvalidOperationException("the dust can't be read"));
+
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
+
+            Assert.AreEqual(0, bots.Count);
+            context.Verify(c => c.RemoveDustForMarket(It.IsAny<string>()), Times.Never);
+        }
+
+        [TestMethod]
+        public void AllocationFailingAfterTheBotIsStored_KeepsItReservedAndStartsIt()
+        {
+            var (exchange, repository) = StartedRepository(200, new[] { Balance("BTC", 1, 1) }, "AAA/BTC", "BBB/BTC");
+            var bots = new List<Bot>();
+            var context = InMemoryContext(bots);
+            context.Setup(c => c.AddBot(It.IsAny<Bot>())).Callback<Bot>(bot =>
+            {
+                bots.Add(bot);
+                if (bots.Count == 2)
+                    throw new InvalidOperationException("the second bot is stored, then saving it fails");
+            });
+
+            var coordinator = new Coordinator(Settings(Configuration(0.3m)), repository, context.Object);
+            Assert.ThrowsExactly<InvalidOperationException>(coordinator.Start);
+
+            Assert.AreEqual(2, bots.Count);
+            CollectionAssert.AreEquivalent(bots.Select(b => b.MarketSymbol).ToArray(), coordinator.AllocatedMarketsPerSpreadConfiguration.Values.SelectMany(markets => markets.Keys).ToArray(),
+                "a stored bot keeps its market reserved");
+            foreach (var symbol in bots.Select(b => b.MarketSymbol))
+                WaitUntil(() => exchange.Mock.Invocations.Any(i => i.Method.Name == nameof(exchange.Object.BuyLimit) && (string)i.Arguments[0] == symbol),
+                    $"the bot on {symbol} starts and places its buy");
         }
 
         [TestMethod]

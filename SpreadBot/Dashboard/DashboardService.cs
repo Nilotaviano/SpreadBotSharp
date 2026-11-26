@@ -159,7 +159,7 @@ namespace SpreadBot.Dashboard
                     m.score,
                     botsPerMarket.GetValueOrDefault(m.market.Symbol),
                     configurations.Where(c => c.BaseMarket == m.market.BaseMarket)
-                        .Select(c => new VerdictView(c.Strategy.ToString(), c.AllocatedAmountOfBaseCurrency, Coordinator.WhyNotAllocatable(m.market, c)))
+                        .Select(c => new VerdictView(c.Strategy.ToString(), c.AllocatedAmountOfBaseCurrency, coordinator.WhyNotAllocatable(m.market, c)))
                         .ToList()))
                 .ToList();
         }

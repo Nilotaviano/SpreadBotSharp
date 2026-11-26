@@ -27,6 +27,7 @@ namespace SpreadBot.Tests
                 .Setup(e => e.CancelOrder(BuyOrderId, Symbol))
                 .ReturnsAsync(new OrderData { Id = BuyOrderId, ClientOrderId = BuyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.CLOSED, Limit = 0.00009000m });
 
+            exchange.WithMarkets(Symbol);
             var dataRepository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
             dataRepository.StartConsumingData();
 
@@ -45,7 +46,7 @@ namespace SpreadBot.Tests
                 CurrentOrderData = new OrderData { Id = BuyOrderId, ClientOrderId = BuyOrderId, MarketSymbol = Symbol, Direction = OrderDirection.BUY, Status = OrderStatus.OPEN, Limit = 0.00009000m }
             };
 
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             // The bid moved well above the buy limit, so the strategy cancels the buy; it had no fills
             exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m));

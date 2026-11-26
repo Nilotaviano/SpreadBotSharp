@@ -1,8 +1,10 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using SpreadBot.Logic.BotStrategies;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace SpreadBot.Infrastructure
@@ -18,6 +20,10 @@ namespace SpreadBot.Infrastructure
         public string ApiKey { get; set; }
         public string ApiSecret { get; set; }
         public int MaxNumberOfBots { get; set; }
+        //Counts every configuration's bots; a restored session keeps the bots it had
+        public int MaxNumberOfBotsPerMarket { get; set; } = 1;
+        //Coins (NMR) or markets (NMR/BTC), in any case, that get no bot
+        public IEnumerable<string> BlacklistedMarkets { get; set; }
         public int ResyncIntervalMs { get; set; }
         //The SQLite database with the bots, their orders and dust; a relative path is relative to the settings file
         public string DatabasePath { get; set; } = "spreadbot.db";
@@ -26,11 +32,30 @@ namespace SpreadBot.Infrastructure
 
         public IEnumerable<SpreadConfiguration> SpreadConfigurations { get; set; }
 
+        /// <summary>
+        /// The settings in <paramref name="configuration"/>, as loaded at startup (a reload deserializes the file with Newtonsoft instead).
+        /// </summary>
+        public static AppSettings FromConfiguration(IConfiguration configuration)
+        {
+            //The binder skips a single string where a list belongs: a blacklist of one coin written without brackets would blacklist nothing
+            if (!string.IsNullOrEmpty(configuration[nameof(BlacklistedMarkets)]))
+                throw new InvalidOperationException($"{nameof(BlacklistedMarkets)} must be a list, e.g. [\"NMR\"]");
+
+            return configuration.Get<AppSettings>();
+        }
+
         public void Reload(AppSettings newSettings)
         {
             //No reason to reload ApiKey and ApiSecret atm
 
+            //Checked before anything is applied: the Coordinator regroups the configurations by base market on Reloaded, and a reload that
+            //fails there would leave the new caps and blacklist applied while the log says the old settings stayed
+            if (newSettings.SpreadConfigurations == null || newSettings.SpreadConfigurations.Any(c => string.IsNullOrEmpty(c?.BaseMarket)))
+                throw new InvalidOperationException($"{nameof(SpreadConfigurations)} must list the configurations, each with its {nameof(SpreadConfiguration.BaseMarket)}");
+
             MaxNumberOfBots = newSettings.MaxNumberOfBots;
+            MaxNumberOfBotsPerMarket = newSettings.MaxNumberOfBotsPerMarket;
+            BlacklistedMarkets = newSettings.BlacklistedMarkets;
             SpreadConfigurations = newSettings.SpreadConfigurations;
 
             Reloaded?.Invoke(this, EventArgs.Empty);

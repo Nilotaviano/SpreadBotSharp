@@ -46,7 +46,7 @@ namespace SpreadBot.Tests
             dataRepository.StartConsumingData();
             var configuration = new SpreadConfiguration { BaseMarket = "BTC", AllocatedAmountOfBaseCurrency = 0.002m, MinimumNegotiatedAmount = 0.001m, MinimumSpreadPercentage = 1, SpreadThresholdBeforeCancelingCurrentOrder = MockExchange.Tick };
             var context = new BotContext(configuration, new MarketData { Symbol = Symbol, PriceTick = MockExchange.Tick }, BotState.Buying, 0);
-            new Bot(dataRepository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(dataRepository)).Start();
+            new Bot(dataRepository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(dataRepository)).Start();
 
             // The bot bids one tick above 0.00009999 and waits for the exchange's answer
             exchange.PushTicker(MockExchange.Ticker(Symbol, ask: 0.00010101m, bid: 0.00009999m));

@@ -59,7 +59,7 @@ namespace SpreadBot.Tests
         {
             var exchange = new MockExchange();
             var repository = new DataRepository(exchange.Object, new AppSettings { ResyncIntervalMs = 600000 });
-            return new Bot(repository, context, _ => { }, new BotStrategiesFactory(), TestLedger.Empty(repository));
+            return new Bot(repository, context, _ => { }, TestStrategies.Factory(), TestLedger.Empty(repository));
         }
 
         private static BotContext Holding(SpreadConfiguration configuration = null) =>
